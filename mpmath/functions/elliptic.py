@@ -559,6 +559,9 @@ def kleinjinv(ctx, J):
     half-plane such that ``kleinj(tau)`` equals `J`, up to numerical error.
     Since ``kleinj`` is invariant under modular transformations, the inverse
     is multivalued; this function returns one representative.
+    The branch is determined by principal square/cube roots in the formula
+    below; the returned value is one modularly equivalent preimage and is not
+    canonicalized to a fundamental domain.
 
     The implementation uses the classical inverse construction via the
     modular lambda function, described as Method 1 here:
