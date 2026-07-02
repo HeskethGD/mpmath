@@ -10,10 +10,11 @@ a function which satisfies
     f(z + 2 \omega_1) = f(z + 2 \omega_2) = f(z)
 
 for some half-periods `\omega_1, \omega_2` with
-`\mathrm{Im}[\omega_1 / \omega_2] > 0`. The canonical elliptic
-functions are the Jacobi elliptic functions. More broadly, this section
-includes  quasi-doubly periodic functions (such as the Jacobi theta
-functions) and other functions useful in the study of elliptic functions.
+`\mathrm{Im}[\omega_2 / \omega_1] > 0`. The classical examples include
+the Jacobi elliptic functions and the Weierstrass elliptic functions.
+More broadly, this section includes quasi-doubly periodic functions
+(such as the Jacobi theta functions) and other functions useful in the
+study of elliptic functions.
 
 Many different conventions for the arguments of
 elliptic functions are in use. It is even standard to use
@@ -24,6 +25,9 @@ must satisfy `|q| < 1`; the elliptic parameter `m` (an arbitrary
 complex number); the elliptic modulus `k` (an arbitrary complex
 number); and the half-period ratio `\tau`, which usually must
 satisfy `\mathrm{Im}[\tau] > 0`.
+Elliptic functions may also be parameterized by half-periods
+`\omega_1, \omega_2`, where `\tau = \omega_2 / \omega_1`, or by
+Weierstrass invariants `g_2, g_3`.
 These quantities can be expressed in terms of each other
 using the following relations:
 
@@ -50,8 +54,9 @@ number theory, which we here denote by q-bar:
 
     \bar{q} = q^2 = e^{2 i \pi \tau}
 
-For convenience, mpmath provides functions to convert
-between the various parameters (:func:`~mpmath.qfrom`, :func:`~mpmath.mfrom`,
+For convenience, mpmath provides functions to convert between the various
+parameters, including half-periods and Weierstrass invariants where
+applicable (:func:`~mpmath.qfrom`, :func:`~mpmath.mfrom`,
 :func:`~mpmath.kfrom`, :func:`~mpmath.taufrom`, :func:`~mpmath.qbarfrom`).
 
 **References**
@@ -120,69 +125,11 @@ def nome(ctx, m):
         v = ctx.mpc(0, v.imag)
     return v
 
-@defun_wrapped
-def qfrom(ctx, q=None, m=None, k=None, tau=None, qbar=None):
-    r"""
-    Returns the elliptic nome `q`, given any of `q, m, k, \tau, \bar{q}`::
-
-        >>> from mpmath import mp, qfrom, mfrom, kfrom, taufrom, qbarfrom
-        >>> mp.dps = 25
-        >>> mp.pretty = True
-        >>> qfrom(q=0.25)
-        0.25
-        >>> qfrom(m=mfrom(q=0.25))
-        0.25
-        >>> qfrom(k=kfrom(q=0.25))
-        0.25
-        >>> qfrom(tau=taufrom(q=0.25))
-        (0.25 + 0.0j)
-        >>> qfrom(qbar=qbarfrom(q=0.25))
-        0.25
-
-    """
-    if q is not None:
-        return ctx.convert(q)
-    if m is not None:
-        return nome(ctx, m)
-    if k is not None:
-        return nome(ctx, ctx.convert(k)**2)
-    if tau is not None:
-        return ctx.expjpi(tau)
-    if qbar is not None:
-        return ctx.sqrt(qbar)
-
-@defun_wrapped
-def qbarfrom(ctx, q=None, m=None, k=None, tau=None, qbar=None):
-    r"""
-    Returns the number-theoretic nome `\bar q`, given any of
-    `q, m, k, \tau, \bar{q}`::
-
-        >>> from mpmath import (mp, qbarfrom, qfrom, extraprec, mfrom,
-        ...                     kfrom, taufrom)
-        >>> mp.dps = 25
-        >>> mp.pretty = True
-        >>> qbarfrom(qbar=0.25)
-        0.25
-        >>> qbarfrom(q=qfrom(qbar=0.25))
-        0.25
-        >>> qbarfrom(m=extraprec(20)(mfrom)(qbar=0.25))  # ill-conditioned
-        0.25
-        >>> qbarfrom(k=extraprec(20)(kfrom)(qbar=0.25))  # ill-conditioned
-        0.25
-        >>> qbarfrom(tau=taufrom(qbar=0.25))
-        (0.25 + 0.0j)
-
-    """
-    if qbar is not None:
-        return ctx.convert(qbar)
-    if q is not None:
-        return ctx.convert(q) ** 2
-    if m is not None:
-        return nome(ctx, m) ** 2
-    if k is not None:
-        return nome(ctx, ctx.convert(k)**2) ** 2
-    if tau is not None:
-        return ctx.expjpi(2*tau)
+def _validate_weierstrass_pair_args(funcname, g2, g3, omega1, omega2):
+    if (g2 is None) != (g3 is None):
+        raise ValueError("%s: must provide both g2 and g3" % funcname)
+    if (omega1 is None) != (omega2 is None):
+        raise ValueError("%s: must provide both omega1 and omega2" % funcname)
 
 @defun_wrapped
 def taufrom(ctx, q=None, m=None, k=None, tau=None, qbar=None,
@@ -209,10 +156,7 @@ def taufrom(ctx, q=None, m=None, k=None, tau=None, qbar=None,
         (0.0 + 0.5j)
 
     """
-    if (g2 is None) != (g3 is None):
-        raise ValueError("taufrom: must provide both g2 and g3")
-    if (omega1 is None) != (omega2 is None):
-        raise ValueError("taufrom: must provide both omega1 and omega2")
+    _validate_weierstrass_pair_args("taufrom", g2, g3, omega1, omega2)
     if tau is not None:
         return ctx.convert(tau)
     if m is not None:
@@ -241,10 +185,95 @@ def taufrom(ctx, q=None, m=None, k=None, tau=None, qbar=None,
         return tau
 
 @defun_wrapped
-def kfrom(ctx, q=None, m=None, k=None, tau=None, qbar=None):
+def qfrom(ctx, q=None, m=None, k=None, tau=None, qbar=None,
+          g2=None, g3=None, omega1=None, omega2=None):
+    r"""
+    Returns the elliptic nome `q`, given any of `q, m, k, \tau, \bar{q}`.
+    It may also be computed from both Weierstrass invariants `g_2, g_3`,
+    or both half-periods `\omega_1, \omega_2`::
+
+        >>> from mpmath import mp, qfrom, mfrom, kfrom, taufrom, qbarfrom
+        >>> mp.dps = 25
+        >>> mp.pretty = True
+        >>> qfrom(q=0.25)
+        0.25
+        >>> qfrom(m=mfrom(q=0.25))
+        0.25
+        >>> qfrom(k=kfrom(q=0.25))
+        0.25
+        >>> qfrom(tau=taufrom(q=0.25))
+        (0.25 + 0.0j)
+        >>> qfrom(qbar=qbarfrom(q=0.25))
+        0.25
+        >>> qfrom(omega1=1, omega2=0.5j)
+        (0.2078795763507619085469556 + 0.0j)
+
+    """
+    _validate_weierstrass_pair_args("qfrom", g2, g3, omega1, omega2)
+    if q is not None:
+        return ctx.convert(q)
+    if m is not None:
+        return nome(ctx, m)
+    if k is not None:
+        return nome(ctx, ctx.convert(k)**2)
+    if tau is not None:
+        return ctx.expjpi(tau)
+    if qbar is not None:
+        return ctx.sqrt(qbar)
+    if g2 is not None:
+        return ctx.qfrom(tau=ctx.taufrom(g2=g2, g3=g3))
+    if omega1 is not None:
+        return ctx.qfrom(tau=ctx.taufrom(omega1=omega1, omega2=omega2))
+
+@defun_wrapped
+def qbarfrom(ctx, q=None, m=None, k=None, tau=None, qbar=None,
+             g2=None, g3=None, omega1=None, omega2=None):
+    r"""
+    Returns the number-theoretic nome `\bar q`, given any of
+    `q, m, k, \tau, \bar{q}`, both Weierstrass invariants `g_2, g_3`,
+    or both half-periods `\omega_1, \omega_2`::
+
+        >>> from mpmath import (mp, qbarfrom, qfrom, extraprec, mfrom,
+        ...                     kfrom, taufrom)
+        >>> mp.dps = 25
+        >>> mp.pretty = True
+        >>> qbarfrom(qbar=0.25)
+        0.25
+        >>> qbarfrom(q=qfrom(qbar=0.25))
+        0.25
+        >>> qbarfrom(m=extraprec(20)(mfrom)(qbar=0.25))  # ill-conditioned
+        0.25
+        >>> qbarfrom(k=extraprec(20)(kfrom)(qbar=0.25))  # ill-conditioned
+        0.25
+        >>> qbarfrom(tau=taufrom(qbar=0.25))
+        (0.25 + 0.0j)
+        >>> qbarfrom(omega1=1, omega2=0.5j)
+        (0.04321391826377224977441774 + 0.0j)
+
+    """
+    _validate_weierstrass_pair_args("qbarfrom", g2, g3, omega1, omega2)
+    if qbar is not None:
+        return ctx.convert(qbar)
+    if q is not None:
+        return ctx.convert(q) ** 2
+    if m is not None:
+        return nome(ctx, m) ** 2
+    if k is not None:
+        return nome(ctx, ctx.convert(k)**2) ** 2
+    if tau is not None:
+        return ctx.expjpi(2*tau)
+    if g2 is not None:
+        return ctx.qbarfrom(tau=ctx.taufrom(g2=g2, g3=g3))
+    if omega1 is not None:
+        return ctx.qbarfrom(tau=ctx.taufrom(omega1=omega1, omega2=omega2))
+
+@defun_wrapped
+def kfrom(ctx, q=None, m=None, k=None, tau=None, qbar=None,
+          g2=None, g3=None, omega1=None, omega2=None):
     r"""
     Returns the elliptic modulus `k`, given any of
-    `q, m, k, \tau, \bar{q}`::
+    `q, m, k, \tau, \bar{q}`, both Weierstrass invariants `g_2, g_3`,
+    or both half-periods `\omega_1, \omega_2`::
 
         >>> from mpmath import mp, kfrom, mfrom, qfrom, taufrom, qbarfrom
         >>> mp.dps = 25
@@ -259,6 +288,8 @@ def kfrom(ctx, q=None, m=None, k=None, tau=None, qbar=None):
         (0.25 + 0.0j)
         >>> kfrom(qbar=qbarfrom(k=0.25))
         0.25
+        >>> kfrom(omega1=1, omega2=0.5j)
+        (0.985171431009416038689502 + 0.0j)
 
     As `q \to 1` and `q \to -1`, `k` rapidly approaches
     `1` and `i \infty` respectively::
@@ -272,6 +303,7 @@ def kfrom(ctx, q=None, m=None, k=None, tau=None, qbar=None):
         >>> kfrom(q=-1)
         (0.0 + infj)
     """
+    _validate_weierstrass_pair_args("kfrom", g2, g3, omega1, omega2)
     if k is not None:
         return ctx.convert(k)
     if m is not None:
@@ -280,6 +312,11 @@ def kfrom(ctx, q=None, m=None, k=None, tau=None, qbar=None):
         q = ctx.expjpi(tau)
     if qbar is not None:
         q = ctx.sqrt(qbar)
+    if q is None:
+        if g2 is not None:
+            return ctx.kfrom(tau=ctx.taufrom(g2=g2, g3=g3))
+        if omega1 is not None:
+            return ctx.kfrom(tau=ctx.taufrom(omega1=omega1, omega2=omega2))
     if q == 1:
         return q
     if q == -1:
@@ -287,10 +324,12 @@ def kfrom(ctx, q=None, m=None, k=None, tau=None, qbar=None):
     return (ctx.jtheta(2,0,q)/ctx.jtheta(3,0,q))**2
 
 @defun_wrapped
-def mfrom(ctx, q=None, m=None, k=None, tau=None, qbar=None):
+def mfrom(ctx, q=None, m=None, k=None, tau=None, qbar=None,
+          g2=None, g3=None, omega1=None, omega2=None):
     r"""
     Returns the elliptic parameter `m`, given any of
-    `q, m, k, \tau, \bar{q}`::
+    `q, m, k, \tau, \bar{q}`, both Weierstrass invariants `g_2, g_3`,
+    or both half-periods `\omega_1, \omega_2`::
 
         >>> from mpmath import mp, mfrom, qfrom, kfrom, taufrom, qbarfrom, taylor
         >>> mp.dps = 25
@@ -305,6 +344,8 @@ def mfrom(ctx, q=None, m=None, k=None, tau=None, qbar=None):
         (0.25 + 0.0j)
         >>> mfrom(qbar=qbarfrom(m=0.25))
         0.25
+        >>> mfrom(omega1=1, omega2=0.5j)
+        (0.9705627484771405856202647 + 0.0j)
 
     As `q \to 1` and `q \to -1`, `m` rapidly approaches
     `1` and `-\infty` respectively::
@@ -325,6 +366,7 @@ def mfrom(ctx, q=None, m=None, k=None, tau=None, qbar=None):
         [0.0, 16.0, -128.0, 704.0, -3072.0, 11488.0, -38400.0, 117632.0]
 
     """
+    _validate_weierstrass_pair_args("mfrom", g2, g3, omega1, omega2)
     if m is not None:
         return m
     if k is not None:
@@ -333,6 +375,11 @@ def mfrom(ctx, q=None, m=None, k=None, tau=None, qbar=None):
         q = ctx.expjpi(tau)
     if qbar is not None:
         q = ctx.sqrt(qbar)
+    if q is None:
+        if g2 is not None:
+            return ctx.mfrom(tau=ctx.taufrom(g2=g2, g3=g3))
+        if omega1 is not None:
+            return ctx.mfrom(tau=ctx.taufrom(omega1=omega1, omega2=omega2))
     if q == 1:
         return ctx.convert(q)
     if q == -1:
@@ -512,6 +559,30 @@ def kleinjinv(ctx, J):
     half-plane such that ``kleinj(tau)`` equals `J`, up to numerical error.
     Since ``kleinj`` is invariant under modular transformations, the inverse
     is multivalued; this function returns one representative.
+
+    The implementation uses the classical inverse construction via the
+    modular lambda function, described as Method 1 here:
+
+        https://en.wikipedia.org/wiki/J-invariant#Inverse_functions
+
+    It first converts from the normalized invariant `J` to `j = 1728 J`,
+    then solves
+
+        j = 256 (1 - x)^3 / x^2,    x = lambda (1 - lambda),
+
+    for `lambda`.  The half-period ratio is then obtained from
+
+        tau = i K(1 - lambda) / K(lambda),
+
+    where `K` is the complete elliptic integral.  Using
+
+        K(m) = pi / (2 AGM(1, sqrt(1 - m))),
+
+    this is evaluated by the arithmetic-geometric mean formula
+
+        tau = i AGM(1, sqrt(1 - lambda)) / AGM(1, sqrt(lambda)).
+
+    Different root choices give different modularly equivalent branches.
 
     **Examples**
 
@@ -1600,8 +1671,9 @@ def _weierstrass_omega_tau(ctx, funcname, g2=None, g3=None, tau=None,
     if omega1 is not None:
         omega1 = ctx.convert(omega1)
         omega2 = ctx.convert(omega2)
-        tau = omega2 / omega1
-        if ctx.im(tau) <= 0:
+        try:
+            tau = ctx.taufrom(omega1=omega1, omega2=omega2)
+        except ValueError:
             raise ValueError("%s: omega ratio must be in upper half-plane" %
                              funcname)
         return omega1, tau
