@@ -23,6 +23,7 @@ from mpmath import (cos, cosh, cot, coth, csc, csch, diff, ellipe, ellipfun,
                     qbarfrom, qfrom, sec, sech, sin, sinh, sqrt, tan, tanh,
                     taufrom, weierp, weierpinv, weierpprime,
                     weiersigma, weierzeta)
+from mpmath.functions.elliptic import _kleinjinv_data
 
 
 def mpc_ae(a, b, eps=eps):
@@ -1017,9 +1018,38 @@ def test_kleinjinv():
     value = kleinj(tau)
 
     assert mpc_ae(kleinj(kleinjinv(value)), value, eps=eps*1000)
-    assert mpc_ae(kleinjinv(0), -0.5 + sqrt(3)*j/2,
+    assert mpc_ae(kleinjinv(0), 0.5 + sqrt(3)*j/2,
                   eps=eps*1000)
     assert mpc_ae(kleinjinv(1), j, eps=eps*1000)
+
+
+def test_kleinjinv_fundamental_domain():
+    mp.dps = 30
+
+    assert mpc_ae(kleinjinv(0), mpf('0.5') + sqrt(3)*j/2,
+                  eps=eps*1000)
+
+    for tau in [0.625 + 0.75*j, 2.3 + 0.4*j, -1.7 + 0.2*j,
+                0.1 + 2.5*j]:
+        value = kleinj(tau)
+        recovered = kleinjinv(value)
+        assert mp.almosteq(kleinj(recovered), value,
+                           rel_eps=mp.eps*100000, abs_eps=mp.eps*100000)
+        assert recovered.imag > 0
+        assert abs(recovered.real) <= mpf('0.5') + mp.eps*100
+        assert abs(recovered) >= 1 - mp.eps*100
+
+
+def test_kleinjinv_real_lambda_fast_path():
+    mp.dps = 30
+
+    for value in [mpf('1.01'), mpf(2), mpf('1e6'), mpc(2, 0)]:
+        lbd, agm_m, agm_complement, tau = _kleinjinv_data(mp, value)
+        assert mp._is_real_type(lbd)
+        assert mp._is_real_type(agm_m)
+        assert mp._is_real_type(agm_complement)
+        assert mp.almosteq(kleinj(tau), value,
+                           rel_eps=mp.sqrt(mp.eps), abs_eps=mp.eps*10000)
 
 def test_taufrom_weierstrass_invariants():
     mp.dps = 30
@@ -1029,8 +1059,66 @@ def test_taufrom_weierstrass_invariants():
     recovered_tau = taufrom(g2=g2, g3=g3)
 
     assert mpc_ae(kleinj(recovered_tau), kleinj(tau), eps=eps*1000)
+    assert recovered_tau.imag > 0
+    assert abs(recovered_tau.real) <= mpf('0.5') + mp.eps*100
+    assert abs(recovered_tau) >= 1 - mp.eps*100
     pytest.raises(ValueError, lambda: taufrom(g2=g2))
     pytest.raises(ValueError, lambda: taufrom(g3=g3))
+
+
+def test_weierstrass_half_periods_direct_agm_roundtrip():
+    cases = [
+        (60, 140), (12, 1), (12, -1), (4, 1), (4, -1),
+        (1, 1), (1, -1), (10, 5), (100, 1), (-4, 1),
+        (1 + 2*j, 3 - 4*j),
+    ]
+
+    for dps in [15, 30, 80]:
+        with mp.workdps(dps):
+            for g2, g3 in cases:
+                omega1, omega2 = omega1omega2from(g2=g2, g3=g3)
+                actual_g2, actual_g3 = g2g3from(
+                    omega1=omega1, omega2=omega2)
+                tol = mp.eps*10000
+                assert mp.almosteq(actual_g2, g2,
+                                   rel_eps=tol, abs_eps=tol)
+                assert mp.almosteq(actual_g3, g3,
+                                   rel_eps=tol, abs_eps=tol)
+
+                tau = omega2/omega1
+                assert tau.imag > 0
+                assert abs(tau.real) <= mpf('0.5') + tol
+                assert abs(tau) >= 1 - tol
+
+
+def test_weierstrass_period_method_switch_is_continuous():
+    mp.dps = 50
+    threshold = ldexp(1, -20)
+
+    # The internal method switches when the ratio between |g2|**3 and
+    # 27*|g3|**2 crosses this threshold. Exercise both the J=0 and J=1
+    # sides and ensure the canonical period basis does not jump.
+    families = [
+        lambda ratio: ((27*ratio)**(mpf(1)/3), mpf(1)),
+        lambda ratio: (mpf(1), sqrt(ratio/27)),
+    ]
+    for make_invariants in families:
+        below = make_invariants(threshold*(1-mpf('1e-8')))
+        above = make_invariants(threshold*(1+mpf('1e-8')))
+        periods_below = omega1omega2from(g2=below[0], g3=below[1])
+        periods_above = omega1omega2from(g2=above[0], g3=above[1])
+
+        for value_below, value_above in zip(periods_below, periods_above):
+            assert mp.almosteq(value_below, value_above,
+                               rel_eps=mpf('1e-8'), abs_eps=mpf('1e-8'))
+
+        for invariants, periods in [(below, periods_below),
+                                    (above, periods_above)]:
+            actual = g2g3from(omega1=periods[0], omega2=periods[1])
+            assert mp.almosteq(actual[0], invariants[0],
+                               rel_eps=mp.eps*10000)
+            assert mp.almosteq(actual[1], invariants[1],
+                               rel_eps=mp.eps*10000)
 
 def test_taufrom_half_periods():
     mp.dps = 30

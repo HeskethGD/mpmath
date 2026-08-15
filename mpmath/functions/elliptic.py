@@ -230,7 +230,13 @@ def taufrom(ctx, q=None, m=None, k=None, tau=None, qbar=None,
     r"""
     Returns the elliptic half-period ratio `\tau`, given any of
     `q, m, k, \tau, \bar{q}`, both Weierstrass invariants
-    `g_2, g_3`, or both half-periods `\omega_1, \omega_2`::
+    `g_2, g_3`, or both half-periods `\omega_1, \omega_2`.
+
+    For `g_2, g_3`, this function uses :func:`~mpmath.kleinjinv` and returns
+    the representative in the standard modular fundamental domain, with the
+    boundary conventions documented there.
+
+    **Examples**
 
         >>> from mpmath import mp, taufrom, qfrom, mfrom, kfrom, qbarfrom
         >>> mp.dps = 25
@@ -562,18 +568,56 @@ def kleinj(ctx, tau=None, q=None, m=None, k=None, qbar=None,
     return P/Q
 
 
+def _kleinjinv_data(ctx, J):
+    """Return lambda, its two AGM values, and the principal-branch tau."""
+    J = ctx.convert(J)
+    if J == 0:
+        tau = ctx.mpc(-ctx.mpf(1)/2, ctx.sqrt(3)/2)
+        return None, None, None, tau
+    _j = 1728 * J
+    sqrt_arg = 3*(1728*_j**2 - _j**3)
+    exponent = ctx.mpf(1) / ctx.mpf(3)
+    t = (-_j**3 + 2304*_j**2 - 884736*_j +
+         12288*ctx.sqrt(sqrt_arg))**exponent
+    x = ctx.mpf(1)/768*t + (1 - _j/768) - (1536*_j - _j**2) / (768*t)
+
+    lbd = (1 + ctx.sqrt(1 - 4*x)) / 2
+    # For real J > 1 the selected lambda is real. Principal-root rounding can
+    # nevertheless leave it with a sub-precision imaginary part, needlessly
+    # making both AGM evaluations use substantially slower complex arithmetic.
+    if ctx.im(J) == 0 and ctx.re(J) > 1:
+        lbd = ctx.re(lbd)
+    agm_m = ctx.agm(1, ctx.sqrt(1-lbd))
+    agm_complement = ctx.agm(1, ctx.sqrt(lbd))
+    tau = ctx.j * agm_m / agm_complement
+    return lbd, agm_m, agm_complement, tau
+
+
+def _fundamental_domain_tau(ctx, tau):
+    """Reduce an upper-half-plane tau using the Weierstrass conventions."""
+    a, b, c, d = ctx._reduce_psl2z(tau)
+    tau = (a*tau + b) / (c*tau + d)
+    if ctx.almosteq(ctx.re(tau), -ctx.one/2):
+        tau += 1
+    if ctx.almosteq(abs(tau), ctx.one) and ctx.re(tau) < 0:
+        tau = -1/tau
+    return tau
+
+
 @defun_wrapped
 def kleinjinv(ctx, J):
     r"""
-    Evaluates a branch of the inverse Klein j-invariant.
+    Evaluates the canonical inverse Klein j-invariant.
 
-    Given a value `J`, returns a half-period ratio `\tau` in the upper
-    half-plane such that ``kleinj(tau)`` equals `J`, up to numerical error.
-    Since ``kleinj`` is invariant under modular transformations, the inverse
-    is multivalued; this function returns one representative.
-    The branch is determined by principal square/cube roots in the formula
-    below; the returned value is one modularly equivalent preimage and is not
-    canonicalized to a fundamental domain.
+    Given a value `J`, returns a half-period ratio `\tau` such that
+    ``kleinj(tau)`` equals `J`, up to numerical error. Since ``kleinj`` is
+    invariant under modular transformations, its inverse is multivalued.
+    This function returns the representative in the standard modular
+    fundamental domain
+    `|\operatorname{Re}(\tau)| \leq 1/2`, `|\tau| \geq 1`. On its boundary,
+    `\operatorname{Re}(\tau)=1/2` is preferred to `-1/2`, and the right half
+    of the circle `|\tau|=1` is preferred. In particular, `J=0` returns
+    `1/2+i\sqrt{3}/2`, and `J=1` returns `i`.
 
     The implementation uses the classical inverse construction via the
     modular lambda function, described as Method 1 in the Wikipedia article
@@ -586,7 +630,7 @@ def kleinjinv(ctx, J):
 
         j = 256 (1 - x)^3 / x^2, \quad x = \lambda (1 - \lambda),
 
-    for `lambda`.  The half-period ratio is then obtained from
+    for `\lambda`.  The half-period ratio is then obtained from
 
     .. math ::
 
@@ -606,7 +650,9 @@ def kleinjinv(ctx, J):
         i \operatorname{AGM}(1, \sqrt{1 - \lambda}) /
         \operatorname{AGM}(1, \sqrt{\lambda}).
 
-    Different root choices give different modularly equivalent branches.
+    The algebraic construction initially produces one modularly equivalent
+    value using principal roots. That value is then reduced to the
+    fundamental domain described above.
 
     **Examples**
 
@@ -618,21 +664,15 @@ def kleinjinv(ctx, J):
         0.0
         >>> kleinjinv(1)
         (0.0 + 1.0j)
+        >>> kleinjinv(0)
+        (0.5 + 0.8660254037844386467637232j)
+        >>> tau = mp.mpc('2.3', '0.4')
+        >>> chop(kleinjinv(kleinj(tau)))
+        (-0.2 + 1.6j)
 
     """
-    J = ctx.convert(J)
-    if J == 0:
-        return ctx.mpc(-ctx.mpf(1)/2, ctx.sqrt(3)/2)
-    _j = 1728 * J
-    sqrt_arg = 3*(1728*_j**2 - _j**3)
-    exponent = ctx.mpf(1) / ctx.mpf(3)
-    t = (-_j**3 + 2304*_j**2 - 884736*_j +
-         12288*ctx.sqrt(sqrt_arg))**exponent
-    x = ctx.mpf(1)/768*t + (1 - _j/768) - (1536*_j - _j**2) / (768*t)
-
-    lbd = (1 + ctx.sqrt(1 - 4*x)) / 2
-    tau = ctx.j * ctx.agm(1, ctx.sqrt(1-lbd)) / ctx.agm(1, ctx.sqrt(lbd))
-    return tau
+    _, _, _, tau = _kleinjinv_data(ctx, J)
+    return _fundamental_domain_tau(ctx, tau)
 
 
 def RF_calc(ctx, x, y, z, r):
@@ -1693,9 +1733,13 @@ def _eisenstein_E4_E6(ctx, tau):
     q = ctx.qfrom(tau=tau)
     j2 = ctx.jtheta(2, 0, q)
     j3 = ctx.jtheta(3, 0, q)
-    j4 = ctx.jtheta(4, 0, q)
-    E4 = (j2**8 + j3**8 + j4**8) / 2
-    E6 = (-3*j2**8 * (j3**4 + j4**4) + (j3**12 + j4**12)) / 2
+    j24 = j2**4
+    j34 = j3**4
+    # Jacobi's identity j3**4 = j2**4 + j4**4 eliminates one
+    # comparatively expensive theta-constant evaluation.
+    E4 = j24**2 - j24*j34 + j34**2
+    E6 = (j24**3 - ctx.mpf(3)/2*j24**2*j34 -
+          ctx.mpf(3)/2*j24*j34**2 + j34**3)
     return E4, E6
 
 def _eisenstein_G4_G6(ctx, tau):
@@ -1706,6 +1750,7 @@ def _eisenstein_G4_G6(ctx, tau):
     G4 = 2 * ctx.zeta(4) * E4
     G6 = 2 * ctx.zeta(6) * E6
     return G4, G6
+
 
 # ============================================================================
 # Weierstrass parameter conversion functions
@@ -1775,8 +1820,9 @@ def omega1omega2from(ctx, q=None, m=None, k=None, tau=None, qbar=None,
     normalized half-periods `\omega_1 = 1/2` and
     `\omega_2 = \tau/2`.
 
-    When converting from `g_2, g_3`, the basis is chosen so that
-    `\tau = \omega_2/\omega_1` lies in the standard modular fundamental
+    When converting from `g_2, g_3`, this convention is independent of the
+    internal method used to recover the period scale. The basis is chosen so
+    that `\tau = \omega_2/\omega_1` lies in the standard modular fundamental
     domain. On its boundary, the representative with
     `\operatorname{Re}(\tau) = 1/2` is preferred to `-1/2`, and the right
     half of the circle `|\tau| = 1` is preferred. The simultaneous sign
@@ -1820,17 +1866,67 @@ def omega1omega2from(ctx, q=None, m=None, k=None, tau=None, qbar=None,
             omegaA = (g3 ** (ctx.mpf(-1)/ctx.mpf(6)) *
                       ctx.gamma(ctx.mpf(1)/ctx.mpf(3))**3 / (4*ctx.pi))
             tau = ctx.mpc(ctx.mpf(1)/ctx.mpf(2), ctx.sqrt(3)/2)
+            omegaB = tau * omegaA
         elif g3 == 0:
-            tau = ctx.taufrom(g2=g2, g3=g3)
-            G4, G6 = _eisenstein_G4_G6(ctx, tau)
-            omegaA = (ctx.j * (ctx.mpf(15)/(4*g2) * G4) **
+            # Lemniscatic closed form, written to preserve the principal
+            # fourth-root branch used by the former Eisenstein calculation.
+            lemniscatic = (ctx.gamma(ctx.mpf(1)/4)**2 /
+                           (4*ctx.sqrt(ctx.pi)))
+            omegaA = (ctx.j * (lemniscatic**4/g2) **
                       (ctx.mpf(1)/ctx.mpf(4)))
+            tau = ctx.j
+            omegaB = tau * omegaA
         else:
-            tau = ctx.taufrom(g2=g2, g3=g3)
-            G4, G6 = _eisenstein_G4_G6(ctx, tau)
-            omegaA = ctx.sqrt(g2/g3 * G6/G4 * ctx.mpf(7)/ctx.mpf(12))
+            discriminant = g2**3 - 27*g3**2
+            g2_term = abs(g2)**3
+            g3_term = 27*abs(g3)**2
+            shape_ratio = min(g2_term, g3_term) / max(g2_term, g3_term)
 
-        omegaB = tau * omegaA
+            # The lambda formula is singular at the cusp and ill-conditioned
+            # near J=0 and J=1. Retain the Eisenstein scale formula there so
+            # small nonzero invariants are not discarded by cancellation.
+            if discriminant == 0 or shape_ratio < ctx.ldexp(1, -20):
+                tau = ctx.taufrom(g2=g2, g3=g3)
+                G4, G6 = _eisenstein_G4_G6(ctx, tau)
+                omegaA = ctx.sqrt(g2/g3 * G6/G4 *
+                                  ctx.mpf(7)/ctx.mpf(12))
+                omegaB = tau * omegaA
+            else:
+                J = g2**3 / discriminant
+                lbd, agm_m, agm_complement, tau = _kleinjinv_data(ctx, J)
+                # J=0 is handled by the exact g2 == 0 branch above.
+                assert lbd is not None
+                assert agm_m is not None
+                assert agm_complement is not None
+
+                # For D=e1-e3 and lbd=(e2-e3)/D,
+                #
+                # g2 = 4*D**2*(1-lbd+lbd**2)/3,
+                # g3 = -4*D**3*(2-lbd)*(2*lbd-1)*(1+lbd)/27.
+                #
+                # Use whichever invariant carries more scale information.
+                factor = 1 - lbd + lbd**2
+                cubic_factor = (2-lbd)*(2*lbd-1)*(1+lbd)
+                if g2_term >= g3_term:
+                    D = ctx.sqrt(3*g2/(4*factor))
+                    predicted_g3 = (-ctx.mpf(4)/27 * D**3 *
+                                    cubic_factor)
+                    if abs(predicted_g3-g3) > abs(-predicted_g3-g3):
+                        D = -D
+                else:
+                    exponent = ctx.mpf(1)/3
+                    D0 = (-27*g3/(4*cubic_factor))**exponent
+                    cube_root_unity = ctx.expjpi(ctx.mpf(2)/3)
+                    candidates = (D0, D0*cube_root_unity,
+                                  D0*cube_root_unity**2)
+                    D = min(candidates,
+                            key=lambda candidate:
+                                abs(ctx.mpf(4)/3*candidate**2*factor-g2))
+
+                sqrt_D = ctx.sqrt(D)
+                omegaA = ctx.pi / (2*agm_m*sqrt_D)
+                omegaB = ctx.j*ctx.pi / (2*agm_complement*sqrt_D)
+
         if g2 != 0 and g3 != 0:
             a, b, c, d = ctx._reduce_psl2z(tau)
             omega1 = d*omegaA + c*omegaB
@@ -1838,6 +1934,19 @@ def omega1omega2from(ctx, q=None, m=None, k=None, tau=None, qbar=None,
         else:
             omega1, omega2 = omegaA, omegaB
 
+        # Remove sub-precision components introduced by inverse-j branch
+        # arithmetic before applying conventions on symmetry boundaries.
+        omega1 = ctx.chop(omega1)
+        omega2 = ctx.chop(omega2)
+        # For real invariants with J < 0, the reduced ratio lies exactly on
+        # a vertical boundary of the fundamental domain.
+        # Inverse-j loses relative accuracy at the adjacent elliptic point,
+        # so enforce the documented preference for the right boundary from
+        # the exact invariant geometry instead of a floating-point test.
+        discriminant = g2**3 - 27*g3**2
+        if (ctx.im(g2) == 0 and ctx.im(g3) == 0 and ctx.re(g2) > 0 and
+                ctx.re(discriminant) < 0 and ctx.re(omega2/omega1) < 0):
+            omega2 += omega1
         omega1, omega2 = _canonicalize_weierstrass_periods(
             ctx, omega1, omega2)
         return +omega1, +omega2
