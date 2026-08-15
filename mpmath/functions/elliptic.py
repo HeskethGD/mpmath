@@ -1857,7 +1857,7 @@ def omega1omega2from(ctx, q=None, m=None, k=None, tau=None, qbar=None,
             g3_term = 27*abs(g3)**2
             shape_ratio = min(g2_term, g3_term) / max(g2_term, g3_term)
 
-            # The lambda formula is singular at the cusp and ill-conditioned
+            # Direct root formulas are singular at the cusp and ill-conditioned
             # near J=0 and J=1. Retain the Eisenstein scale formula there so
             # small nonzero invariants are not discarded by cancellation.
             if discriminant == 0 or shape_ratio < ctx.ldexp(1, -20):
@@ -1927,40 +1927,31 @@ def omega1omega2from(ctx, q=None, m=None, k=None, tau=None, qbar=None,
                 return (+(real_period/2-ctx.j*imaginary_part),
                         +(real_period/2+ctx.j*imaginary_part))
             else:
-                J = g2**3 / discriminant
-                lbd, agm_m, agm_complement, tau = _kleinjinv_data(ctx, J)
-                # J=0 is handled by the exact g2 == 0 branch above.
-                assert lbd is not None
-                assert agm_m is not None
-                assert agm_complement is not None
-
-                # For D=e1-e3 and lbd=(e2-e3)/D,
-                #
-                # g2 = 4*D**2*(1-lbd+lbd**2)/3,
-                # g3 = -4*D**3*(2-lbd)*(2*lbd-1)*(1+lbd)/27.
-                #
-                # Use whichever invariant carries more scale information.
-                factor = 1 - lbd + lbd**2
-                cubic_factor = (2-lbd)*(2*lbd-1)*(1+lbd)
-                if g2_term >= g3_term:
-                    D = ctx.sqrt(3*g2/(4*factor))
-                    predicted_g3 = (-ctx.mpf(4)/27 * D**3 *
-                                    cubic_factor)
-                    if abs(predicted_g3-g3) > abs(-predicted_g3-g3):
-                        D = -D
-                else:
-                    exponent = ctx.mpf(1)/3
-                    D0 = (-27*g3/(4*cubic_factor))**exponent
-                    cube_root_unity = ctx.expjpi(ctx.mpf(2)/3)
-                    candidates = (D0, D0*cube_root_unity,
-                                  D0*cube_root_unity**2)
-                    D = min(candidates,
-                            key=lambda candidate:
-                                abs(ctx.mpf(4)/3*candidate**2*factor-g2))
-
+                # Solve the original cubic directly. This obtains both the
+                # elliptic parameter and its scale together, avoiding inverse
+                # j followed by a separate reconstruction of e1-e3.
+                root_discriminant = ctx.sqrt(-discriminant/1728)
+                u3 = g3/8 + root_discriminant
+                if not u3:
+                    u3 = g3/8 - root_discriminant
+                u = u3**(ctx.mpf(1)/3)
+                v = g2/(12*u)
+                cube_root_unity = ctx.expjpi(ctx.mpf(2)/3)
+                cube_root_unity2 = -1-cube_root_unity
+                e1 = u+v
+                e2 = cube_root_unity*u + cube_root_unity2*v
+                e3 = cube_root_unity2*u + cube_root_unity*v
+                D = e1-e3
+                m = (e2-e3)/D
                 sqrt_D = ctx.sqrt(D)
-                omegaA = ctx.pi / (2*agm_m*sqrt_D)
-                omegaB = ctx.j*ctx.pi / (2*agm_complement*sqrt_D)
+                omegaA = (ctx.pi /
+                          (2*ctx.agm(1, ctx.sqrt(1-m))*sqrt_D))
+                omegaB = (ctx.j*ctx.pi /
+                          (2*ctx.agm(1, ctx.sqrt(m))*sqrt_D))
+                tau = omegaB/omegaA
+                if ctx.im(tau) < 0:
+                    omegaB = -omegaB
+                    tau = -tau
 
         if g2 != 0 and g3 != 0:
             a, b, c, d = ctx._reduce_psl2z(tau)
