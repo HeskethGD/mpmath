@@ -1700,31 +1700,6 @@ def _roots_from_omega(ctx, omega1, omega2):
     return e1, e2, e3
 
 
-def _canonicalize_weierstrass_periods(ctx, omega1, omega2):
-    """Choose a deterministic orientation for a reduced period basis."""
-    tau = omega2 / omega1
-
-    # Identify the vertical edges of the fundamental domain.
-    if ctx.almosteq(ctx.re(tau), -ctx.one/2):
-        omega2 += omega1
-        tau = omega2 / omega1
-
-    # Identify equivalent points on the circular boundary.
-    if ctx.almosteq(abs(tau), ctx.one) and ctx.re(tau) < 0:
-        omega1, omega2 = omega2, -omega1
-
-    # The invariants do not distinguish a basis from its simultaneous
-    # negation. Follow the usual convention of placing omega1 in the right
-    # half-plane, using the negative imaginary axis as the boundary.
-    real = ctx.re(omega1)
-    if ((real < 0 and not ctx.almosteq(real, 0)) or
-            (ctx.almosteq(real, 0) and ctx.im(omega1) > 0)):
-        omega1 = -omega1
-        omega2 = -omega2
-
-    return omega1, omega2
-
-
 def _eisenstein_E4_E6(ctx, tau):
     """
     Eisenstein E-series of weight 4 and 6.
@@ -1891,6 +1866,66 @@ def omega1omega2from(ctx, q=None, m=None, k=None, tau=None, qbar=None,
                 omegaA = ctx.sqrt(g2/g3 * G6/G4 *
                                   ctx.mpf(7)/ctx.mpf(12))
                 omegaB = tau * omegaA
+            elif ctx.im(g2) == 0 and ctx.im(g3) == 0:
+                real_g2 = ctx.re(g2)
+                real_g3 = ctx.re(g3)
+                real_discriminant = ctx.re(discriminant)
+                if real_discriminant > 0:
+                    # Three real roots. A trigonometric solution avoids the
+                    # complex intermediate values in Cardano's formula. The
+                    # ordered roots give a real elliptic parameter m.
+                    root_scale = ctx.sqrt(real_g2/3)
+                    cosine = (3*ctx.sqrt(3)*real_g3 /
+                              (real_g2*ctx.sqrt(real_g2)))
+                    cosine = min(ctx.one, max(-ctx.one, cosine))
+                    theta = ctx.acos(cosine)/3
+                    e1 = root_scale*ctx.cos(theta)
+                    e2 = root_scale*ctx.cos(theta-2*ctx.pi/3)
+                    e3 = root_scale*ctx.cos(theta+2*ctx.pi/3)
+                    D = e1-e3
+                    m = (e2-e3)/D
+                    sqrt_D = ctx.sqrt(D)
+                    real_period = ctx.ellipk(m)/sqrt_D
+                    imaginary_period = ctx.ellipk(1-m)/sqrt_D
+
+                    # For m <= 1/2 the standard rectangular basis is already
+                    # reduced. For m > 1/2 apply its S-transform directly.
+                    if m <= ctx.one/2:
+                        return +real_period, +(ctx.j*imaginary_period)
+                    return +(-ctx.j*imaginary_period), +real_period
+
+                # One real root and a conjugate pair. Real Cardano radicals
+                # followed by a quadratic transformation express both periods
+                # using complete elliptic integrals with real parameters.
+                root_discriminant = ctx.sqrt(-real_discriminant/1728)
+                exponent = ctx.mpf(1)/3
+                u3 = real_g3/8 + root_discriminant
+                v3 = real_g3/8 - root_discriminant
+                u = ctx.sign(u3)*abs(u3)**exponent
+                v = ctx.sign(v3)*abs(v3)**exponent
+                real_root = u+v
+                root_real_part = 3*real_root/2
+                root_imaginary_part = ctx.sqrt(3)*(u-v)/2
+                H = ctx.sqrt(root_real_part**2 + root_imaginary_part**2)
+                m = (H-root_real_part)/(2*H)
+                sqrt_H = ctx.sqrt(H)
+                real_period = ctx.ellipk(m)/sqrt_H
+                imaginary_part = ctx.ellipk(1-m)/(2*sqrt_H)
+
+                # These bases directly implement the documented fundamental-
+                # domain and simultaneous-sign conventions in each real
+                # symmetry region, so no generic PSL(2,Z) reduction is needed.
+                if real_g2 > 0:
+                    if real_g3 > 0:
+                        return (+real_period,
+                                +(real_period/2 + ctx.j*imaginary_part))
+                    return (+(-2*ctx.j*imaginary_part),
+                            +(real_period/2-ctx.j*imaginary_part))
+                if real_g3 > 0:
+                    return (+(real_period/2+ctx.j*imaginary_part),
+                            +(-real_period/2+ctx.j*imaginary_part))
+                return (+(real_period/2-ctx.j*imaginary_part),
+                        +(real_period/2+ctx.j*imaginary_part))
             else:
                 J = g2**3 / discriminant
                 lbd, agm_m, agm_complement, tau = _kleinjinv_data(ctx, J)
@@ -1938,6 +1973,7 @@ def omega1omega2from(ctx, q=None, m=None, k=None, tau=None, qbar=None,
         # arithmetic before applying conventions on symmetry boundaries.
         omega1 = ctx.chop(omega1)
         omega2 = ctx.chop(omega2)
+        tau = omega2/omega1
         # For real invariants with J < 0, the reduced ratio lies exactly on
         # a vertical boundary of the fundamental domain.
         # Inverse-j loses relative accuracy at the adjacent elliptic point,
@@ -1945,10 +1981,26 @@ def omega1omega2from(ctx, q=None, m=None, k=None, tau=None, qbar=None,
         # the exact invariant geometry instead of a floating-point test.
         discriminant = g2**3 - 27*g3**2
         if (ctx.im(g2) == 0 and ctx.im(g3) == 0 and ctx.re(g2) > 0 and
-                ctx.re(discriminant) < 0 and ctx.re(omega2/omega1) < 0):
+                ctx.re(discriminant) < 0 and ctx.re(tau) < 0):
             omega2 += omega1
-        omega1, omega2 = _canonicalize_weierstrass_periods(
-            ctx, omega1, omega2)
+            tau += 1
+
+        # Identify equivalent points on the vertical and circular boundaries
+        # of the fundamental domain without recomputing the period ratio.
+        if ctx.almosteq(ctx.re(tau), -ctx.one/2):
+            omega2 += omega1
+            tau += 1
+        if ctx.almosteq(abs(tau), ctx.one) and ctx.re(tau) < 0:
+            omega1, omega2 = omega2, -omega1
+
+        # The invariants do not distinguish a basis from its simultaneous
+        # negation. Place omega1 in the right half-plane, with the negative
+        # imaginary axis included as its boundary.
+        real = ctx.re(omega1)
+        if ((real < 0 and not ctx.almosteq(real, 0)) or
+                (ctx.almosteq(real, 0) and ctx.im(omega1) > 0)):
+            omega1 = -omega1
+            omega2 = -omega2
         return +omega1, +omega2
 
 
