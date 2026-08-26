@@ -68,7 +68,7 @@ applicable (:func:`~mpmath.qfrom`, :func:`~mpmath.mfrom`,
 
 """
 
-from .functions import defun, defun_wrapped
+from .functions import defun, defun_memoized_last, defun_wrapped
 
 @defun_wrapped
 def eta(ctx, tau):
@@ -1838,8 +1838,9 @@ def g2g3from(ctx, q=None, m=None, k=None, tau=None, qbar=None,
                    j3**12))
     return +g2, +g3
 
-def _omega1omega2from(ctx, q=None, m=None, k=None, tau=None, qbar=None,
-                      g2=None, g3=None, omega1=None, omega2=None):
+@defun_memoized_last
+def omega1omega2from(ctx, q=None, m=None, k=None, tau=None, qbar=None,
+                     g2=None, g3=None, omega1=None, omega2=None):
     r"""
     Returns the Weierstrass half-periods `(\omega_1, \omega_2)`, given
     any of `q, m, k, \tau, \bar{q}`, both invariants `g_2, g_3`, or both
@@ -2023,24 +2024,6 @@ def _omega1omega2from(ctx, q=None, m=None, k=None, tau=None, qbar=None,
         else:
             omega1, omega2 = periods
     return +omega1, +omega2
-
-
-@defun
-def omega1omega2from(ctx, q=None, m=None, k=None, tau=None, qbar=None,
-                     g2=None, g3=None, omega1=None, omega2=None):
-    try:
-        cached = ctx._omega1omega2from_cached
-    except AttributeError:
-        def compute(q=None, m=None, k=None, tau=None, qbar=None,
-                    g2=None, g3=None, omega1=None, omega2=None):
-            return _omega1omega2from(
-                ctx, q, m, k, tau, qbar, g2, g3, omega1, omega2)
-        cached = ctx.memoize_last(compute)
-        ctx._omega1omega2from_cached = cached
-    return cached(q, m, k, tau, qbar, g2, g3, omega1, omega2)
-
-
-omega1omega2from.__doc__ = _omega1omega2from.__doc__
 
 
 # ============================================================================

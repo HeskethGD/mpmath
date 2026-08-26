@@ -1208,13 +1208,14 @@ def test_omega1omega2from_last_value_cache(monkeypatch):
 
     ctx = mp.clone()
     calls = []
-    original = elliptic._omega1omega2from
+    original = elliptic._validate_weierstrass_parameter_args
 
     def counted(*args, **kwargs):
         calls.append(None)
         return original(*args, **kwargs)
 
-    monkeypatch.setattr(elliptic, "_omega1omega2from", counted)
+    monkeypatch.setattr(
+        elliptic, "_validate_weierstrass_parameter_args", counted)
 
     first = ctx.omega1omega2from(g2=60, g3=140)
     second = ctx.omega1omega2from(g2=60, g3=140)
@@ -1233,6 +1234,10 @@ def test_omega1omega2from_last_value_cache(monkeypatch):
     ctx.prec += 10
     ctx.omega1omega2from(g2=60, g3=140)
     assert len(calls) == 4
+
+    other_ctx = mp.clone()
+    other_ctx.omega1omega2from(g2=60, g3=140)
+    assert len(calls) == 5
 
 
 def test_weierstrass_periodicity():
