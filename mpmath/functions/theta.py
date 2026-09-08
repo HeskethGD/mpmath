@@ -420,6 +420,7 @@ def _reduce_psl2z(ctx, z):
 #
 
 _T_map = {(0, 0): 1, (0, 1): 2, (1, 0): 4, (1, 1): 3}
+_JTHETA_QUASIPERIOD_GUARD_BITS = 10
 
 def _jtheta_permutation(n, a, b, c, d):
     if n == 2:
@@ -456,10 +457,14 @@ def _jtheta_needs_modular(ctx, z, q):
     tau = ctx.taufrom(q=q)
     assert abs(q) < 1 and tau.imag > 0
     real = abs(tau.real)
-    if real > ctx.one/2 and not ctx.almosteq(real, ctx.one/2):
+    # The same finite-precision q can be reconsidered under the guard bits
+    # used for quasi-period reduction. Include those bits in the usual
+    # four-bit boundary margin so rounding does not change the decision.
+    boundary_mag = -ctx.prec + 4 + _JTHETA_QUASIPERIOD_GUARD_BITS
+    if real > 0.5 and ctx.mag(real - 0.5) > boundary_mag:
         return True
     norm = tau.real**2 + tau.imag**2
-    return norm < ctx.one and not ctx.almosteq(norm, ctx.one)
+    return norm < 1 and ctx.mag(1 - norm) > boundary_mag
 
 @defun
 def _jtheta_modular(ctx, g, n, z, q, nd):
@@ -483,8 +488,7 @@ def _jtheta_modular(ctx, g, n, z, q, nd):
         a2z = a2*z
         for i in range(nd + 1):
             yield (ctx.binomial(nd, i) * Hi * v**(nd - i)
-                   * ctx._jtheta(
-                       new_n, new_z, new_q, nd - i, tau_reduced=True))
+                   * ctx.jtheta(new_n, new_z, new_q, nd - i))
             Him1, Hi = Hi, a2z*Hi + a2*i*Him1
 
     C = ctx._jtheta_eps(n, -d, b, c, -a)*ctx.sqrt(v/1j)
@@ -492,13 +496,23 @@ def _jtheta_modular(ctx, g, n, z, q, nd):
     return C*ctx.exp(X)*sum(terms())
 
 @defun
-def _jtheta(ctx, n, z, q, nd, tau_reduced=False):
+def jtheta(ctx, n, z, q, derivative=0):
+    n = int(n)
+    z = ctx.convert(z)
+    q = ctx.convert(q)
+    nd = int(derivative)
+
+    if n not in range(1, 5):
+        raise ValueError("First argument expected to be 1, 2, 3 or 4")
+    if abs(q) >= 1:
+        raise ValueError(f"abs(q) >= 1")
+
     # We use Fourier series (DLMF, §20.2(i)) to compute functions, when
     # |q| is not near 1.  Else, transform τ to the fundamental
     # domain (|Re(τ)| ≤ 0.5 and |τ| ≥ 1), applying transformations
     # of lattice parameter (DLMF, §20.7(viii)).
 
-    if not tau_reduced and ctx._jtheta_needs_modular(z, q):
+    if ctx._jtheta_needs_modular(z, q):
         tau = ctx.taufrom(q=q)
         g = ctx._reduce_psl2z(tau)
 
@@ -513,7 +527,7 @@ def _jtheta(ctx, n, z, q, nd, tau_reduced=False):
     # z to the domain |Im(z)| ≤ π |Im(τ)|/2.
 
     if abs(z.imag) > abs(ctx.log(q).real)/2:
-        with ctx.extraprec(10):
+        with ctx.extraprec(_JTHETA_QUASIPERIOD_GUARD_BITS):
             tau = ctx.taufrom(q=q)
             tau_pi = tau*ctx.pi
             k = round(z.imag/tau_pi.imag)
@@ -527,8 +541,7 @@ def _jtheta(ctx, n, z, q, nd, tau_reduced=False):
             def terms():
                 for i in range(nd + 1):
                     yield (ctx.binomial(nd, i) * beta**i
-                           * ctx._jtheta(
-                               n, new_z, q, nd - i, tau_reduced=True))
+                           * ctx.jtheta(n, new_z, q, nd - i))
 
             res = C*sum(terms())
         return +res
@@ -546,17 +559,3 @@ def _jtheta(ctx, n, z, q, nd, tau_reduced=False):
             q_inner = -q if n == 4 else q
             res = ctx._djacobi_theta3(z, q_inner, nd)
     return +res
-
-@defun
-def jtheta(ctx, n, z, q, derivative=0):
-    n = int(n)
-    z = ctx.convert(z)
-    q = ctx.convert(q)
-    nd = int(derivative)
-
-    if n not in range(1, 5):
-        raise ValueError("First argument expected to be 1, 2, 3 or 4")
-    if abs(q) >= 1:
-        raise ValueError(f"abs(q) >= 1")
-
-    return ctx._jtheta(n, z, q, nd)

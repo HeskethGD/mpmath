@@ -376,7 +376,7 @@ def test_jtheta_modular_boundary_recursion(monkeypatch):
 
         assert not mp._jtheta_needs_modular(z, q)
         with mp.extraprec(10):
-            assert mp._jtheta_needs_modular(z, q)
+            assert not mp._jtheta_needs_modular(z, q)
         jtheta(3, z, q)
         assert len(calls) == 0
 
