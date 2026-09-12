@@ -101,8 +101,18 @@ def _rtheta_tau_data(ctx, tau_key):
     rho = ctx.sqrt(ctx.pi) / invT_frob
     value_radius = _truncation_radius(
         ctx, genus, (0,), rho, invT_frob, ctx.zero)
+    scaled_radius = value_radius / ctx.sqrt(ctx.pi)
+    if genus & 1:
+        ball_volume = 2 * ctx.fprod(
+            2 * ctx.pi / (2 * k + 1)
+            for k in range(1, (genus + 1) // 2))
+    else:
+        ball_volume = ctx.fprod(
+            ctx.pi / k for k in range(1, genus // 2 + 1))
+    point_estimate = (ball_volume * scaled_radius ** genus
+                      / ctx.fprod(abs(T[i, i]) for i in range(genus)))
     return (_matrix_tuple(X), _matrix_tuple(Y), _matrix_tuple(T),
-            invT_frob, rho, value_radius)
+            invT_frob, rho, value_radius, point_estimate)
 
 
 def _upper_gamma_half_integer(ctx, twice_s, x):
@@ -121,29 +131,33 @@ def _upper_gamma_half_integer(ctx, twice_s, x):
     return value
 
 
-def _tail_bound(ctx, genus, degree, radius, rho, invT_frob, shift_norm):
-    """Bound the omitted differentiated Gaussian lattice tail."""
+def _tail_bounds(ctx, genus, degrees, radius, rho, invT_frob, shift_norm):
+    """Bound several omitted differentiated Gaussian lattice tails."""
     x = (radius - rho / 2) ** 2
     scale = genus * ctx.power(2 / rho, genus) / 2
     transform = invT_frob / ctx.sqrt(ctx.pi)
-    tail = ctx.zero
-    for k in range(degree + 1):
-        coefficient = (ctx.binomial(degree, k)
-                       * shift_norm ** (degree - k) * transform ** k)
-        tail += coefficient * _upper_gamma_half_integer(
-            ctx, genus + k, x)
-    return (2 * ctx.pi) ** degree * scale * tail
+    gamma_values = tuple(_upper_gamma_half_integer(ctx, genus + k, x)
+                         for k in range(max(degrees) + 1))
+    results = []
+    for degree in degrees:
+        tail = ctx.fsum(
+            ctx.binomial(degree, k) * shift_norm ** (degree - k)
+            * transform ** k * gamma_values[k]
+            for k in range(degree + 1))
+        results.append((2 * ctx.pi) ** degree * scale * tail)
+    return tuple(results)
 
 
 def _truncation_radius(ctx, genus, degrees, rho, invT_frob, shift_norm):
     """Choose a radius giving working-precision absolute tail error."""
+    degrees = tuple(set(degrees))
     degree = max(degrees)
     threshold = (ctx.sqrt(genus + 2 * degree
                           + ctx.sqrt(genus ** 2 + 8 * degree)) + rho) / 2
     target = ctx.eps / 8
     high = max(ctx.one, threshold)
-    while max(_tail_bound(ctx, genus, d, high, rho,
-                          invT_frob, shift_norm) for d in degrees) > target:
+    while max(_tail_bounds(ctx, genus, degrees, high, rho,
+                           invT_frob, shift_norm)) > target:
         high = 1 + 5 * high / 4
     low = threshold
     # Only the conservative upper endpoint is returned. Twelve bisections
@@ -151,8 +165,8 @@ def _truncation_radius(ctx, genus, degrees, rho, invT_frob, shift_norm):
     # a high-precision transcendental tail dozens of unnecessary times.
     for unused in range(12):
         middle = (low + high) / 2
-        error = max(_tail_bound(ctx, genus, d, middle, rho,
-                                invT_frob, shift_norm) for d in degrees)
+        error = max(_tail_bounds(ctx, genus, degrees, middle, rho,
+                                 invT_frob, shift_norm))
         if error > target:
             low = middle
         else:
@@ -190,11 +204,368 @@ def _ellipsoid_points(ctx, T, center, radius):
     yield from enumerate_coordinate(genus - 1, radius ** 2)
 
 
-def _rtheta_sum(ctx, z, tau_key, a, b, derivatives):
+def _congruence(ctx, matrix, transform):
+    """Return transform.T * matrix * transform without integer coercion."""
+    genus = len(transform)
+    result = ctx.matrix(genus)
+    for i in range(genus):
+        for j in range(genus):
+            result[i, j] = ctx.fsum(
+                transform[k][i] * matrix[k, l] * transform[l][j]
+                for k in range(genus) for l in range(genus))
+    return result
+
+
+def _lll_transform(ctx, Y):
+    """Return a unimodular transform reducing the Gram matrix Y."""
+    genus = Y.rows
+    transform = [[int(i == j) for j in range(genus)]
+                 for i in range(genus)]
+
+    def gram_schmidt():
+        gram = _congruence(ctx, Y, transform)
+        mu = [[ctx.zero] * genus for unused in range(genus)]
+        norms = [ctx.zero] * genus
+        for i in range(genus):
+            norms[i] = gram[i, i] - ctx.fsum(
+                mu[i][j] ** 2 * norms[j] for j in range(i))
+            if norms[i] <= 0:  # pragma: no cover
+                raise ValueError("failed to reduce imaginary part of tau")
+            for k in range(i + 1, genus):
+                mu[k][i] = (gram[k, i] - ctx.fsum(
+                    mu[k][j] * mu[i][j] * norms[j]
+                    for j in range(i))) / norms[i]
+        return mu, norms
+
+    index = 1
+    steps = 0
+    while index < genus:
+        steps += 1
+        if steps > 1000 * genus ** 2:  # pragma: no cover
+            raise ValueError("LLL reduction did not converge")
+        mu, norms = gram_schmidt()
+        for j in range(index - 1, -1, -1):
+            quotient = int(ctx.nint(mu[index][j]))
+            if quotient:
+                for i in range(genus):
+                    transform[i][index] -= quotient * transform[i][j]
+                mu, norms = gram_schmidt()
+        if norms[index] >= ((ctx.mpf('0.75') - mu[index][index - 1] ** 2)
+                            * norms[index - 1]):
+            index += 1
+        else:
+            for i in range(genus):
+                transform[i][index], transform[i][index - 1] = (
+                    transform[i][index - 1], transform[i][index])
+            index = max(1, index - 1)
+    return tuple(tuple(row) for row in transform)
+
+
+def _transform_vector(ctx, transform, vector):
+    """Return transform.T * vector."""
+    genus = len(vector)
+    return tuple(ctx.fsum(transform[j][i] * vector[j]
+                          for j in range(genus))
+                 for i in range(genus))
+
+
+def _partial_inversion(ctx, tau):
+    """Apply the first-coordinate symplectic inversion to tau."""
+    genus = tau.rows
+    t = tau[0, 0]
+    coupling = tuple(tau[0, j] for j in range(1, genus))
+    result = ctx.matrix(genus)
+    result[0, 0] = -1 / t
+    for j in range(1, genus):
+        result[0, j] = result[j, 0] = coupling[j - 1] / t
+    for i in range(1, genus):
+        for j in range(1, genus):
+            result[i, j] = (tau[i, j]
+                            - coupling[i - 1] * coupling[j - 1] / t)
+    return result, (t, coupling)
+
+
+def _point_estimate(ctx, tau_key):
+    """Estimate the value ellipsoid's lattice-point count by its volume."""
+    return ctx._rtheta_tau_data(tau_key)[6]
+
+
+@defun
+@ctx_lru_cache(maxsize=16)
+def _rtheta_reduction_data(ctx, tau_key):
+    """Cache a Siegel-reduced tau and its generator metadata."""
+    tau = ctx.matrix(tau_key)
+    genus = tau.rows
+    operations = []
+    identity = tuple(tuple(int(i == j) for j in range(genus))
+                     for i in range(genus))
+    for unused in range(100):
+        # Replace tau by tau-B. For integral symmetric B, only diag(B)
+        # shifts the zero-characteristic argument (by diag(B)/2).
+        diagonal = []
+        for i in range(genus):
+            diagonal.append(int(ctx.nint(ctx.re(tau[i, i]))))
+            tau[i, i] -= diagonal[-1]
+            for j in range(i):
+                nearest = int(ctx.nint(ctx.re(tau[i, j])))
+                tau[i, j] -= nearest
+                tau[j, i] -= nearest
+        if any(diagonal):
+            operations.append(("translate", tuple(diagonal)))
+
+        # LLL puts a short vector first; a short first vector is precisely
+        # what the following one-coordinate inversion improves.
+        Y = ctx.matrix(genus)
+        for i in range(genus):
+            for j in range(genus):
+                Y[i, j] = ctx.im(tau[i, j])
+        transform = _lll_transform(ctx, Y)
+        if transform != identity:
+            tau = _congruence(ctx, tau, transform)
+            operations.append(("basis", transform))
+
+        if abs(tau[0, 0]) >= 1:
+            break
+        # This generator is the higher-genus analogue of tau -> -1/tau,
+        # applied only to the first coordinate.
+        tau, inversion = _partial_inversion(ctx, tau)
+        operations.append(("invert", inversion))
+    else:  # pragma: no cover
+        raise ValueError("Siegel reduction did not converge")
+    reduced_key = _matrix_tuple(tau)
+    return (reduced_key, tuple(operations),
+            _point_estimate(ctx, reduced_key))
+
+
+def _apply_reduction(ctx, z, operations):
+    """Transform a zero-characteristic argument through Siegel generators."""
+    z = tuple(z)
+    factor = ctx.one
+    for kind, data in operations:
+        if kind == "translate":
+            z = tuple(z[i] + ctx.mpf(data[i]) / 2
+                      for i in range(len(z)))
+        elif kind == "basis":
+            z = _transform_vector(ctx, data, z)
+        else:
+            t, coupling = data
+            first = z[0]
+            factor *= (ctx.exp(-ctx.pi * ctx.j * first ** 2 / t)
+                       / ctx.sqrt(-ctx.j * t))
+            z = ((first / t,)
+                 + tuple(z[i] - coupling[i - 1] * first / t
+                         for i in range(1, len(z))))
+    return z, factor
+
+
+def _zero_characteristic_form(ctx, z, tau_key, a, b):
+    """Express a theta value with characteristic using theta[0, 0]."""
+    genus = len(z)
+    shifted = tuple(
+        z[i] + b[i] + ctx.fsum(tau_key[i][j] * a[j]
+                                for j in range(genus))
+        for i in range(genus))
+    quadratic = ctx.fsum(a[i] * tau_key[i][j] * a[j]
+                         for i in range(genus) for j in range(genus))
+    linear = ctx.fsum(a[i] * (z[i] + b[i]) for i in range(genus))
+    factor = ctx.exp(ctx.pi * ctx.j * quadratic
+                     + 2 * ctx.pi * ctx.j * linear)
+    return shifted, factor
+
+
+def _reduce_zero_argument(ctx, z, tau_key):
+    """Reduce a zero-characteristic value argument modulo its periods."""
+    X_key, Y_key = ctx._rtheta_tau_data(tau_key)[:2]
+    genus = len(z)
+    coefficients = ctx.lu_solve(
+        ctx.matrix(Y_key), ctx.matrix([ctx.im(value) for value in z]))
+    n = tuple(int(ctx.nint(coefficients[i])) for i in range(genus))
+    real_residual = tuple(
+        ctx.re(z[i]) - ctx.fsum(X_key[i][j] * n[j]
+                                for j in range(genus))
+        for i in range(genus))
+    m = tuple(int(ctx.nint(value)) for value in real_residual)
+    reduced = tuple(ctx.mpc(
+        real_residual[i] - m[i],
+        ctx.im(z[i]) - ctx.fsum(Y_key[i][j] * n[j]
+                                for j in range(genus)))
+        for i in range(genus))
+    quadratic = ctx.fsum(n[i] * tau_key[i][j] * n[j]
+                         for i in range(genus) for j in range(genus))
+    linear = ctx.fsum(n[i] * reduced[i] for i in range(genus))
+    factor = ctx.exp(-ctx.pi * ctx.j * quadratic
+                     - 2 * ctx.pi * ctx.j * linear)
+    return reduced, factor, n
+
+
+def _add_polynomial_term(ctx, polynomial, index, value):
+    """Add one coefficient to a sparse multivariate polynomial."""
+    polynomial[index] = polynomial.get(index, ctx.zero) + value
+
+
+def _multiply_polynomials(ctx, left, right, bounds):
+    """Multiply sparse polynomials, truncating to componentwise bounds."""
+    result = {}
+    for left_index, left_value in left.items():
+        for right_index, right_value in right.items():
+            index = tuple(left_index[i] + right_index[i]
+                          for i in range(len(bounds)))
+            if all(index[i] <= bounds[i] for i in range(len(bounds))):
+                _add_polynomial_term(
+                    ctx, result, index, left_value * right_value)
+    return result
+
+
+def _multiindices(genus, degree):
+    """Yield all multi-indices of length genus and total order at most degree."""
+    index = [0] * genus
+
+    def generate(position, remaining):
+        if position == genus:
+            yield tuple(index)
+            return
+        for value in range(remaining + 1):
+            index[position] = value
+            yield from generate(position + 1, remaining - value)
+
+    yield from generate(0, degree)
+
+
+def _exp_polynomial(ctx, exponent, bounds):
+    """Return the truncated power series of exp(exponent)."""
+    zero = (0,) * len(bounds)
+    result = {zero: ctx.one}
+    term = {zero: ctx.one}
+    for order in range(1, sum(bounds) + 1):
+        term = _multiply_polynomials(ctx, term, exponent, bounds)
+        for index, value in term.items():
+            _add_polynomial_term(ctx, result, index,
+                                 value / ctx.factorial(order))
+    return result
+
+
+def _linear_power(ctx, coefficients, order, bounds):
+    """Expand a power of a linear form as a truncated polynomial."""
+    zero = (0,) * len(bounds)
+    result = {zero: ctx.one}
+    linear = {}
+    for i, value in enumerate(coefficients):
+        if value:  # pragma: no branch
+            index = tuple(int(i == j) for j in range(len(bounds)))
+            linear[index] = value
+    for unused in range(order):
+        result = _multiply_polynomials(ctx, result, linear, bounds)
+    return result
+
+
+def _reduced_jet_data(ctx, z, tau_key, a, b, operations, reduced_key):
+    """Transform an argument while retaining its local jet data."""
+    genus = len(z)
+    transformed, factor = _zero_characteristic_form(
+        ctx, z, tau_key, a, b)
+    jacobian = [[ctx.one if i == j else ctx.zero for j in range(genus)]
+                for i in range(genus)]
+    # For a local increment h, transformed(z+h) = transformed(z) + J*h.
+    # ``exponent`` stores the nonconstant part of the logarithm of every
+    # accumulated exponential prefactor as a sparse polynomial in h.
+    exponent = {}
+    for i, value in enumerate(a):
+        index = tuple(int(i == j) for j in range(genus))
+        _add_polynomial_term(
+            ctx, exponent, index, 2 * ctx.pi * ctx.j * value)
+
+    for kind, data in operations:
+        if kind == "translate":
+            transformed = tuple(
+                transformed[i] + ctx.mpf(data[i]) / 2
+                for i in range(genus))
+        elif kind == "basis":
+            transformed = _transform_vector(ctx, data, transformed)
+            jacobian = [[ctx.fsum(data[k][i] * jacobian[k][j]
+                                  for k in range(genus))
+                         for j in range(genus)] for i in range(genus)]
+        else:
+            t, coupling = data
+            first = transformed[0]
+            first_row = tuple(jacobian[0])
+            scale = -ctx.pi * ctx.j / t
+            factor *= ctx.exp(scale * first ** 2) / ctx.sqrt(-ctx.j * t)
+            for i in range(genus):
+                linear_index = tuple(int(i == j) for j in range(genus))
+                _add_polynomial_term(
+                    ctx, exponent, linear_index,
+                    2 * scale * first * first_row[i])
+                for j in range(genus):
+                    quadratic_index = tuple(
+                        int(i == k) + int(j == k) for k in range(genus))
+                    _add_polynomial_term(
+                        ctx, exponent, quadratic_index,
+                        scale * first_row[i] * first_row[j])
+            transformed = ((first / t,)
+                           + tuple(transformed[i]
+                                   - coupling[i - 1] * first / t
+                                   for i in range(1, genus)))
+            jacobian = ([[value / t for value in first_row]]
+                        + [[jacobian[i][j]
+                            - coupling[i - 1] * first_row[j] / t
+                            for j in range(genus)]
+                           for i in range(1, genus)])
+
+    transformed, argument_factor, period_shift = _reduce_zero_argument(
+        ctx, transformed, reduced_key)
+    factor *= argument_factor
+    for j in range(genus):
+        index = tuple(int(i == j) for i in range(genus))
+        coefficient = -2 * ctx.pi * ctx.j * ctx.fsum(
+            period_shift[i] * jacobian[i][j] for i in range(genus))
+        _add_polynomial_term(ctx, exponent, index, coefficient)
+    return transformed, factor, tuple(tuple(row) for row in jacobian), exponent
+
+
+def _rtheta_reduced_derivative(ctx, z, tau_key, a, b, derivative,
+                               operations, reduced_key):
+    """Evaluate a derivative after a selected modular transformation."""
+    genus = len(z)
+    degree = sum(derivative)
+    transformed, factor, jacobian, exponent = _reduced_jet_data(
+        ctx, z, tau_key, a, b, operations, reduced_key)
+    derivatives = tuple(_multiindices(genus, degree))
+    zeros = (ctx.zero,) * genus
+    values = _rtheta_sum(
+        ctx, transformed, reduced_key, zeros, zeros, derivatives)
+
+    theta_polynomial = {}
+    zero_index = (0,) * genus
+    for multiindex, value in zip(derivatives, values):
+        polynomial = {zero_index: ctx.one}
+        denominator = ctx.one
+        for i, order in enumerate(multiindex):
+            if order:
+                polynomial = _multiply_polynomials(
+                    ctx, polynomial,
+                    _linear_power(ctx, jacobian[i], order, derivative),
+                    derivative)
+                denominator *= ctx.factorial(order)
+        for index, coefficient in polynomial.items():
+            _add_polynomial_term(
+                ctx, theta_polynomial, index,
+                value * coefficient / denominator)
+
+    prefactor_polynomial = _exp_polynomial(ctx, exponent, derivative)
+    result = _multiply_polynomials(
+        ctx, prefactor_polynomial, theta_polynomial, derivative)
+    derivative_factorial = ctx.fprod(
+        ctx.factorial(order) for order in derivative)
+    return factor * derivative_factorial * result.get(derivative, ctx.zero)
+
+
+def _rtheta_sum(ctx, z, tau_key, a, b, derivatives, tau_data=None):
     """Evaluate one or more derivatives in one lattice traversal."""
     genus = len(z)
+    if tau_data is None:
+        tau_data = ctx._rtheta_tau_data(tau_key)
     X_key, Y_key, T, invT_frob, rho, value_radius = (
-        ctx._rtheta_tau_data(tau_key))
+        tau_data[:6])
     Y = ctx.matrix(Y_key)
     y = ctx.matrix([ctx.im(value) for value in z])
     shift = ctx.lu_solve(Y, y)
@@ -321,11 +692,17 @@ def rtheta(ctx, z, tau, characteristic=None, derivative=0):
     is separated from the damped sum. Data depending only on :math:`\tau` is
     cached with the active context precision included in the cache key.
 
-    This direct-summation implementation is intended for modest genus and
-    precision. Siegel reduction is not yet performed, so poorly reduced
-    matrices can be substantially slower than equivalent reduced matrices.
-    Near a zero of theta, cancellation can prevent full relative accuracy;
-    the truncation controls absolute error in the scaled oscillatory sum.
+    For values, a poorly conditioned period matrix is reduced with integer
+    translations, lattice-basis changes and partial symplectic inversions
+    when an ellipsoid-volume estimate predicts a substantial saving. The
+    transformed argument is then reduced modulo its period lattice. Already
+    favourable inputs retain the direct path. When reduction is selected for
+    a derivative, the required lower derivatives are evaluated together and
+    combined by multivariate chain and product rules.
+
+    This implementation is intended for modest genus and precision. Near a
+    zero of theta, cancellation can prevent full relative accuracy; the
+    truncation controls absolute error in the scaled oscillatory sum.
 
     **References**
 
@@ -347,5 +724,44 @@ def rtheta(ctx, z, tau, characteristic=None, derivative=0):
                           + [0])
     extra = 10 * (degree + 1) + 2 * max(0, input_magnitude)
     with ctx.extraprec(extra):
-        result = _rtheta_sum(ctx, z, tau_key, a, b, (derivative,))[0]
+        use_reduction = False
+        tau_data = ctx._rtheta_tau_data(tau_key)
+        direct_points = tau_data[6]
+        # A rho near one already gives adequately separated lattice points.
+        # This inexpensive screen avoids constructing a transformed radius
+        # for the near-boundary cases where reduction tends not to pay.
+        if direct_points > 32 and tau_data[4] < 0.9:
+            reduced_key, operations, reduced_points = (
+                ctx._rtheta_reduction_data(tau_key))
+            # A transformed derivative needs every lower derivative produced
+            # by the chain and product rules. Demand a fourfold margin beyond
+            # that count before paying the modular-transformation overhead.
+            if degree:
+                derivative_count = ctx.binomial(genus + degree, degree)
+                required_saving = 4 * derivative_count
+            else:
+                required_saving = 4
+            use_reduction = (direct_points / reduced_points
+                             > required_saving)
+        if use_reduction:
+            if degree:
+                result = _rtheta_reduced_derivative(
+                    ctx, z, tau_key, a, b, derivative,
+                    operations, reduced_key)
+            else:
+                transformed_z, characteristic_factor = (
+                    _zero_characteristic_form(ctx, z, tau_key, a, b))
+                transformed_z, modular_factor = _apply_reduction(
+                    ctx, transformed_z, operations)
+                transformed_z, argument_factor, unused_shift = (
+                    _reduce_zero_argument(ctx, transformed_z, reduced_key))
+                zeros = (ctx.zero,) * genus
+                value = _rtheta_sum(
+                    ctx, transformed_z, reduced_key, zeros, zeros,
+                    ((0,) * genus,))[0]
+                result = (characteristic_factor * modular_factor
+                          * argument_factor * value)
+        else:
+            result = _rtheta_sum(
+                ctx, z, tau_key, a, b, (derivative,), tau_data)[0]
     return +result

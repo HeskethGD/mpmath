@@ -1,6 +1,10 @@
 import pytest
 
 from mpmath import diff, exp, j, jtheta, mp, pi, rtheta
+from mpmath.functions.riemann_theta import (
+    _apply_reduction, _matrix_tuple, _partial_inversion, _point_estimate,
+    _rtheta_sum, _transform_vector,
+)
 
 
 def test_rtheta_genus_one_jtheta_characteristics():
@@ -183,3 +187,158 @@ def test_rtheta_nearly_symmetric_input():
                  [mp.mpc('0.1', '0.02') + delta / 2, 1.2j]]
     assert mp.almosteq(rtheta([0.1, 0.2], tau),
                        rtheta([0.1, 0.2], symmetric))
+
+
+def test_rtheta_symplectic_generator_identities():
+    mp.dps = 35
+    tau = mp.matrix([
+        [mp.mpc('0.13', '1.1'), mp.mpc('-0.17', '0.08')],
+        [mp.mpc('-0.17', '0.08'), mp.mpc('0.21', '1.3')],
+    ])
+    z = (mp.mpc('0.12', '0.04'), mp.mpc('-0.09', '0.03'))
+    value = rtheta(z, tau)
+
+    translation = ((1, 2), (2, -1))
+    translated_tau = mp.matrix(tau)
+    for row in range(2):
+        for column in range(2):
+            translated_tau[row, column] += translation[row][column]
+    translated_z = (z[0] - mp.mpf('0.5'), z[1] + mp.mpf('0.5'))
+    assert mp.almosteq(rtheta(translated_z, translated_tau), value)
+
+    basis = ((1, 1), (0, 1))
+    basis_tau = mp.matrix(2)
+    for row in range(2):
+        for column in range(2):
+            basis_tau[row, column] = mp.fsum(
+                basis[k][row] * tau[k, l] * basis[l][column]
+                for k in range(2) for l in range(2))
+    basis_z = _transform_vector(mp, basis, z)
+    assert mp.almosteq(rtheta(basis_z, basis_tau), value)
+
+    combined_z, combined_factor = _apply_reduction(
+        mp, z, (("translate", (1, -1)), ("basis", basis)))
+    assert combined_z == _transform_vector(
+        mp, basis, (z[0] + mp.mpf('0.5'), z[1] - mp.mpf('0.5')))
+    assert combined_factor == 1
+
+    inverted_tau, inversion = _partial_inversion(mp, tau)
+    inverted_z, factor = _apply_reduction(mp, z, (("invert", inversion),))
+    assert mp.almosteq(factor * rtheta(inverted_z, inverted_tau), value)
+
+
+def test_rtheta_cost_selected_reduction():
+    mp.dps = 35
+    tau = (
+        (mp.mpc('0.2', '0.15'), mp.mpc('0.12', '0.03')),
+        (mp.mpc('0.12', '0.03'), mp.mpc('-0.1', '0.2')),
+    )
+    z = (mp.mpc('0.13', '0.07'), mp.mpc('-0.21', '0.04'))
+    characteristic = ((mp.mpf('0.3'), mp.mpf('-0.2')),
+                      (mp.mpf('0.1'), mp.mpf('0.4')))
+    unused_reduced_tau, operations, reduced_points = (
+        mp._rtheta_reduction_data(_matrix_tuple(mp.matrix(tau))))
+
+    assert _point_estimate(mp, tau) / reduced_points > 4
+    assert {kind for kind, unused in operations} == {
+        "translate", "basis", "invert"
+    }
+    for kind, transform in operations:
+        if kind == "basis":
+            assert abs(transform[0][0] * transform[1][1]
+                       - transform[0][1] * transform[1][0]) == 1
+
+    a, b = characteristic
+    with mp.extraprec(30):
+        direct = _rtheta_sum(
+            mp, z, tau, a, b, ((0, 0),)
+        )[0]
+    assert mp.almosteq(rtheta(z, tau, characteristic), direct)
+
+    derivative = (1, 0)
+    assert _point_estimate(mp, tau) / reduced_points > 12
+    with mp.extraprec(30):
+        direct_derivative = _rtheta_sum(
+            mp, z, tau, a, b, (derivative,)
+        )[0]
+    assert mp.almosteq(
+        rtheta(z, tau, characteristic, derivative), direct_derivative)
+
+    shift = (3, -2)
+    shifted_z = tuple(
+        z[i] + mp.fsum(tau[i][k] * shift[k] for k in range(2))
+        for i in range(2))
+    quadratic = mp.fsum(shift[i] * tau[i][k] * shift[k]
+                        for i in range(2) for k in range(2))
+    linear = mp.fsum(shift[i] * z[i] for i in range(2))
+    multiplier = exp(-pi * j * quadratic - 2 * pi * j * linear)
+    assert mp.almosteq(rtheta(shifted_z, tau),
+                       multiplier * rtheta(z, tau))
+
+
+def test_rtheta_cost_selected_reduction_genus_three():
+    mp.dps = 25
+    tau = (
+        (mp.mpc('0.3', '0.12'), mp.mpc('0.17', '0.03'),
+         mp.mpc('0', '0.02')),
+        (mp.mpc('0.17', '0.03'), mp.mpc('-0.2', '0.16'),
+         mp.mpc('0', '0.02')),
+        (mp.mpc('0', '0.02'), mp.mpc('0', '0.02'),
+         mp.mpc('0.1', '0.2')),
+    )
+    z = (mp.mpc('0.13', '0.07'), mp.mpc('-0.21', '0.04'),
+         mp.mpc('0.06', '-0.03'))
+    zero = (mp.zero,) * 3
+    reduced_tau, operations, reduced_points = mp._rtheta_reduction_data(tau)
+
+    assert _point_estimate(mp, tau) / reduced_points > 4
+    assert len(reduced_tau) == 3
+    assert any(kind == "basis" for kind, unused in operations)
+    for kind, transform in operations:
+        if kind == "basis":
+            assert abs(mp.det(mp.matrix(transform))) == 1
+
+    with mp.extraprec(30):
+        direct = _rtheta_sum(
+            mp, z, tau, zero, zero, ((0, 0, 0),)
+        )[0]
+    assert mp.almosteq(rtheta(z, tau), direct)
+
+
+def test_rtheta_reduced_mixed_derivative():
+    mp.dps = 25
+    tau = (
+        (mp.mpc('0.4', '0.03'), mp.mpc('0.1', '0.008')),
+        (mp.mpc('0.1', '0.008'), mp.mpc('-0.3', '0.05')),
+    )
+    z = (mp.mpc('0.13', '0.07'), mp.mpc('-0.21', '0.04'))
+    a = (mp.mpf('0.5'), 0)
+    b = (0, mp.mpf('0.5'))
+    derivative = (1, 1)
+    unused_tau, unused_operations, reduced_points = (
+        mp._rtheta_reduction_data(tau))
+
+    # Six derivatives of total degree at most two are combined, so the
+    # selection threshold is four times six.
+    assert _point_estimate(mp, tau) / reduced_points > 24
+    with mp.extraprec(30):
+        direct = _rtheta_sum(
+            mp, z, tau, a, b, (derivative,)
+        )[0]
+    assert mp.almosteq(rtheta(z, tau, (a, b), derivative), direct)
+
+
+def test_rtheta_unreduced_genus_one_against_jtheta():
+    mp.dps = 35
+    tau = mp.mpc('0.1', '0.1')
+    w = mp.mpc('0.3', '0.17')
+    q = exp(pi * j * tau)
+    cases = [
+        (([mp.mpf('0.5')], [mp.mpf('0.5')]), -jtheta(1, w, q)),
+        (([mp.mpf('0.5')], [0]), jtheta(2, w, q)),
+        (([0], [0]), jtheta(3, w, q)),
+        (([0], [mp.mpf('0.5')]), jtheta(4, w, q)),
+    ]
+    for characteristic, expected in cases:
+        assert mp.almosteq(rtheta([w / pi], [[tau]], characteristic),
+                           expected)
