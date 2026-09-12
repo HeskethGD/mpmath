@@ -1,3 +1,5 @@
+from itertools import product
+
 import pytest
 
 from mpmath import diff, exp, j, jtheta, mp, pi, rtheta
@@ -33,6 +35,31 @@ def test_rtheta_diagonal_factorisation():
     assert mp.almosteq(value, expected)
 
 
+def test_rtheta_block_diagonal_factorisation_with_derivative():
+    mp.dps = 35
+    z = [mp.mpc('0.13', '0.02'), mp.mpc('-0.08', '0.03'),
+         mp.mpc('0.06', '-0.01')]
+    tau = [
+        [mp.mpc('0.15', '0.85'), 0, 0],
+        [0, mp.mpc('0.10', '0.95'), mp.mpc('-0.07', '0.04')],
+        [0, mp.mpc('-0.07', '0.04'), mp.mpc('-0.12', '1.15')],
+    ]
+    characteristic = (
+        [mp.mpf('0.5'), 0, mp.mpf('0.5')],
+        [0, mp.mpf('0.5'), mp.mpf('0.5')],
+    )
+    derivative = (1, 0, 1)
+    value = rtheta(z, tau, characteristic, derivative)
+    expected = rtheta(
+        z[:1], [[tau[0][0]]],
+        ([characteristic[0][0]], [characteristic[1][0]]), 1,
+    ) * rtheta(
+        z[1:], [row[1:] for row in tau[1:]],
+        (characteristic[0][1:], characteristic[1][1:]), (0, 1),
+    )
+    assert mp.almosteq(value, expected)
+
+
 def test_rtheta_parity_and_characteristic_zero():
     mp.dps = 30
     tau = [[1j, mp.mpc('0.1', '0.05')],
@@ -41,6 +68,26 @@ def test_rtheta_parity_and_characteristic_zero():
     assert mp.almosteq(rtheta(z, tau), rtheta([-z[0], -z[1]], tau))
     odd = ([mp.mpf('0.5'), 0], [mp.mpf('0.5'), 0])
     assert abs(rtheta([0, 0], tau, odd)) < mp.eps * 10
+
+
+def test_rtheta_all_genus_two_half_characteristic_parities():
+    mp.dps = 30
+    half = mp.mpf('0.5')
+    tau = [[mp.mpc('0.13', '1.05'), mp.mpc('-0.09', '0.06')],
+           [mp.mpc('-0.09', '0.06'), mp.mpc('-0.17', '1.2')]]
+    z = [mp.mpc('0.14', '0.03'), mp.mpc('-0.11', '0.02')]
+    for bits in product((0, 1), repeat=4):
+        a = tuple(half * bits[i] for i in range(2))
+        b = tuple(half * bits[i + 2] for i in range(2))
+        sign = -1 if sum(bits[i] * bits[i + 2]
+                         for i in range(2)) % 2 else 1
+        characteristic = (a, b)
+        assert mp.almosteq(
+            rtheta([-z[0], -z[1]], tau, characteristic),
+            sign * rtheta(z, tau, characteristic),
+        )
+        if sign == -1:
+            assert abs(rtheta([0, 0], tau, characteristic)) < 100 * mp.eps
 
 
 def test_rtheta_quasiperiodicity():
@@ -79,6 +126,20 @@ def test_rtheta_derivatives():
             pi ** order * jtheta(3, w, q, derivative=order))
 
 
+def test_rtheta_mixed_derivative_order_independence():
+    mp.dps = 25
+    tau = [[mp.mpc('0.08', '0.92'), mp.mpc('-0.06', '0.04')],
+           [mp.mpc('-0.06', '0.04'), mp.mpc('0.12', '1.08')]]
+    z = [mp.mpc('0.13', '0.02'), mp.mpc('-0.09', '0.03')]
+    actual = rtheta(z, tau, derivative=(1, 1))
+    dz0_dz1 = diff(
+        lambda x: diff(lambda y: rtheta([x, y], tau), z[1]), z[0])
+    dz1_dz0 = diff(
+        lambda y: diff(lambda x: rtheta([x, y], tau), z[0]), z[1])
+    assert mp.almosteq(actual, dz0_dz1)
+    assert mp.almosteq(actual, dz1_dz0)
+
+
 def test_rtheta_precision_doubling_genus_three():
     mp.dps = 100
     tau = [[1.1j, 0.04j, 0.02j],
@@ -90,6 +151,34 @@ def test_rtheta_precision_doubling_genus_three():
     with mp.workdps(130):
         reference = rtheta(z, tau, derivative=(1, 0, 1))
     assert mp.almosteq(value, reference, rel_eps=mp.mpf('1e-98'))
+
+
+def test_rtheta_cross_precision_after_reduction():
+    mp.dps = 40
+    tau = [[mp.mpc('0.2', '0.15'), mp.mpc('0.12', '0.03')],
+           [mp.mpc('0.12', '0.03'), mp.mpc('-0.1', '0.2')]]
+    z = [mp.mpc('0.13', '0.07'), mp.mpc('-0.21', '0.04')]
+    characteristic = ((mp.mpf('0.3'), mp.mpf('-0.2')),
+                      (mp.mpf('0.1'), mp.mpf('0.4')))
+    value = rtheta(z, tau, characteristic, derivative=(1, 1))
+    with mp.workdps(75):
+        reference = rtheta(z, tau, characteristic, derivative=(1, 1))
+    assert mp.almosteq(value, reference, rel_eps=mp.mpf('1e-38'))
+
+
+def test_rtheta_truncation_radius_against_enlarged_sum():
+    mp.dps = 45
+    tau = ((mp.mpc('0.11', '0.9'), mp.mpc('-0.08', '0.05')),
+           (mp.mpc('-0.08', '0.05'), mp.mpc('-0.14', '1.1')))
+    z = (mp.mpc('0.17', '0.11'), mp.mpc('-0.12', '0.07'))
+    zero = (mp.zero, mp.zero)
+    tau_data = list(mp._rtheta_tau_data(tau))
+    normal = _rtheta_sum(mp, z, tau, zero, zero, ((0, 0),),
+                         tuple(tau_data))[0]
+    tau_data[5] *= mp.mpf('1.5')
+    enlarged = _rtheta_sum(mp, z, tau, zero, zero, ((0, 0),),
+                           tuple(tau_data))[0]
+    assert mp.almosteq(normal, enlarged, rel_eps=mp.mpf('1e-43'))
 
 
 def test_rtheta_wolfram_reference_values():
@@ -140,6 +229,43 @@ def test_rtheta_wolfram_reference_values():
             (z3, tau3, char3, refs3[1:])]:
         assert mp.almosteq(rtheta(z, tau, characteristic), references[0],
                            rel_eps=tolerance, abs_eps=tolerance)
+
+
+def test_rtheta_wolfram_unreduced_reference_values():
+    # Fresh Wolfram Engine 14.3 SiegelTheta values generated at 120 digits
+    # from exact rational inputs. These exercise reduction, large z and
+    # arbitrary real characteristics together.
+    mp.dps = 100
+    characteristic2 = ((mp.mpf('0.3'), mp.mpf('-0.2')),
+                       (mp.mpf('0.1'), mp.mpf('0.4')))
+    tau2 = [[mp.mpc('0.2', '0.15'), mp.mpc('0.12', '0.03')],
+            [mp.mpc('0.12', '0.03'), mp.mpc('-0.1', '0.2')]]
+    z2 = [mp.mpc('2.31', '-1.14'), mp.mpc('-1.72', '0.83')]
+    reference2 = mp.mpc(
+        '37058424061976446096.7871409113145979695568610946774019090331353765326092054797218949660046676284791419537804054179813145',
+        '-8184623208069837737.99363797667810872646677513420698882738727935055524579125490740124342217355390271095127290985384489359')
+
+    characteristic3 = ((mp.mpf('0.3'), mp.mpf('-0.2'), mp.mpf('0.1')),
+                       (mp.mpf('0.1'), mp.mpf('0.4'), mp.mpf('-0.15')))
+    tau3 = [
+        [mp.mpc('0.3', '0.12'), mp.mpc('0.17', '0.03'),
+         mp.mpc('0', '0.02')],
+        [mp.mpc('0.17', '0.03'), mp.mpc('-0.2', '0.16'),
+         mp.mpc('0', '0.02')],
+        [mp.mpc('0', '0.02'), mp.mpc('0', '0.02'),
+         mp.mpc('0.1', '0.2')],
+    ]
+    z3 = [mp.mpc('0.11', '0.03'), mp.mpc('-0.07', '0.02'),
+          mp.mpc('0.05', '-0.01')]
+    reference3 = mp.mpc(
+        '3.44042050000036293079504325661815829014001245512124516294720089024113963744406088834494220278232680204967316690887511458',
+        '0.182598566348364806829149624629842477324789098204541555796804418499811344983007460195610367554313435739194325595031041258')
+
+    tolerance = mp.mpf('1e-98')
+    assert mp.almosteq(rtheta(z2, tau2, characteristic2), reference2,
+                       rel_eps=tolerance, abs_eps=tolerance)
+    assert mp.almosteq(rtheta(z3, tau3, characteristic3), reference3,
+                       rel_eps=tolerance, abs_eps=tolerance)
 
 
 def test_rtheta_validation():
@@ -274,6 +400,23 @@ def test_rtheta_cost_selected_reduction():
     multiplier = exp(-pi * j * quadratic - 2 * pi * j * linear)
     assert mp.almosteq(rtheta(shifted_z, tau),
                        multiplier * rtheta(z, tau))
+
+
+def test_rtheta_reduction_is_stable():
+    mp.dps = 35
+    tau = (
+        (mp.mpc('0.2', '0.15'), mp.mpc('0.12', '0.03')),
+        (mp.mpc('0.12', '0.03'), mp.mpc('-0.1', '0.2')),
+    )
+    reduced, operations, _ = mp._rtheta_reduction_data(tau)
+    reduced_again, further_operations, _ = (
+        mp._rtheta_reduction_data(reduced))
+    assert operations
+    assert not further_operations
+    for row in range(2):
+        for column in range(2):
+            assert mp.almosteq(reduced[row][column],
+                               reduced_again[row][column])
 
 
 def test_rtheta_cost_selected_reduction_genus_three():
