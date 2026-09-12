@@ -99,8 +99,26 @@ def _rtheta_tau_data(ctx, tau_key):
                                   for j in range(genus)))
     # ||sqrt(pi) T n|| >= sqrt(pi)/||T^-1||_F for nonzero integer n.
     rho = ctx.sqrt(ctx.pi) / invT_frob
+    value_radius = _truncation_radius(
+        ctx, genus, (0,), rho, invT_frob, ctx.zero)
     return (_matrix_tuple(X), _matrix_tuple(Y), _matrix_tuple(T),
-            invT_frob, rho)
+            invT_frob, rho, value_radius)
+
+
+def _upper_gamma_half_integer(ctx, twice_s, x):
+    """Evaluate upper gamma for a positive integer or half-integer s."""
+    exponential = ctx.exp(-x)
+    if twice_s & 1:
+        s = ctx.mpf('0.5')
+        value = ctx.sqrt(ctx.pi) * ctx.erfc(ctx.sqrt(x))
+    else:
+        s = ctx.one
+        value = exponential
+    target = ctx.mpf(twice_s) / 2
+    while s < target:
+        value = s * value + ctx.power(x, s) * exponential
+        s += 1
+    return value
 
 
 def _tail_bound(ctx, genus, degree, radius, rho, invT_frob, shift_norm):
@@ -112,8 +130,8 @@ def _tail_bound(ctx, genus, degree, radius, rho, invT_frob, shift_norm):
     for k in range(degree + 1):
         coefficient = (ctx.binomial(degree, k)
                        * shift_norm ** (degree - k) * transform ** k)
-        tail += coefficient * ctx.gammainc(
-            ctx.mpf(genus + k) / 2, x, ctx.inf)
+        tail += coefficient * _upper_gamma_half_integer(
+            ctx, genus + k, x)
     return (2 * ctx.pi) ** degree * scale * tail
 
 
@@ -128,7 +146,10 @@ def _truncation_radius(ctx, genus, degrees, rho, invT_frob, shift_norm):
                           invT_frob, shift_norm) for d in degrees) > target:
         high = 1 + 5 * high / 4
     low = threshold
-    for unused in range(30):
+    # Only the conservative upper endpoint is returned. Twelve bisections
+    # locate the discrete ellipsoid boundary adequately without evaluating
+    # a high-precision transcendental tail dozens of unnecessary times.
+    for unused in range(12):
         middle = (low + high) / 2
         error = max(_tail_bound(ctx, genus, d, middle, rho,
                                 invT_frob, shift_norm) for d in degrees)
@@ -172,15 +193,19 @@ def _ellipsoid_points(ctx, T, center, radius):
 def _rtheta_sum(ctx, z, tau_key, a, b, derivatives):
     """Evaluate one or more derivatives in one lattice traversal."""
     genus = len(z)
-    X_key, Y_key, T, invT_frob, rho = ctx._rtheta_tau_data(tau_key)
+    X_key, Y_key, T, invT_frob, rho, value_radius = (
+        ctx._rtheta_tau_data(tau_key))
     Y = ctx.matrix(Y_key)
     y = ctx.matrix([ctx.im(value) for value in z])
     shift = ctx.lu_solve(Y, y)
     shift_tuple = tuple(shift[i] for i in range(genus))
     shift_norm = ctx.sqrt(ctx.fsum(value ** 2 for value in shift_tuple))
     degrees = tuple(sum(d) for d in derivatives)
-    radius = _truncation_radius(
-        ctx, genus, degrees, rho, invT_frob, shift_norm)
+    if all(degree == 0 for degree in degrees):
+        radius = value_radius
+    else:
+        radius = _truncation_radius(
+            ctx, genus, degrees, rho, invT_frob, shift_norm)
     center = tuple(-a[i] - shift_tuple[i] for i in range(genus))
     growth = ctx.exp(ctx.pi * ctx.fsum(y[i] * shift[i]
                                       for i in range(genus)))
