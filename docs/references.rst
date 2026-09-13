@@ -22,9 +22,23 @@ References not listed here can be found in the source code.
 .. [Bailey] D H Bailey. "Tanh-Sinh High-Precision Quadrature",
             http://crd.lbl.gov/~dhbailey/dhbpapers/dhb-tanh-sinh.pdf
 
+.. [BakerAbel] H. F. Baker. *Abel's Theorem and the Allied Theory,
+               Including the Theory of the Theta Functions*. Cambridge
+               University Press, 1897.
+               https://openlibrary.org/works/OL1244445W/
+
+.. [BakerMultiply] H. F. Baker. *An Introduction to the Theory of Multiply
+                   Periodic Functions*. Cambridge University Press, 1907.
+                   https://name.umdl.umich.edu/ACR0014.0001.001
+
 .. [Bellman] Bellman, R., R.E. Kalaba, J.A. Lockett (1966). *Numerical
              inversion of the Laplace transform: Applications to Biology,
              Economics, Engineering, and Physics*. Elsevier.
+
+.. [Bernatska2026] J. Bernatska. "Computation of P-Functions on Plane
+                    Algebraic Curves". *Journal of Experimental Mathematics*
+                    2(1) (2026), 114--154.
+                    https://doi.org/10.56994/JXM.002.001.005
 
 .. [BenderOrszag] C M Bender & S A Orszag. *Advanced Mathematical Methods for
                   Scientists and Engineers*, Springer 1999
@@ -92,6 +106,11 @@ References not listed here can be found in the source code.
              Software* 19(3):333-359, http://dx.doi.org/10.1145/155743.155788
 
 .. [Duffy98] Duffy, D.G. (1998). Advanced Engineering Mathematics, CRC Press.
+
+.. [EEL2000] J. C. Eilbeck, V. Z. Enolskii & D. V. Leykin. "On the Kleinian
+              Construction of Abelian Functions of Canonical Algebraic
+              Curves". *CRM Proceedings and Lecture Notes* 25 (2000),
+              121--138. https://doi.org/10.1090/crmp/025/12
 
 .. [DLMF] NIST Digital Library of Mathematical Functions. http://dlmf.nist.gov/
 
