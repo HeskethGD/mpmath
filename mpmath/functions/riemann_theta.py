@@ -522,18 +522,10 @@ def _reduced_jet_data(ctx, z, tau_key, a, b, operations, reduced_key):
     return transformed, factor, tuple(tuple(row) for row in jacobian), exponent
 
 
-def _rtheta_reduced_derivative(ctx, z, tau_key, a, b, derivative,
-                               operations, reduced_key):
-    """Evaluate a derivative after a selected modular transformation."""
-    genus = len(z)
-    degree = sum(derivative)
-    transformed, factor, jacobian, exponent = _reduced_jet_data(
-        ctx, z, tau_key, a, b, operations, reduced_key)
-    derivatives = tuple(_multiindices(genus, degree))
-    zeros = (ctx.zero,) * genus
-    values = _rtheta_sum(
-        ctx, transformed, reduced_key, zeros, zeros, derivatives)
-
+def _compose_reduced_derivative(ctx, derivatives, values, factor, jacobian,
+                                exponent, derivative):
+    """Apply the prefactor, chain and product rules to one derivative."""
+    genus = len(derivative)
     theta_polynomial = {}
     zero_index = (0,) * genus
     for multiindex, value in zip(derivatives, values):
@@ -557,6 +549,22 @@ def _rtheta_reduced_derivative(ctx, z, tau_key, a, b, derivative,
     derivative_factorial = ctx.fprod(
         ctx.factorial(order) for order in derivative)
     return factor * derivative_factorial * result.get(derivative, ctx.zero)
+
+
+def _rtheta_reduced_derivatives(ctx, z, tau_key, a, b, requested,
+                                operations, reduced_key):
+    """Evaluate requested derivatives after one modular transformation."""
+    genus = len(z)
+    degree = max(sum(derivative) for derivative in requested)
+    transformed, factor, jacobian, exponent = _reduced_jet_data(
+        ctx, z, tau_key, a, b, operations, reduced_key)
+    derivatives = tuple(_multiindices(genus, degree))
+    zeros = (ctx.zero,) * genus
+    values = _rtheta_sum(
+        ctx, transformed, reduced_key, zeros, zeros, derivatives)
+    return tuple(_compose_reduced_derivative(
+        ctx, derivatives, values, factor, jacobian, exponent, derivative)
+        for derivative in requested)
 
 
 def _rtheta_value_sum(ctx, X, Y, T, center, radius, shift, a,
@@ -596,6 +604,57 @@ def _rtheta_value_sum(ctx, X, Y, T, center, radius, shift, a,
     return growth * ctx.fsum(terms)
 
 
+def _rtheta_derivative_sum(ctx, X, Y, T, center, radius, shift, a,
+                           x_plus_b, growth, derivatives):
+    """Sum several theta derivatives using shared powers and coefficients."""
+    genus = len(center)
+    pi = ctx.pi
+    two_pi = 2 * pi
+    two_pi_j = two_pi * ctx.j
+    pairs = [(i, j) for i in range(1, genus) for j in range(i)]
+    real_diagonal = [-pi * Y[i][i] for i in range(genus)]
+    real_off_diagonal = [-two_pi * Y[i][j] for i, j in pairs]
+    imag_diagonal = [pi * X[i][i] for i in range(genus)]
+    imag_off_diagonal = [two_pi * X[i][j] for i, j in pairs]
+    imag_linear = [two_pi * x_plus_b[i] for i in range(genus)]
+
+    form_length = genus + len(pairs)
+    real_terms = [ctx.zero] * form_length
+    imag_terms = [ctx.zero] * (form_length + genus)
+    u = [ctx.zero] * genus
+    shifted = [ctx.zero] * genus
+    max_orders = [max(derivative[i] for derivative in derivatives)
+                  for i in range(genus)]
+    powers = [[ctx.one] * (order + 1) for order in max_orders]
+    active_orders = [tuple((i, order) for i, order in enumerate(derivative)
+                           if order) for derivative in derivatives]
+    sums = [[] for unused in derivatives]
+    zero_characteristic = not any(a)
+    for n in _ellipsoid_points(ctx, T, center, radius / ctx.sqrt(pi)):
+        for i in range(genus):
+            u[i] = ctx.mpf(n[i]) if zero_characteristic else n[i] + a[i]
+            shifted[i] = u[i] + shift[i]
+            real_terms[i] = real_diagonal[i] * shifted[i] * shifted[i]
+            imag_terms[i] = imag_diagonal[i] * u[i] * u[i]
+            imag_terms[form_length + i] = imag_linear[i] * u[i]
+            base = two_pi_j * u[i]
+            for order in range(1, max_orders[i] + 1):
+                powers[i][order] = powers[i][order - 1] * base
+        for k, (i, j) in enumerate(pairs, genus):
+            real_terms[k] = (real_off_diagonal[k - genus]
+                             * shifted[i] * shifted[j])
+            imag_terms[k] = (imag_off_diagonal[k - genus]
+                             * u[i] * u[j])
+        exponent = ctx.mpc(ctx.fsum(real_terms), ctx.fsum(imag_terms))
+        term = ctx.exp(exponent)
+        for index, orders in enumerate(active_orders):
+            factor = ctx.one
+            for i, order in orders:
+                factor *= powers[i][order]
+            sums[index].append(factor * term)
+    return tuple(growth * ctx.fsum(terms) for terms in sums)
+
+
 def _rtheta_sum(ctx, z, tau_key, a, b, derivatives, tau_data=None):
     """Evaluate one or more derivatives in one lattice traversal."""
     genus = len(z)
@@ -625,25 +684,88 @@ def _rtheta_sum(ctx, z, tau_key, a, b, derivatives, tau_data=None):
             x_plus_b, growth)
         return (value,)
 
-    sums = [[] for unused in derivatives]
-    for n in _ellipsoid_points(ctx, T, center, radius / ctx.sqrt(ctx.pi)):
-        u = tuple(n[i] + a[i] for i in range(genus))
-        shifted = tuple(u[i] + shift_tuple[i] for i in range(genus))
-        magnitude_form = ctx.fsum(
-            shifted[i] * Y_key[i][j] * shifted[j]
-            for i in range(genus) for j in range(genus))
-        phase = (ctx.pi * ctx.fsum(u[i] * X_key[i][j] * u[j]
-                                  for i in range(genus) for j in range(genus))
-                 + 2 * ctx.pi * ctx.fsum(u[i] * x_plus_b[i]
-                                         for i in range(genus)))
-        term = ctx.exp(-ctx.pi * magnitude_form + ctx.j * phase)
-        for index, derivative in enumerate(derivatives):
-            factor = ctx.one
-            for i, order in enumerate(derivative):
-                if order:
-                    factor *= (2 * ctx.pi * ctx.j * u[i]) ** order
-            sums[index].append(factor * term)
-    return tuple(growth * ctx.fsum(terms) for terms in sums)
+    return _rtheta_derivative_sum(
+        ctx, X_key, Y_key, T, center, radius, shift_tuple, a,
+        x_plus_b, growth, derivatives)
+
+
+def _derivative_reduction_threshold(ctx, genus, degree, derivatives):
+    """Estimate the point-count saving needed to reduce derivatives."""
+    transformed_count = ctx.binomial(genus + degree, degree)
+    requested_count = len(set(derivatives))
+    # Quadratic-form and exponential evaluation is shared by every output and
+    # costs at least as much as several derivative accumulations. Model that
+    # common work as ``genus`` output-equivalents instead of charging the full
+    # lattice traversal once for every member of the transformed jet.
+    return 4 * (genus + transformed_count) / (genus + requested_count)
+
+
+def _rtheta_normalized_derivatives(ctx, z, tau_key, a, b, derivatives):
+    """Evaluate normalized derivative requests with one selected traversal."""
+    genus = len(z)
+    max_degree = max(sum(derivative) for derivative in derivatives)
+    input_magnitude = max([ctx.mag(value) for value in z + a + b]
+                          + [0])
+    extra = 10 * (max_degree + 1) + 2 * max(0, input_magnitude)
+    with ctx.extraprec(extra):
+        use_reduction = False
+        tau_data = ctx._rtheta_tau_data(tau_key)
+        direct_points = tau_data[6]
+        # A rho near one already gives adequately separated lattice points.
+        # This inexpensive screen avoids constructing a transformed radius
+        # for the near-boundary cases where reduction tends not to pay.
+        if direct_points > 32 and tau_data[4] < 0.9:
+            reduced_key, operations, reduced_points = (
+                ctx._rtheta_reduction_data(tau_key))
+            if max_degree:
+                required_saving = _derivative_reduction_threshold(
+                    ctx, genus, max_degree, derivatives)
+            else:
+                required_saving = 4
+            use_reduction = (direct_points / reduced_points
+                             > required_saving)
+        if use_reduction:
+            if max_degree:
+                results = _rtheta_reduced_derivatives(
+                    ctx, z, tau_key, a, b, derivatives,
+                    operations, reduced_key)
+            else:
+                transformed_z, characteristic_factor = (
+                    _zero_characteristic_form(ctx, z, tau_key, a, b))
+                transformed_z, modular_factor = _apply_reduction(
+                    ctx, transformed_z, operations)
+                transformed_z, argument_factor, unused_shift = (
+                    _reduce_zero_argument(ctx, transformed_z, reduced_key))
+                zeros = (ctx.zero,) * genus
+                values = _rtheta_sum(
+                    ctx, transformed_z, reduced_key, zeros, zeros,
+                    derivatives)
+                factor = (characteristic_factor * modular_factor
+                          * argument_factor)
+                results = tuple(factor * value for value in values)
+        else:
+            results = _rtheta_sum(
+                ctx, z, tau_key, a, b, derivatives, tau_data)
+    return tuple(+value for value in results)
+
+
+def _rtheta_derivatives(ctx, z, tau, characteristic, derivatives):
+    """Evaluate several public-format derivative requests in one traversal."""
+    tau = _normalise_tau(ctx, tau)
+    genus = tau.rows
+    z = _as_vector(ctx, z, "z", genus)
+    a, b = _normalise_characteristic(ctx, characteristic, genus)
+    try:
+        derivatives = tuple(derivatives)
+    except TypeError:
+        raise ValueError("derivatives must be a nonempty sequence")
+    if not derivatives:
+        raise ValueError("derivatives must be a nonempty sequence")
+    derivatives = tuple(_normalise_derivative(derivative, genus)
+                        for derivative in derivatives)
+    tau_key = _matrix_tuple(tau)
+    return _rtheta_normalized_derivatives(
+        ctx, z, tau_key, a, b, derivatives)
 
 
 @defun
@@ -755,56 +877,5 @@ def rtheta(ctx, z, tau, characteristic=None, derivative=0):
        (2004), 1417-1442.
 
     """
-    tau = _normalise_tau(ctx, tau)
-    genus = tau.rows
-    z = _as_vector(ctx, z, "z", genus)
-    a, b = _normalise_characteristic(ctx, characteristic, genus)
-    derivative = _normalise_derivative(derivative, genus)
-    tau_key = _matrix_tuple(tau)
-
-    degree = sum(derivative)
-    input_magnitude = max([ctx.mag(value) for value in z + a + b]
-                          + [0])
-    extra = 10 * (degree + 1) + 2 * max(0, input_magnitude)
-    with ctx.extraprec(extra):
-        use_reduction = False
-        tau_data = ctx._rtheta_tau_data(tau_key)
-        direct_points = tau_data[6]
-        # A rho near one already gives adequately separated lattice points.
-        # This inexpensive screen avoids constructing a transformed radius
-        # for the near-boundary cases where reduction tends not to pay.
-        if direct_points > 32 and tau_data[4] < 0.9:
-            reduced_key, operations, reduced_points = (
-                ctx._rtheta_reduction_data(tau_key))
-            # A transformed derivative needs every lower derivative produced
-            # by the chain and product rules. Demand a fourfold margin beyond
-            # that count before paying the modular-transformation overhead.
-            if degree:
-                derivative_count = ctx.binomial(genus + degree, degree)
-                required_saving = 4 * derivative_count
-            else:
-                required_saving = 4
-            use_reduction = (direct_points / reduced_points
-                             > required_saving)
-        if use_reduction:
-            if degree:
-                result = _rtheta_reduced_derivative(
-                    ctx, z, tau_key, a, b, derivative,
-                    operations, reduced_key)
-            else:
-                transformed_z, characteristic_factor = (
-                    _zero_characteristic_form(ctx, z, tau_key, a, b))
-                transformed_z, modular_factor = _apply_reduction(
-                    ctx, transformed_z, operations)
-                transformed_z, argument_factor, unused_shift = (
-                    _reduce_zero_argument(ctx, transformed_z, reduced_key))
-                zeros = (ctx.zero,) * genus
-                value = _rtheta_sum(
-                    ctx, transformed_z, reduced_key, zeros, zeros,
-                    ((0,) * genus,))[0]
-                result = (characteristic_factor * modular_factor
-                          * argument_factor * value)
-        else:
-            result = _rtheta_sum(
-                ctx, z, tau_key, a, b, (derivative,), tau_data)[0]
-    return +result
+    return _rtheta_derivatives(
+        ctx, z, tau, characteristic, (derivative,))[0]

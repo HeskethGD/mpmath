@@ -4,7 +4,8 @@ import pytest
 
 from mpmath import diff, exp, j, jtheta, mp, pi, rtheta
 from mpmath.functions.riemann_theta import (
-    _apply_reduction, _matrix_tuple, _partial_inversion, _point_estimate,
+    _apply_reduction, _derivative_reduction_threshold, _matrix_tuple,
+    _multiindices, _partial_inversion, _point_estimate, _rtheta_derivatives,
     _rtheta_sum, _transform_vector,
 )
 
@@ -138,6 +139,22 @@ def test_rtheta_mixed_derivative_order_independence():
         lambda y: diff(lambda x: rtheta([x, y], tau), z[0]), z[1])
     assert mp.almosteq(actual, dz0_dz1)
     assert mp.almosteq(actual, dz1_dz0)
+
+
+def test_rtheta_internal_third_order_jet_matches_scalar_calls():
+    mp.dps = 25
+    tau = ((mp.mpc('0.08', '0.92'), mp.mpc('-0.06', '0.04')),
+           (mp.mpc('-0.06', '0.04'), mp.mpc('0.12', '1.08')))
+    z = (mp.mpc('0.13', '0.02'), mp.mpc('-0.09', '0.03'))
+    a = (mp.mpf('0.5'), 0)
+    b = (0, mp.mpf('0.5'))
+    derivatives = tuple(_multiindices(2, 3))
+    values = _rtheta_derivatives(mp, z, tau, (a, b), derivatives)
+
+    assert len(values) == 10
+    for derivative, value in zip(derivatives, values):
+        assert mp.almosteq(
+            value, rtheta(z, tau, (a, b), derivative=derivative))
 
 
 def test_rtheta_precision_doubling_genus_three():
@@ -316,6 +333,10 @@ def test_rtheta_validation():
         rtheta([0], [[1j]], derivative=(1.0,))
     with pytest.raises(ValueError, match="nonnegative"):
         rtheta([0], [[1j]], derivative=(-1,))
+    with pytest.raises(ValueError, match="nonempty sequence"):
+        _rtheta_derivatives(mp, [0], [[1j]], None, None)
+    with pytest.raises(ValueError, match="nonempty sequence"):
+        _rtheta_derivatives(mp, [0], [[1j]], None, ())
 
 
 def test_rtheta_nearly_symmetric_input():
@@ -462,6 +483,36 @@ def test_rtheta_cost_selected_reduction_genus_three():
     assert mp.almosteq(rtheta(z, tau), direct)
 
 
+def test_rtheta_cost_selected_genus_three_second_derivative():
+    mp.dps = 20
+    tau = (
+        (mp.mpc('0.3', '0.12'), mp.mpc('0.17', '0.03'),
+         mp.mpc('0', '0.02')),
+        (mp.mpc('0.17', '0.03'), mp.mpc('-0.2', '0.16'),
+         mp.mpc('0', '0.02')),
+        (mp.mpc('0', '0.02'), mp.mpc('0', '0.02'),
+         mp.mpc('0.1', '0.2')),
+    )
+    z = (mp.mpc('0.11', '0.03'), mp.mpc('-0.07', '0.02'),
+         mp.mpc('0.05', '-0.01'))
+    derivative = (1, 1, 0)
+    zero = (mp.zero,) * 3
+    unused_tau, unused_operations, reduced_points = (
+        mp._rtheta_reduction_data(tau))
+    point_ratio = _point_estimate(mp, tau) / reduced_points
+    threshold = _derivative_reduction_threshold(
+        mp, 3, 2, (derivative,))
+
+    # The old threshold charged ten complete traversals and was 40. The
+    # shared-work estimate is 13, so this reduction is no longer missed.
+    assert threshold < point_ratio < 40
+    with mp.extraprec(25):
+        direct = _rtheta_sum(
+            mp, z, tau, zero, zero, (derivative,)
+        )[0]
+    assert mp.almosteq(rtheta(z, tau, derivative=derivative), direct)
+
+
 def test_rtheta_reduced_mixed_derivative():
     mp.dps = 25
     tau = (
@@ -483,6 +534,24 @@ def test_rtheta_reduced_mixed_derivative():
             mp, z, tau, a, b, (derivative,)
         )[0]
     assert mp.almosteq(rtheta(z, tau, (a, b), derivative), direct)
+
+
+def test_rtheta_reduced_derivative_jet_matches_direct_sum():
+    mp.dps = 25
+    tau = (
+        (mp.mpc('0.4', '0.03'), mp.mpc('0.1', '0.008')),
+        (mp.mpc('0.1', '0.008'), mp.mpc('-0.3', '0.05')),
+    )
+    z = (mp.mpc('0.13', '0.07'), mp.mpc('-0.21', '0.04'))
+    a = (mp.mpf('0.5'), 0)
+    b = (0, mp.mpf('0.5'))
+    derivatives = tuple(_multiindices(2, 2))
+
+    values = _rtheta_derivatives(mp, z, tau, (a, b), derivatives)
+    with mp.extraprec(30):
+        direct = _rtheta_sum(mp, z, tau, a, b, derivatives)
+    for value, reference in zip(values, direct):
+        assert mp.almosteq(value, reference)
 
 
 def test_rtheta_unreduced_genus_one_against_jtheta():
