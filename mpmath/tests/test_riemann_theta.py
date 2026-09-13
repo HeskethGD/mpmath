@@ -5,8 +5,8 @@ import pytest
 from mpmath import diff, exp, j, jtheta, mp, pi, rtheta
 from mpmath.functions.riemann_theta import (
     _apply_reduction, _derivative_reduction_threshold, _matrix_tuple,
-    _multiindices, _partial_inversion, _point_estimate, _rtheta_derivatives,
-    _rtheta_sum, _transform_vector,
+    _ellipsoid_rows, _multiindices, _partial_inversion, _point_estimate,
+    _rtheta_derivatives, _rtheta_sum, _transform_vector,
 )
 
 
@@ -236,6 +236,35 @@ def test_rtheta_value_fast_path_matches_generic_sum():
     generic = _rtheta_sum(
         mp, z, tau, a, b, ((0, 0), (0, 0)), tau_data)[0]
     assert mp.almosteq(fast, generic, rel_eps=mp.mpf('1e-43'))
+
+
+def test_ellipsoid_rows_match_brute_force_points():
+    mp.dps = 30
+    cases = (
+        (((mp.mpf('1.2'),),), (mp.mpf('0.3'),), mp.mpf('2.1')),
+        (((mp.mpf('1.1'), mp.mpf('0.2'), mp.mpf('-0.1')),
+          (mp.zero, mp.mpf('0.9'), mp.mpf('0.15')),
+          (mp.zero, mp.zero, mp.mpf('1.3'))),
+         (mp.mpf('0.2'), mp.mpf('-0.4'), mp.mpf('0.1')), mp.mpf('2.4')),
+    )
+    for T, center, radius in cases:
+        row_points = [
+            (value,) + outer
+            for outer, lower, upper in _ellipsoid_rows(
+                mp, T, center, radius)
+            for value in range(lower, upper + 1)
+        ]
+        genus = len(center)
+        brute_force = []
+        for point in product(range(-4, 5), repeat=genus):
+            norm_squared = mp.fsum(
+                mp.fsum(T[i][j] * (point[j] - center[j])
+                        for j in range(genus)) ** 2
+                for i in range(genus))
+            if norm_squared <= radius ** 2:
+                brute_force.append(point)
+        brute_force.sort(key=lambda point: tuple(reversed(point)))
+        assert row_points == brute_force
 
 
 def test_rtheta_wolfram_reference_values():

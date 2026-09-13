@@ -174,8 +174,8 @@ def _truncation_radius(ctx, genus, degrees, rho, invT_frob, shift_norm):
     return high
 
 
-def _ellipsoid_points(ctx, T, center, radius):
-    """Yield integer points in ||T (n-center)|| <= radius."""
+def _ellipsoid_rows(ctx, T, center, radius):
+    """Yield contiguous first-coordinate rows in an ellipsoid."""
     genus = len(center)
     point = [0] * genus
     displacement = [ctx.zero] * genus
@@ -187,19 +187,17 @@ def _ellipsoid_points(ctx, T, center, radius):
         midpoint = center[j] - offset / T[j][j]
         lower = int(ctx.ceil(midpoint - reach))
         upper = int(ctx.floor(midpoint + reach))
+        if not j:
+            yield tuple(point[1:]), lower, upper
+            return
         for value in range(lower, upper + 1):
             point[j] = value
             displacement[j] = value - center[j]
             row = T[j][j] * displacement[j] + offset
             new_remaining = remaining - row ** 2
-            # The interval bounds imply this is nonnegative; retain the check
-            # only for a possible last-bit rounding overshoot.
             if new_remaining < 0:  # pragma: no cover
                 continue
-            if j:
-                yield from enumerate_coordinate(j - 1, new_remaining)
-            else:
-                yield tuple(point)
+            yield from enumerate_coordinate(j - 1, new_remaining)
 
     yield from enumerate_coordinate(genus - 1, radius ** 2)
 
@@ -567,9 +565,17 @@ def _rtheta_reduced_derivatives(ctx, z, tau_key, a, b, requested,
         for derivative in requested)
 
 
+def _rtheta_is_real_slice(ctx, X, shift, a):
+    """Return whether lattice pairing makes every requested derivative real."""
+    genus = len(a)
+    return (all(ctx.isint(2 * value) for value in a) and not any(shift)
+            and not any(X[i][j] for i in range(genus)
+                        for j in range(genus)))
+
+
 def _rtheta_value_sum(ctx, X, Y, T, center, radius, shift, a,
                       x_plus_b, growth):
-    """Sum an ordinary theta value using precomputed coefficients."""
+    """Sum a theta value using a recurrence along each lattice row."""
     genus = len(center)
     pi = ctx.pi
     two_pi = 2 * pi
@@ -579,6 +585,9 @@ def _rtheta_value_sum(ctx, X, Y, T, center, radius, shift, a,
     imag_diagonal = [pi * X[i][i] for i in range(genus)]
     imag_off_diagonal = [two_pi * X[i][j] for i, j in pairs]
     imag_linear = [two_pi * x_plus_b[i] for i in range(genus)]
+    # Advancing n[0] multiplies the adjacent-term ratio by exp(2*pi*j*tau00).
+    ratio_step = ctx.exp(ctx.mpc(-two_pi * Y[0][0],
+                                 two_pi * X[0][0]))
 
     form_length = genus + len(pairs)
     real_terms = [ctx.zero] * form_length
@@ -587,7 +596,10 @@ def _rtheta_value_sum(ctx, X, Y, T, center, radius, shift, a,
     shifted = [ctx.zero] * genus
     terms = []
     zero_characteristic = not any(a)
-    for n in _ellipsoid_points(ctx, T, center, radius / ctx.sqrt(pi)):
+    scaled_radius = radius / ctx.sqrt(pi)
+    for outer, lower, upper in _ellipsoid_rows(
+            ctx, T, center, scaled_radius):
+        n = (lower,) + outer
         for i in range(genus):
             u[i] = ctx.mpf(n[i]) if zero_characteristic else n[i] + a[i]
             shifted[i] = u[i] + shift[i]
@@ -600,13 +612,32 @@ def _rtheta_value_sum(ctx, X, Y, T, center, radius, shift, a,
             imag_terms[k] = (imag_off_diagonal[k - genus]
                              * u[i] * u[j])
         exponent = ctx.mpc(ctx.fsum(real_terms), ctx.fsum(imag_terms))
-        terms.append(ctx.exp(exponent))
-    return growth * ctx.fsum(terms)
+        term = ctx.exp(exponent)
+        terms.append(term)
+        if lower == upper:
+            continue
+        # This is the exact ratio T(n + e0) / T(n) at the row's first point.
+        ratio = ctx.exp(ctx.mpc(
+            -two_pi * ctx.fsum(Y[0][i] * shifted[i]
+                               for i in range(genus)) - pi * Y[0][0],
+            two_pi * ctx.fsum(X[0][i] * u[i]
+                              for i in range(genus))
+            + pi * X[0][0] + imag_linear[0]))
+        for unused in range(lower + 1, upper + 1):
+            term *= ratio
+            terms.append(term)
+            ratio *= ratio_step
+    result = growth * ctx.fsum(terms)
+    if _rtheta_is_real_slice(ctx, X, shift, a):
+        # Preserve the exact reality implied by pairing n with -n. Recurrence
+        # rounding otherwise leaves a harmless tiny imaginary residue.
+        result = ctx.mpc(ctx.re(result))
+    return result
 
 
 def _rtheta_derivative_sum(ctx, X, Y, T, center, radius, shift, a,
                            x_plus_b, growth, derivatives):
-    """Sum several theta derivatives using shared powers and coefficients."""
+    """Sum derivatives using a recurrence along each lattice row."""
     genus = len(center)
     pi = ctx.pi
     two_pi = 2 * pi
@@ -617,6 +648,9 @@ def _rtheta_derivative_sum(ctx, X, Y, T, center, radius, shift, a,
     imag_diagonal = [pi * X[i][i] for i in range(genus)]
     imag_off_diagonal = [two_pi * X[i][j] for i, j in pairs]
     imag_linear = [two_pi * x_plus_b[i] for i in range(genus)]
+    # Advancing n[0] multiplies the adjacent-term ratio by exp(2*pi*j*tau00).
+    ratio_step = ctx.exp(ctx.mpc(-two_pi * Y[0][0],
+                                 two_pi * X[0][0]))
 
     form_length = genus + len(pairs)
     real_terms = [ctx.zero] * form_length
@@ -634,7 +668,10 @@ def _rtheta_derivative_sum(ctx, X, Y, T, center, radius, shift, a,
         degree_factors.append(degree_factors[-1] * two_pi_j)
     sums = [[] for unused in derivatives]
     zero_characteristic = not any(a)
-    for n in _ellipsoid_points(ctx, T, center, radius / ctx.sqrt(pi)):
+    scaled_radius = radius / ctx.sqrt(pi)
+    for outer, lower, upper in _ellipsoid_rows(
+            ctx, T, center, scaled_radius):
+        n = (lower,) + outer
         for i in range(genus):
             u[i] = ctx.mpf(n[i]) if zero_characteristic else n[i] + a[i]
             shifted[i] = u[i] + shift[i]
@@ -650,17 +687,37 @@ def _rtheta_derivative_sum(ctx, X, Y, T, center, radius, shift, a,
                              * u[i] * u[j])
         exponent = ctx.mpc(ctx.fsum(real_terms), ctx.fsum(imag_terms))
         term = ctx.exp(exponent)
-        for index, orders in enumerate(active_orders):
-            if not orders:
-                sums[index].append(term)
-                continue
-            i, order = orders[0]
-            factor = powers[i][order]
-            for i, order in orders[1:]:
-                factor *= powers[i][order]
-            sums[index].append(factor * term)
-    return tuple(growth * degree_factors[degree] * ctx.fsum(terms)
-                 for degree, terms in zip(degrees, sums))
+        ratio = None
+        if lower != upper:
+            # Exact T(n + e0) / T(n) at the row's first point.
+            ratio = ctx.exp(ctx.mpc(
+                -two_pi * ctx.fsum(Y[0][i] * shifted[i]
+                                   for i in range(genus)) - pi * Y[0][0],
+                two_pi * ctx.fsum(X[0][i] * u[i]
+                                  for i in range(genus))
+                + pi * X[0][0] + imag_linear[0]))
+        for value in range(lower, upper + 1):
+            if value != lower:
+                term *= ratio
+                ratio *= ratio_step
+                u[0] += 1
+                for order in range(1, max_orders[0] + 1):
+                    powers[0][order] = powers[0][order - 1] * u[0]
+            for index, orders in enumerate(active_orders):
+                if not orders:
+                    sums[index].append(term)
+                    continue
+                i, order = orders[0]
+                factor = powers[i][order]
+                for i, order in orders[1:]:
+                    factor *= powers[i][order]
+                sums[index].append(factor * term)
+    results = tuple(growth * degree_factors[degree] * ctx.fsum(terms)
+                    for degree, terms in zip(degrees, sums))
+    if _rtheta_is_real_slice(ctx, X, shift, a):
+        # These derivatives are real on the real argument slice.
+        results = tuple(ctx.mpc(ctx.re(result)) for result in results)
+    return results
 
 
 def _rtheta_sum(ctx, z, tau_key, a, b, derivatives, tau_data=None):
