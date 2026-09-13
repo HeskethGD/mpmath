@@ -170,6 +170,32 @@ def test_rtheta_precision_doubling_genus_three():
     assert mp.almosteq(value, reference, rel_eps=mp.mpf('1e-98'))
 
 
+def test_rtheta_third_order_jet_with_characteristic_at_100_dps():
+    mp.dps = 100
+    tau = (
+        (mp.mpc('0.10', '1.00'), mp.mpc('-0.12', '0.08'),
+         mp.mpc('0.05', '0.04')),
+        (mp.mpc('-0.12', '0.08'), mp.mpc('0.20', '1.15'),
+         mp.mpc('0.08', '0.06')),
+        (mp.mpc('0.05', '0.04'), mp.mpc('0.08', '0.06'),
+         mp.mpc('-0.15', '0.90')),
+    )
+    z = (mp.mpc('0.11', '0.03'), mp.mpc('-0.07', '0.02'),
+         mp.mpc('0.05', '-0.01'))
+    half = mp.mpf('0.5')
+    characteristic = ((half, 0, half), (0, half, half))
+    derivatives = tuple(_multiindices(3, 3))
+    values = _rtheta_derivatives(
+        mp, z, tau, characteristic, derivatives)
+    with mp.workdps(130):
+        references = _rtheta_derivatives(
+            mp, z, tau, characteristic, derivatives)
+    tolerance = mp.mpf('1e-98')
+    for value, reference in zip(values, references):
+        assert mp.almosteq(value, reference, rel_eps=tolerance,
+                           abs_eps=tolerance)
+
+
 def test_rtheta_cross_precision_after_reduction():
     mp.dps = 40
     tau = [[mp.mpc('0.2', '0.15'), mp.mpc('0.12', '0.03')],

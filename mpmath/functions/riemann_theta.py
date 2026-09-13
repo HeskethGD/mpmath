@@ -628,6 +628,10 @@ def _rtheta_derivative_sum(ctx, X, Y, T, center, radius, shift, a,
     powers = [[ctx.one] * (order + 1) for order in max_orders]
     active_orders = [tuple((i, order) for i, order in enumerate(derivative)
                            if order) for derivative in derivatives]
+    degrees = [sum(derivative) for derivative in derivatives]
+    degree_factors = [ctx.one]
+    for unused in range(max(degrees)):
+        degree_factors.append(degree_factors[-1] * two_pi_j)
     sums = [[] for unused in derivatives]
     zero_characteristic = not any(a)
     for n in _ellipsoid_points(ctx, T, center, radius / ctx.sqrt(pi)):
@@ -637,9 +641,8 @@ def _rtheta_derivative_sum(ctx, X, Y, T, center, radius, shift, a,
             real_terms[i] = real_diagonal[i] * shifted[i] * shifted[i]
             imag_terms[i] = imag_diagonal[i] * u[i] * u[i]
             imag_terms[form_length + i] = imag_linear[i] * u[i]
-            base = two_pi_j * u[i]
             for order in range(1, max_orders[i] + 1):
-                powers[i][order] = powers[i][order - 1] * base
+                powers[i][order] = powers[i][order - 1] * u[i]
         for k, (i, j) in enumerate(pairs, genus):
             real_terms[k] = (real_off_diagonal[k - genus]
                              * shifted[i] * shifted[j])
@@ -648,11 +651,16 @@ def _rtheta_derivative_sum(ctx, X, Y, T, center, radius, shift, a,
         exponent = ctx.mpc(ctx.fsum(real_terms), ctx.fsum(imag_terms))
         term = ctx.exp(exponent)
         for index, orders in enumerate(active_orders):
-            factor = ctx.one
-            for i, order in orders:
+            if not orders:
+                sums[index].append(term)
+                continue
+            i, order = orders[0]
+            factor = powers[i][order]
+            for i, order in orders[1:]:
                 factor *= powers[i][order]
             sums[index].append(factor * term)
-    return tuple(growth * ctx.fsum(terms) for terms in sums)
+    return tuple(growth * degree_factors[degree] * ctx.fsum(terms)
+                 for degree, terms in zip(degrees, sums))
 
 
 def _rtheta_sum(ctx, z, tau_key, a, b, derivatives, tau_data=None):
