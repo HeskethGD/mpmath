@@ -559,6 +559,43 @@ def _rtheta_reduced_derivative(ctx, z, tau_key, a, b, derivative,
     return factor * derivative_factorial * result.get(derivative, ctx.zero)
 
 
+def _rtheta_value_sum(ctx, X, Y, T, center, radius, shift, a,
+                      x_plus_b, growth):
+    """Sum an ordinary theta value using precomputed coefficients."""
+    genus = len(center)
+    pi = ctx.pi
+    two_pi = 2 * pi
+    pairs = [(i, j) for i in range(1, genus) for j in range(i)]
+    real_diagonal = [-pi * Y[i][i] for i in range(genus)]
+    real_off_diagonal = [-two_pi * Y[i][j] for i, j in pairs]
+    imag_diagonal = [pi * X[i][i] for i in range(genus)]
+    imag_off_diagonal = [two_pi * X[i][j] for i, j in pairs]
+    imag_linear = [two_pi * x_plus_b[i] for i in range(genus)]
+
+    form_length = genus + len(pairs)
+    real_terms = [ctx.zero] * form_length
+    imag_terms = [ctx.zero] * (form_length + genus)
+    u = [ctx.zero] * genus
+    shifted = [ctx.zero] * genus
+    terms = []
+    zero_characteristic = not any(a)
+    for n in _ellipsoid_points(ctx, T, center, radius / ctx.sqrt(pi)):
+        for i in range(genus):
+            u[i] = ctx.mpf(n[i]) if zero_characteristic else n[i] + a[i]
+            shifted[i] = u[i] + shift[i]
+            real_terms[i] = real_diagonal[i] * shifted[i] * shifted[i]
+            imag_terms[i] = imag_diagonal[i] * u[i] * u[i]
+            imag_terms[form_length + i] = imag_linear[i] * u[i]
+        for k, (i, j) in enumerate(pairs, genus):
+            real_terms[k] = (real_off_diagonal[k - genus]
+                             * shifted[i] * shifted[j])
+            imag_terms[k] = (imag_off_diagonal[k - genus]
+                             * u[i] * u[j])
+        exponent = ctx.mpc(ctx.fsum(real_terms), ctx.fsum(imag_terms))
+        terms.append(ctx.exp(exponent))
+    return growth * ctx.fsum(terms)
+
+
 def _rtheta_sum(ctx, z, tau_key, a, b, derivatives, tau_data=None):
     """Evaluate one or more derivatives in one lattice traversal."""
     genus = len(z)
@@ -581,6 +618,12 @@ def _rtheta_sum(ctx, z, tau_key, a, b, derivatives, tau_data=None):
     growth = ctx.exp(ctx.pi * ctx.fsum(y[i] * shift[i]
                                       for i in range(genus)))
     x_plus_b = tuple(ctx.re(z[i]) + b[i] for i in range(genus))
+
+    if len(derivatives) == 1 and not any(derivatives[0]):
+        value = _rtheta_value_sum(
+            ctx, X_key, Y_key, T, center, radius, shift_tuple, a,
+            x_plus_b, growth)
+        return (value,)
 
     sums = [[] for unused in derivatives]
     for n in _ellipsoid_points(ctx, T, center, radius / ctx.sqrt(ctx.pi)):

@@ -181,6 +181,20 @@ def test_rtheta_truncation_radius_against_enlarged_sum():
     assert mp.almosteq(normal, enlarged, rel_eps=mp.mpf('1e-43'))
 
 
+def test_rtheta_value_fast_path_matches_generic_sum():
+    mp.dps = 45
+    tau = ((mp.mpc('0.11', '0.9'), mp.mpc('-0.08', '0.05')),
+           (mp.mpc('-0.08', '0.05'), mp.mpc('-0.14', '1.1')))
+    z = (mp.mpc('0.17', '0.11'), mp.mpc('-0.12', '0.07'))
+    a = (mp.mpf('0.3'), mp.mpf('-0.2'))
+    b = (mp.mpf('0.1'), mp.mpf('0.4'))
+    tau_data = mp._rtheta_tau_data(tau)
+    fast = _rtheta_sum(mp, z, tau, a, b, ((0, 0),), tau_data)[0]
+    generic = _rtheta_sum(
+        mp, z, tau, a, b, ((0, 0), (0, 0)), tau_data)[0]
+    assert mp.almosteq(fast, generic, rel_eps=mp.mpf('1e-43'))
+
+
 def test_rtheta_wolfram_reference_values():
     # Wolfram Engine 14.3 SiegelTheta values generated at 120 digits from
     # exact rational inputs. The tests use 100 digits and retain guard digits
