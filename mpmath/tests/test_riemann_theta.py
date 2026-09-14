@@ -2,7 +2,7 @@ from itertools import product
 
 import pytest
 
-from mpmath import diff, exp, j, jtheta, mp, pi, rtheta
+from mpmath import diff, exp, j, jtheta, mp, pi, rtheta, rtheta_jet
 from mpmath.functions.riemann_theta import (
     _apply_reduction, _derivative_reduction_threshold, _matrix_tuple,
     _ellipsoid_rows, _multiindices, _partial_inversion, _point_estimate,
@@ -173,6 +173,39 @@ def test_rtheta_internal_third_order_jet_matches_scalar_calls():
     for derivative, value in zip(derivatives, values):
         assert mp.almosteq(
             value, rtheta(z, tau, (a, b), derivative=derivative))
+
+
+def test_rtheta_jet_public_api():
+    mp.dps = 25
+    tau = ((mp.mpc('0.08', '0.92'), mp.mpc('-0.06', '0.04')),
+           (mp.mpc('-0.06', '0.04'), mp.mpc('0.12', '1.08')))
+    z = (mp.mpc('0.13', '0.02'), mp.mpc('-0.09', '0.03'))
+    characteristic = ((0.5, 0), (0, 0.5))
+    derivatives = (
+        (0, 0), (1, 0), (0, 1), (2, 0), (1, 1), (0, 2))
+
+    jet = rtheta_jet(z, tau, 2, characteristic)
+
+    assert tuple(jet) == derivatives
+    for derivative in derivatives:
+        assert mp.almosteq(
+            jet[derivative],
+            rtheta(z, tau, characteristic, derivative=derivative))
+
+
+def test_rtheta_jet_order_zero_and_genus_one():
+    mp.dps = 25
+    z = [mp.mpc('0.1', '0.02')]
+    tau = [[mp.mpc('0.2', '0.9')]]
+
+    zero_jet = rtheta_jet(z, tau, 0)
+    second_jet = rtheta_jet(z, tau, 2)
+
+    assert tuple(zero_jet) == ((0,),)
+    assert mp.almosteq(zero_jet[(0,)], rtheta(z, tau))
+    assert tuple(second_jet) == ((0,), (1,), (2,))
+    assert mp.almosteq(
+        second_jet[(2,)], rtheta(z, tau, derivative=2))
 
 
 def test_rtheta_precision_doubling_genus_three():
@@ -602,6 +635,10 @@ def test_rtheta_validation():
         _rtheta_derivatives(mp, [0], [[1j]], None, None)
     with pytest.raises(ValueError, match="nonempty sequence"):
         _rtheta_derivatives(mp, [0], [[1j]], None, ())
+    with pytest.raises(ValueError, match="nonnegative integer"):
+        rtheta_jet([0], [[1j]], -1)
+    with pytest.raises(ValueError, match="nonnegative integer"):
+        rtheta_jet([0], [[1j]], 1.0)
 
 
 def test_rtheta_nearly_symmetric_input():
