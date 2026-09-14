@@ -123,6 +123,15 @@ def _validate_legendre_relation(ctx, omega, omega_prime, eta, eta_prime,
         raise ValueError("failed to satisfy the generalized Legendre relation")
 
 
+def _real_hyperelliptic_characteristic(ctx, genus):
+    """Return the Riemann-constant characteristic for the real cycle basis."""
+    half = ctx.convert(0.5)
+    a = (half,) * genus
+    b = tuple(half if (genus - index) & 1 else ctx.zero
+              for index in range(genus))
+    return a, b
+
+
 @defun
 def hyperelliptic_periods(ctx, coefficients, method="auto",
                           second_kind=False):
@@ -220,3 +229,37 @@ def hyperelliptic_periods(ctx, coefficients, method="auto",
         return (+omega, +omega_prime, +eta, +eta_prime,
                 +tau, +kappa)
     return +omega, +omega_prime, +tau
+
+
+@defun
+def hyperelliptic_kleinian_data(ctx, coefficients, method="auto"):
+    r"""
+    Construct the curve-dependent data required by Kleinian functions.
+
+    This is a convenience interface for the real odd-degree hyperelliptic
+    curves supported by :func:`~mpmath.hyperelliptic_periods`. It returns
+    ``(omega, tau, kappa, characteristic)``, ready for use with
+    :func:`~mpmath.kleinian_sigma`, :func:`~mpmath.kleinian_zeta`, and
+    :func:`~mpmath.kleinian_p`.
+
+    The characteristic is the vector of Riemann constants with base point at
+    infinity for the canonical real cycle basis used by the period
+    construction. In Bernatska's notation it is
+
+    .. math::
+
+        [K] = \sum_{j=1}^{g} [\varepsilon_{2j}].
+
+    It therefore depends on the cycle and base-point conventions and should
+    not be combined with period matrices constructed in a different basis.
+    The curve-dependent normalization constant of the sigma function is not
+    included.
+
+    See [Bernatska2026]_, equations (3.16) and (3.17).
+
+    """
+    data = hyperelliptic_periods(
+        ctx, coefficients, method=method, second_kind=True)
+    omega, unused_omega_prime, unused_eta, unused_eta_prime, tau, kappa = data
+    characteristic = _real_hyperelliptic_characteristic(ctx, omega.rows)
+    return omega, tau, kappa, characteristic

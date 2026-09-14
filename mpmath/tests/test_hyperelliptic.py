@@ -1,6 +1,9 @@
 import pytest
 
-from mpmath import hyperelliptic_periods, mp
+from mpmath import (
+    hyperelliptic_kleinian_data, hyperelliptic_periods, kleinian_p,
+    kleinian_sigma, kleinian_zeta, mp, weierp, weiersigma, weierzeta,
+)
 from mpmath.functions import hyperelliptic
 
 
@@ -87,6 +90,70 @@ def test_hyperelliptic_second_kind_genus_two_legendre_relation():
         periods * symplectic * periods.T - expected) < mp.mpf('1e-27')
 
 
+def test_hyperelliptic_kleinian_data_genus_one():
+    # In genus one, Bernatska's sum of branch-point characteristics gives the
+    # classical odd characteristic [1/2, 1/2]. The resulting logarithmic
+    # derivatives agree with the conventional Weierstrass functions; sigma
+    # agrees up to its deliberately unspecified constant normalization.
+    mp.dps = 30
+    omega, tau, kappa, characteristic = hyperelliptic_kleinian_data(
+        [0, -1, 0, 1])
+    assert characteristic == ((0.5,), (0.5,))
+    omega1 = omega[0, 0] / 2
+    omega2 = (omega * tau)[0, 0] / 2
+    points = (mp.mpf('0.2'), mp.mpc('0.3', '0.04'))
+    sigma_ratios = []
+    for point in points:
+        arguments = ([point], omega, tau, kappa)
+        assert mp.almosteq(
+            kleinian_p(*arguments, (0, 0), characteristic),
+            weierp(point, omega1=omega1, omega2=omega2))
+        assert mp.almosteq(
+            kleinian_zeta(*arguments, characteristic)[0],
+            weierzeta(point, omega1=omega1, omega2=omega2))
+        sigma_ratios.append(
+            kleinian_sigma(*arguments, characteristic)
+            / weiersigma(point, omega1=omega1, omega2=omega2))
+    assert mp.almosteq(sigma_ratios[0], sigma_ratios[1])
+
+
+def test_hyperelliptic_kleinian_data_genus_two_periodicity():
+    # Eilbeck, Enolskii & Leykin (2000), Definition 3.7, gives full-lattice
+    # periodicity. BEL (1997), equation (3.9), gives the genus-two cubic
+    # identity checked below. Together they test that periods, kappa and the
+    # Riemann characteristic constructed from one curve work coherently.
+    mp.dps = 40
+    coefficients = [0, 16, 0, -20, 0, 4]
+    omega, tau, kappa, characteristic = hyperelliptic_kleinian_data(
+        coefficients)
+    half = 0.5
+    assert characteristic == ((half, half), (0, half))
+    u = mp.matrix([mp.mpc('0.13', '0.02'), mp.mpc('-0.08', '0.01')])
+    shifted = (
+        u + omega * mp.matrix([1, -1])
+        + omega * tau * mp.matrix([1, 1])
+    )
+    indices = ((0, 0), (0, 1), (1, 1), (0, 0, 1), (1, 1, 1))
+    values = kleinian_p(
+        u, omega, tau, kappa, indices, characteristic)
+    shifted_values = kleinian_p(
+        shifted, omega, tau, kappa, indices, characteristic)
+    for value, shifted_value in zip(values, shifted_values):
+        assert abs(value - shifted_value) < (
+            100 * mp.eps * max(1, abs(value)))
+    assert mp.almosteq(
+        kleinian_sigma(-u, omega, tau, kappa, characteristic),
+        -kleinian_sigma(u, omega, tau, kappa, characteristic))
+    p11, p12, p22, unused_p112, p222 = values
+    cubic = (
+        4 * p22 ** 3 + 4 * p22 * p12 + 4 * p11
+        + coefficients[4] * p22 ** 2 + coefficients[3] * p22
+        + coefficients[2]
+    )
+    assert abs(p222 ** 2 - cubic) < (
+        100 * mp.eps * max(1, abs(cubic)))
+
+
 def test_hyperelliptic_second_kind_bernatska_genus_four():
     # J. Bernatska, "Computation of P-Functions on Plane Algebraic Curves",
     # J. Exp. Math. 2(1) (2026), Example 2. Her first-kind basis is minus one
@@ -97,9 +164,11 @@ def test_hyperelliptic_second_kind_bernatska_genus_four():
         -39916800, 54907920, -11079084, -4495768, 506395,
         82441, -4602, -514, 11, 1,
     ]
-    data = hyperelliptic_periods(coefficients, second_kind=True)
-    (unused_omega, unused_omega_prime, unused_eta, unused_eta_prime,
-     unused_tau, kappa) = data
+    unused_omega, unused_tau, kappa, characteristic = (
+        hyperelliptic_kleinian_data(coefficients))
+    half = 0.5
+    assert characteristic == (
+        (half, half, half, half), (0, half, 0, half))
     reverse = mp.matrix([
         [0, 0, 0, 1],
         [0, 0, 1, 0],

@@ -53,6 +53,7 @@ kleinian_sigma = mp.kleinian_sigma
 kleinian_zeta = mp.kleinian_zeta
 kleinian_p = mp.kleinian_p
 hyperelliptic_periods = mp.hyperelliptic_periods
+hyperelliptic_kleinian_data = mp.hyperelliptic_kleinian_data
 kleinj = mp.kleinj
 kleinjinv = mp.kleinjinv
 eta = mp.eta

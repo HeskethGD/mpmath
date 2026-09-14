@@ -83,6 +83,14 @@ equation (1.3) of [BEL1997]_.
 
 .. autofunction:: mpmath.hyperelliptic_periods
 
+For direct use with the Kleinian functions,
+:func:`~mpmath.hyperelliptic_kleinian_data` selects the required period
+matrices and supplies the characteristic of the vector of Riemann constants
+for this cycle basis and a base point at infinity. Period data should normally
+be constructed once and reused for evaluations at many Abelian arguments.
+
+.. autofunction:: mpmath.hyperelliptic_kleinian_data
+
 
 Kleinian functions
 ...................
@@ -104,10 +112,9 @@ specified as ``(a, b)`` using the same literal convention as
 
 The supplied period data must be mutually consistent. For the currently
 supported real odd-degree hyperelliptic curves,
-:func:`~mpmath.hyperelliptic_periods` can construct ``omega``, ``tau`` and
-``kappa`` together by setting ``second_kind=True``. The Kleinian functions do
-not yet infer the Riemann characteristic or canonical sigma normalization
-constant from the curve.
+:func:`~mpmath.hyperelliptic_kleinian_data` constructs ``omega``, ``tau``,
+``kappa`` and the corresponding Riemann characteristic together. The
+canonical sigma normalization constant is not inferred from the curve.
 
 The sigma and P-function definitions follow [Bernatska2026]_. Signs for
 second-kind differentials are not universal. In the half-period notation of
