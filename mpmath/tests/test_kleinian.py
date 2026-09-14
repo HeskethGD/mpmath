@@ -1,11 +1,10 @@
-import importlib
-
 import pytest
 
 from mpmath import (
     diff, kleinian_p, kleinian_sigma, kleinian_zeta, log, mp,
     weierp, weierpprime, weiersigma, weierzeta,
 )
+from mpmath.functions.kleinian import _theta_log_jet
 
 
 def test_kleinian_genus_one_matches_weierstrass_functions():
@@ -220,11 +219,8 @@ def test_kleinian_validation():
 
 
 def test_kleinian_theta_divisor(monkeypatch):
-    module = importlib.import_module("mpmath.functions.kleinian")
-
     monkeypatch.setattr(
-        module, "_rtheta_derivatives",
-        lambda ctx, v, tau, characteristic, derivatives:
-            (ctx.zero,) * len(derivatives))
+        mp, "rtheta_jet",
+        lambda v, tau, degree, characteristic: {(0,): mp.zero})
     with pytest.raises(ZeroDivisionError, match="theta divisor"):
-        module._theta_log_jet(mp, (0,), ((1j,),), None, 1)
+        _theta_log_jet(mp, (0,), ((1j,),), None, 1)

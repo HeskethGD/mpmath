@@ -48,6 +48,7 @@ omega1omega2from = mp.omega1omega2from
 ellipfun = mp.ellipfun
 jtheta = mp.jtheta
 rtheta = mp.rtheta
+rtheta_jet = mp.rtheta_jet
 kleinian_sigma = mp.kleinian_sigma
 kleinian_zeta = mp.kleinian_zeta
 kleinian_p = mp.kleinian_p

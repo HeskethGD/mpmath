@@ -2,31 +2,36 @@ from itertools import product
 
 import pytest
 
-from mpmath import diff, exp, j, jtheta, mp, pi, rtheta
+from mpmath import diff, exp, j, jtheta, mp, pi, rtheta, rtheta_jet
 from mpmath.functions.riemann_theta import (
     _apply_reduction, _derivative_reduction_threshold, _matrix_tuple,
     _ellipsoid_rows, _multiindices, _partial_inversion, _point_estimate,
-    _rtheta_derivatives, _rtheta_sum, _transform_vector,
+    _rtheta_derivatives, _rtheta_sum, _shift_norm_bucket, _transform_vector,
+    _upper_gamma_half_integer_bounds,
 )
 
 
 def test_rtheta_genus_one_jtheta_characteristics():
+    # Classical-theta correspondence: DLMF 21.2.8-21.2.12.
+    # https://dlmf.nist.gov/21.2.iii
     mp.dps = 30
     w = mp.mpc('0.3', '0.1')
     tau = mp.mpc('0.2', '0.9')
     q = exp(pi * j * tau)
     z = w / pi
     cases = [
-        (([mp.mpf('0.5')], [mp.mpf('0.5')]), -jtheta(1, w, q)),
-        (([mp.mpf('0.5')], [0]), jtheta(2, w, q)),
+        (([0.5], [0.5]), -jtheta(1, w, q)),
+        (([0.5], [0]), jtheta(2, w, q)),
         (([0], [0]), jtheta(3, w, q)),
-        (([0], [mp.mpf('0.5')]), jtheta(4, w, q)),
+        (([0], [0.5]), jtheta(4, w, q)),
     ]
     for characteristic, expected in cases:
         assert mp.almosteq(rtheta([z], [[tau]], characteristic), expected)
 
 
 def test_rtheta_diagonal_factorisation():
+    # A diagonal period matrix separates the defining sum in DLMF 21.2.1.
+    # https://dlmf.nist.gov/21.2.E1
     mp.dps = 30
     z = [mp.mpc('0.1', '0.03'), mp.mpc('-0.2', '0.04')]
     tau = [[mp.mpc('0.1', '0.8'), 0], [0, mp.mpc('-0.2', '1.1')]]
@@ -37,6 +42,9 @@ def test_rtheta_diagonal_factorisation():
 
 
 def test_rtheta_block_diagonal_factorisation_with_derivative():
+    # Block factorisation follows by separating the sum in DLMF 21.2.1;
+    # differentiating the independent factors gives the asserted product.
+    # https://dlmf.nist.gov/21.2.E1
     mp.dps = 35
     z = [mp.mpc('0.13', '0.02'), mp.mpc('-0.08', '0.03'),
          mp.mpc('0.06', '-0.01')]
@@ -46,8 +54,8 @@ def test_rtheta_block_diagonal_factorisation_with_derivative():
         [0, mp.mpc('-0.07', '0.04'), mp.mpc('-0.12', '1.15')],
     ]
     characteristic = (
-        [mp.mpf('0.5'), 0, mp.mpf('0.5')],
-        [0, mp.mpf('0.5'), mp.mpf('0.5')],
+        [0.5, 0, 0.5],
+        [0, 0.5, 0.5],
     )
     derivative = (1, 0, 1)
     value = rtheta(z, tau, characteristic, derivative)
@@ -62,18 +70,23 @@ def test_rtheta_block_diagonal_factorisation_with_derivative():
 
 
 def test_rtheta_parity_and_characteristic_zero():
+    # Zero- and half-characteristic parity: DLMF 21.3.1 and 21.3.6.
+    # https://dlmf.nist.gov/21.3.E1
+    # https://dlmf.nist.gov/21.3.E6
     mp.dps = 30
     tau = [[1j, mp.mpc('0.1', '0.05')],
            [mp.mpc('0.1', '0.05'), mp.mpc('0.2', '1.2')]]
     z = [mp.mpc('0.13', '0.02'), mp.mpc('-0.07', '0.01')]
     assert mp.almosteq(rtheta(z, tau), rtheta([-z[0], -z[1]], tau))
-    odd = ([mp.mpf('0.5'), 0], [mp.mpf('0.5'), 0])
+    odd = ([0.5, 0], [0.5, 0])
     assert abs(rtheta([0, 0], tau, odd)) < mp.eps * 10
 
 
 def test_rtheta_all_genus_two_half_characteristic_parities():
+    # Half-characteristic parity: DLMF 21.3.6.
+    # https://dlmf.nist.gov/21.3.E6
     mp.dps = 30
-    half = mp.mpf('0.5')
+    half = 0.5
     tau = [[mp.mpc('0.13', '1.05'), mp.mpc('-0.09', '0.06')],
            [mp.mpc('-0.09', '0.06'), mp.mpc('-0.17', '1.2')]]
     z = [mp.mpc('0.14', '0.03'), mp.mpc('-0.11', '0.02')]
@@ -92,6 +105,9 @@ def test_rtheta_all_genus_two_half_characteristic_parities():
 
 
 def test_rtheta_quasiperiodicity():
+    # Periodicity and quasi-periodicity: DLMF 21.3.2-21.3.3.
+    # https://dlmf.nist.gov/21.3.E2
+    # https://dlmf.nist.gov/21.3.E3
     mp.dps = 30
     tau = [[mp.mpc('0.1', '0.9'), mp.mpc('0.05', '0.02')],
            [mp.mpc('0.05', '0.02'), mp.mpc('-0.1', '1.1')]]
@@ -121,6 +137,8 @@ def test_rtheta_derivatives():
     w = mp.mpc('0.2', '0.04')
     tau1 = mp.mpc('0.15', '0.85')
     q = exp(pi * j * tau1)
+    # DLMF 21.2.11 with w = pi*z, followed by the chain rule.
+    # https://dlmf.nist.gov/21.2.E11
     for order in (1, 2):
         assert mp.almosteq(
             rtheta([w / pi], [[tau1]], derivative=order),
@@ -146,8 +164,8 @@ def test_rtheta_internal_third_order_jet_matches_scalar_calls():
     tau = ((mp.mpc('0.08', '0.92'), mp.mpc('-0.06', '0.04')),
            (mp.mpc('-0.06', '0.04'), mp.mpc('0.12', '1.08')))
     z = (mp.mpc('0.13', '0.02'), mp.mpc('-0.09', '0.03'))
-    a = (mp.mpf('0.5'), 0)
-    b = (0, mp.mpf('0.5'))
+    a = (0.5, 0)
+    b = (0, 0.5)
     derivatives = tuple(_multiindices(2, 3))
     values = _rtheta_derivatives(mp, z, tau, (a, b), derivatives)
 
@@ -155,6 +173,39 @@ def test_rtheta_internal_third_order_jet_matches_scalar_calls():
     for derivative, value in zip(derivatives, values):
         assert mp.almosteq(
             value, rtheta(z, tau, (a, b), derivative=derivative))
+
+
+def test_rtheta_jet_public_api():
+    mp.dps = 25
+    tau = ((mp.mpc('0.08', '0.92'), mp.mpc('-0.06', '0.04')),
+           (mp.mpc('-0.06', '0.04'), mp.mpc('0.12', '1.08')))
+    z = (mp.mpc('0.13', '0.02'), mp.mpc('-0.09', '0.03'))
+    characteristic = ((0.5, 0), (0, 0.5))
+    derivatives = (
+        (0, 0), (1, 0), (0, 1), (2, 0), (1, 1), (0, 2))
+
+    jet = rtheta_jet(z, tau, 2, characteristic)
+
+    assert tuple(jet) == derivatives
+    for derivative in derivatives:
+        assert mp.almosteq(
+            jet[derivative],
+            rtheta(z, tau, characteristic, derivative=derivative))
+
+
+def test_rtheta_jet_order_zero_and_genus_one():
+    mp.dps = 25
+    z = [mp.mpc('0.1', '0.02')]
+    tau = [[mp.mpc('0.2', '0.9')]]
+
+    zero_jet = rtheta_jet(z, tau, 0)
+    second_jet = rtheta_jet(z, tau, 2)
+
+    assert tuple(zero_jet) == ((0,),)
+    assert mp.almosteq(zero_jet[(0,)], rtheta(z, tau))
+    assert tuple(second_jet) == ((0,), (1,), (2,))
+    assert mp.almosteq(
+        second_jet[(2,)], rtheta(z, tau, derivative=2))
 
 
 def test_rtheta_precision_doubling_genus_three():
@@ -182,7 +233,7 @@ def test_rtheta_third_order_jet_with_characteristic_at_100_dps():
     )
     z = (mp.mpc('0.11', '0.03'), mp.mpc('-0.07', '0.02'),
          mp.mpc('0.05', '-0.01'))
-    half = mp.mpf('0.5')
+    half = 0.5
     characteristic = ((half, 0, half), (0, half, half))
     derivatives = tuple(_multiindices(3, 3))
     values = _rtheta_derivatives(
@@ -218,10 +269,46 @@ def test_rtheta_truncation_radius_against_enlarged_sum():
     tau_data = list(mp._rtheta_tau_data(tau))
     normal = _rtheta_sum(mp, z, tau, zero, zero, ((0, 0),),
                          tuple(tau_data))[0]
-    tau_data[5] *= mp.mpf('1.5')
+    tau_data[5] *= 1.5
     enlarged = _rtheta_sum(mp, z, tau, zero, zero, ((0, 0),),
                            tuple(tau_data))[0]
     assert mp.almosteq(normal, enlarged, rel_eps=mp.mpf('1e-43'))
+
+
+def test_rtheta_upper_gamma_bounds_are_conservative():
+    mp.dps = 50
+    for x in (mp.mpf('0.75'), mp.mpf(5), mp.mpf(80)):
+        bounds = _upper_gamma_half_integer_bounds(mp, 1, 8, x)
+        for twice_s, bound in enumerate(bounds, start=1):
+            exact = mp.gammainc(mp.mpf(twice_s) / 2, x, mp.inf)
+            assert bound >= exact
+
+
+def test_rtheta_derivative_radius_cache_is_small_and_reusable():
+    mp.dps = 30
+    cached_radius = mp._rtheta_derivative_radius
+    cached_radius.cache_clear()
+    tau_value = mp.mpc('0.2', '1.2')
+    tau = [[tau_value]]
+
+    rtheta([mp.mpc('0.1', '0.01')], tau, derivative=1)
+    first = cached_radius.cache_info()
+    rtheta([mp.mpc('0.2', '0.02')], tau, derivative=1)
+    second = cached_radius.cache_info()
+    assert first.misses == 1
+    assert second.hits == 1
+    assert second.maxsize == 32
+
+    tau_data = mp._rtheta_tau_data(((tau_value,),))
+    for index in range(40):
+        cached_radius(
+            1, (1,), tau_data[4], tau_data[3], mp.mpf(index + 1) / 8)
+    assert cached_radius.cache_info().currsize == 32
+
+    for shift_norm in (mp.zero, mp.mpf('0.01'), mp.mpf('0.99'),
+                       mp.mpf('12.345')):
+        assert _shift_norm_bucket(mp, shift_norm) >= shift_norm
+    cached_radius.cache_clear()
 
 
 def test_rtheta_value_fast_path_matches_generic_sum():
@@ -270,14 +357,16 @@ def test_ellipsoid_rows_match_brute_force_points():
 def test_rtheta_wolfram_reference_values():
     # Wolfram Engine 14.3 SiegelTheta values generated at 120 digits from
     # exact rational inputs. The tests use 100 digits and retain guard digits
-    # in each reference value.
+    # in each reference value. The calls were N[SiegelTheta[tau, z], 120]
+    # and N[SiegelTheta[{a, b}, tau, z], 120].
+    # https://reference.wolfram.com/language/ref/SiegelTheta.html
     mp.dps = 100
     z2 = [mp.mpc('0.11', '0.03'), mp.mpc('-0.07', '0.02')]
     tau2 = [
         [mp.mpc('0.10', '0.90'), mp.mpc('-0.20', '0.12')],
         [mp.mpc('-0.20', '0.12'), mp.mpc('0.05', '1.10')],
     ]
-    char2 = ([mp.mpf('0.5'), 0], [0, mp.mpf('0.5')])
+    char2 = ([0.5, 0], [0, 0.5])
     refs2 = [
         mp.mpc(
             '1.15010054896589710068630628822243271125317054007702426004984068418064969671373665362574581188457525423704174753913082529848244697358328',
@@ -296,8 +385,7 @@ def test_rtheta_wolfram_reference_values():
         [mp.mpc('0.05', '0.04'), mp.mpc('0.08', '0.06'),
          mp.mpc('-0.15', '0.90')],
     ]
-    char3 = ([mp.mpf('0.5'), 0, mp.mpf('0.5')],
-             [0, 0, mp.mpf('0.5')])
+    char3 = ([0.5, 0, 0.5], [0, 0, 0.5])
     refs3 = [
         mp.mpc(
             '1.221609642406339797657102259903691954365704088043749183987260288160622810706259133711255570012034796050287767505312762580074107266344458',
@@ -320,7 +408,9 @@ def test_rtheta_wolfram_reference_values():
 def test_rtheta_wolfram_unreduced_reference_values():
     # Fresh Wolfram Engine 14.3 SiegelTheta values generated at 120 digits
     # from exact rational inputs. These exercise reduction, large z and
-    # arbitrary real characteristics together.
+    # arbitrary real characteristics together. The calls used the same two
+    # forms of SiegelTheta recorded in the preceding reference-value test.
+    # https://reference.wolfram.com/language/ref/SiegelTheta.html
     mp.dps = 100
     characteristic2 = ((mp.mpf('0.3'), mp.mpf('-0.2')),
                        (mp.mpf('0.1'), mp.mpf('0.4')))
@@ -335,10 +425,10 @@ def test_rtheta_wolfram_unreduced_reference_values():
                        (mp.mpf('0.1'), mp.mpf('0.4'), mp.mpf('-0.15')))
     tau3 = [
         [mp.mpc('0.3', '0.12'), mp.mpc('0.17', '0.03'),
-         mp.mpc('0', '0.02')],
+         mp.mpc(0, '0.02')],
         [mp.mpc('0.17', '0.03'), mp.mpc('-0.2', '0.16'),
-         mp.mpc('0', '0.02')],
-        [mp.mpc('0', '0.02'), mp.mpc('0', '0.02'),
+         mp.mpc(0, '0.02')],
+        [mp.mpc(0, '0.02'), mp.mpc(0, '0.02'),
          mp.mpc('0.1', '0.2')],
     ]
     z3 = [mp.mpc('0.11', '0.03'), mp.mpc('-0.07', '0.02'),
@@ -352,6 +442,159 @@ def test_rtheta_wolfram_unreduced_reference_values():
                        rel_eps=tolerance, abs_eps=tolerance)
     assert mp.almosteq(rtheta(z3, tau3, characteristic3), reference3,
                        rel_eps=tolerance, abs_eps=tolerance)
+
+
+def test_rtheta_wolfram_first_derivative_reference_values():
+    # Wolfram Engine 14.3 NumericalCalculus`ND values, evaluated using
+    # Method -> NIntegrate (Cauchy's integral formula) and 65-70 digits of
+    # working precision. SiegelTheta has the same normalized z convention.
+    # https://reference.wolfram.com/language/NumericalCalculus/ref/ND.html
+    # https://reference.wolfram.com/language/ref/SiegelTheta.html
+    mp.dps = 40
+    z2 = [mp.mpc('0.11', '0.03'), mp.mpc('-0.07', '0.02')]
+    tau2 = [
+        [mp.mpc('0.10', '0.90'), mp.mpc('-0.20', '0.12')],
+        [mp.mpc('-0.20', '0.12'), mp.mpc('0.05', '1.10')],
+    ]
+    characteristic2 = ([0.5, 0], [0, 0.5])
+    references2 = (
+        (None, mp.mpc(
+            '-0.421288315640741560394787218172215298435192461898651',
+            '-0.297478129127372247972205522599835990950319316362461')),
+        (characteristic2, mp.mpc(
+            '-0.983740135148338116134552482066670136613333239537688',
+            '-0.287732601392744703482773208619225173728089061045940')),
+    )
+    tolerance = mp.mpf('1e-38')
+    for characteristic, reference in references2:
+        assert mp.almosteq(
+            rtheta(z2, tau2, characteristic, derivative=(1, 0)),
+            reference, rel_eps=tolerance, abs_eps=tolerance)
+
+    z3 = [mp.mpc('0.11', '0.03'), mp.mpc('-0.07', '0.02'),
+          mp.mpc('0.05', '-0.01')]
+    tau3 = [
+        [mp.mpc('0.10', '1.00'), mp.mpc('-0.12', '0.08'),
+         mp.mpc('0.05', '0.04')],
+        [mp.mpc('-0.12', '0.08'), mp.mpc('0.20', '1.15'),
+         mp.mpc('0.08', '0.06')],
+        [mp.mpc('0.05', '0.04'), mp.mpc('0.08', '0.06'),
+         mp.mpc('-0.15', '0.90')],
+    ]
+    reference3 = mp.mpc(
+        '-0.349364739121920510015037946041375468350822979142697',
+        '-0.218485727335759004831470672865642569157395969625689')
+    assert mp.almosteq(
+        rtheta(z3, tau3, derivative=(1, 0, 0)), reference3,
+        rel_eps=tolerance, abs_eps=tolerance)
+
+
+def test_rtheta_flint_high_precision_derivative_reference_values():
+    # Certified FLINT 3.6.0 acb_theta_jet enclosures computed at 130 dps
+    # through Python-FLINT 0.9.0. FLINT's Taylor coefficients were multiplied
+    # by the multi-index factorials to obtain ordinary partial derivatives.
+    # Every recorded midpoint had enclosure radius below 3.3e-128.
+    # https://flintlib.org/doc/acb_theta.html
+    mp.dps = 100
+    tolerance = mp.mpf('1e-98')
+    z2 = [mp.mpc('0.11', '0.03'), mp.mpc('-0.07', '0.02')]
+    tau2 = [
+        [mp.mpc('0.10', '0.90'), mp.mpc('-0.20', '0.12')],
+        [mp.mpc('-0.20', '0.12'), mp.mpc('0.05', '1.10')],
+    ]
+    half2 = ([0.5, 0], [0, 0.5])
+    cases2 = (
+        (None, (2, 0), mp.mpc(
+            '-3.70302318847962531102746421196741770479519169317250238327399845194544812073725950034281322335010842942379904608583600925',
+            '-0.676647983025765584988696701501531718662199744767527809377309914862400209905506350145714074349651391583245694053251869978')),
+        (None, (1, 1), mp.mpc(
+            '-0.0492830462579949939080327254030849463068181598703018850653065257700124493596665111519633528138121999674893666903240653057',
+            '0.188722819532323736052517708362276883159628967942584955480523117746601772368091761871289179463169032107921550117333179792')),
+        (None, (2, 1), mp.mpc(
+            '0.510109942412506906348039968829021056110472011913214068324156555703573356310679474090641891489414592720300153907825795172',
+            '-1.73784821436088196692553878274949762796692250748447504881253235541903673215233093231020937149976587228035056900176806436')),
+        (half2, (0, 2), mp.mpc(
+            '1.59405366912712602932168341925929329739061553348406695029834721987354070660484011542785642549687401680165762911354469987',
+            '0.678197572830669325431970259193745616335781067306349265494919453231503185934986593023788155173334269512663008718046546465')),
+        (half2, (1, 1), mp.mpc(
+            '0.00506262711244847595711909837342906731732086829953077179875073877425155230227683339892785473221686111182635405587903951584',
+            '-0.656735703386161600190210786006010705331432797990974033139682794285353147435261926555954518014351969442099487008921964491')),
+        (half2, (1, 2), mp.mpc(
+            '-2.56012945425409603208529451407731106831476911040452819698668383790292721185892340100183555947273879000517313127472716906',
+            '-3.62621222740679372224268928087397123446120699815806027482289280696049350547713834880575823432416970384201643649467346182')),
+    )
+    for characteristic, derivative, reference in cases2:
+        assert mp.almosteq(
+            rtheta(z2, tau2, characteristic, derivative), reference,
+            rel_eps=tolerance, abs_eps=tolerance)
+
+    z3 = z2 + [mp.mpc('0.05', '-0.01')]
+    tau3 = [
+        [mp.mpc('0.10', '1.00'), mp.mpc('-0.12', '0.08'),
+         mp.mpc('0.05', '0.04')],
+        [mp.mpc('-0.12', '0.08'), mp.mpc('0.20', '1.15'),
+         mp.mpc('0.08', '0.06')],
+        [mp.mpc('0.05', '0.04'), mp.mpc('0.08', '0.06'),
+         mp.mpc('-0.15', '0.90')],
+    ]
+    half3 = ([0.5, 0, 0.5], [0, 0, 0.5])
+    cases3 = (
+        (None, (1, 1, 0), mp.mpc(
+            '-0.0583203441458341483463356071834041239984343441778997778365789034110166610739832774214620984517732788372057366818649126281',
+            '0.0708753457491918488372972088434176429774075409403303751129258604355297050164131636926147821958543195598178704144781753017')),
+        (None, (2, 0, 1), mp.mpc(
+            '0.114306309858173014349559978028599658075537833007449717601194351437916360428696872814207699015024136431925580013134749270',
+            '0.149072636036949478276875893311970273856306502655947226037232741110709312077642678802950638931487633597974738441036317957')),
+        (half3, (0, 1, 1), mp.mpc(
+            '-0.330573454408454085191250734483989258773110711237355724952771550857516516520533097128909554697460504958496922554130515797',
+            '-0.248921244221115960904005325671928134409098763816549339891050443057701465746834442584948227393550587676101381266386567494')),
+        (half3, (1, 1, 1), mp.mpc(
+            '0.459086351057195620002222892353732574900829787440015815436363687987155908263334103197721895907348597954260934682121834009',
+            '-0.924063613793591498369212162932436220909836688736846903748833925742816424588180770490266398471292926543648766005460109829')),
+    )
+    for characteristic, derivative, reference in cases3:
+        assert mp.almosteq(
+            rtheta(z3, tau3, characteristic, derivative), reference,
+            rel_eps=tolerance, abs_eps=tolerance)
+
+
+def test_rtheta_wolfram_higher_genus_reference_values():
+    # Wolfram Engine 14.3 values from N[SiegelTheta[tau, z], 40], with
+    # tau and z constructed from the exact rational counterparts below.
+    # https://reference.wolfram.com/language/ref/SiegelTheta.html
+    # Strong damping keeps these high-dimensional smoke tests bounded; they
+    # do not imply that arbitrary genus-10 or genus-20 inputs are inexpensive.
+    mp.dps = 35
+
+    def make_case(genus, scale):
+        tau = [[0 for unused in range(genus)] for unused in range(genus)]
+        for i in range(genus):
+            tau[i][i] = mp.mpc(
+                mp.mpf(i % 3) / 20,
+                scale + mp.mpf(i % 4) / 10,
+            )
+            if i + 1 < genus:
+                tau[i][i + 1] = tau[i + 1][i] = mp.mpc('0.02', '0.25')
+        z = [
+            mp.mpc(mp.mpf((i % 5) - 2) / 100,
+                   mp.mpf((i % 3) - 1) / 200)
+            for i in range(genus)
+        ]
+        return z, tau
+
+    cases = (
+        (10, 8, mp.mpc(
+            '1.0000000001671156401975485245765975730135867034602892301525',
+            '2.49857014987438782428182159399172658122217981149e-11')),
+        (20, 20, mp.mpc(
+            '1.0000000000000000000000000133796107582295982965475652944874',
+            '2.0101530593695935374230689609606e-27')),
+    )
+    tolerance = mp.mpf('1e-33')
+    for genus, scale, reference in cases:
+        z, tau = make_case(genus, scale)
+        assert mp.almosteq(rtheta(z, tau), reference,
+                           rel_eps=tolerance, abs_eps=tolerance)
 
 
 def test_rtheta_validation():
@@ -392,6 +635,10 @@ def test_rtheta_validation():
         _rtheta_derivatives(mp, [0], [[1j]], None, None)
     with pytest.raises(ValueError, match="nonempty sequence"):
         _rtheta_derivatives(mp, [0], [[1j]], None, ())
+    with pytest.raises(ValueError, match="nonnegative integer"):
+        rtheta_jet([0], [[1j]], -1)
+    with pytest.raises(ValueError, match="nonnegative integer"):
+        rtheta_jet([0], [[1j]], 1.0)
 
 
 def test_rtheta_nearly_symmetric_input():
@@ -406,6 +653,11 @@ def test_rtheta_nearly_symmetric_input():
 
 
 def test_rtheta_symplectic_generator_identities():
+    # The basis, translation and general modular transformations are DLMF
+    # 21.5.5, 21.5.7 and 21.5.4, respectively.
+    # https://dlmf.nist.gov/21.5.E5
+    # https://dlmf.nist.gov/21.5.E7
+    # https://dlmf.nist.gov/21.5.E4
     mp.dps = 35
     tau = mp.matrix([
         [mp.mpc('0.13', '1.1'), mp.mpc('-0.17', '0.08')],
@@ -419,7 +671,7 @@ def test_rtheta_symplectic_generator_identities():
     for row in range(2):
         for column in range(2):
             translated_tau[row, column] += translation[row][column]
-    translated_z = (z[0] - mp.mpf('0.5'), z[1] + mp.mpf('0.5'))
+    translated_z = (z[0] - 0.5, z[1] + 0.5)
     assert mp.almosteq(rtheta(translated_z, translated_tau), value)
 
     basis = ((1, 1), (0, 1))
@@ -435,7 +687,7 @@ def test_rtheta_symplectic_generator_identities():
     combined_z, combined_factor = _apply_reduction(
         mp, z, (("translate", (1, -1)), ("basis", basis)))
     assert combined_z == _transform_vector(
-        mp, basis, (z[0] + mp.mpf('0.5'), z[1] - mp.mpf('0.5')))
+        mp, basis, (z[0] + 0.5, z[1] - 0.5))
     assert combined_factor == 1
 
     inverted_tau, inversion = _partial_inversion(mp, tau)
@@ -480,6 +732,8 @@ def test_rtheta_cost_selected_reduction():
     assert mp.almosteq(
         rtheta(z, tau, characteristic, derivative), direct_derivative)
 
+    # The final check also exercises DLMF 21.3.3 after reduction.
+    # https://dlmf.nist.gov/21.3.E3
     shift = (3, -2)
     shifted_z = tuple(
         z[i] + mp.fsum(tau[i][k] * shift[k] for k in range(2))
@@ -513,10 +767,10 @@ def test_rtheta_cost_selected_reduction_genus_three():
     mp.dps = 25
     tau = (
         (mp.mpc('0.3', '0.12'), mp.mpc('0.17', '0.03'),
-         mp.mpc('0', '0.02')),
+         mp.mpc(0, '0.02')),
         (mp.mpc('0.17', '0.03'), mp.mpc('-0.2', '0.16'),
-         mp.mpc('0', '0.02')),
-        (mp.mpc('0', '0.02'), mp.mpc('0', '0.02'),
+         mp.mpc(0, '0.02')),
+        (mp.mpc(0, '0.02'), mp.mpc(0, '0.02'),
          mp.mpc('0.1', '0.2')),
     )
     z = (mp.mpc('0.13', '0.07'), mp.mpc('-0.21', '0.04'),
@@ -542,10 +796,10 @@ def test_rtheta_cost_selected_genus_three_second_derivative():
     mp.dps = 20
     tau = (
         (mp.mpc('0.3', '0.12'), mp.mpc('0.17', '0.03'),
-         mp.mpc('0', '0.02')),
+         mp.mpc(0, '0.02')),
         (mp.mpc('0.17', '0.03'), mp.mpc('-0.2', '0.16'),
-         mp.mpc('0', '0.02')),
-        (mp.mpc('0', '0.02'), mp.mpc('0', '0.02'),
+         mp.mpc(0, '0.02')),
+        (mp.mpc(0, '0.02'), mp.mpc(0, '0.02'),
          mp.mpc('0.1', '0.2')),
     )
     z = (mp.mpc('0.11', '0.03'), mp.mpc('-0.07', '0.02'),
@@ -575,8 +829,8 @@ def test_rtheta_reduced_mixed_derivative():
         (mp.mpc('0.1', '0.008'), mp.mpc('-0.3', '0.05')),
     )
     z = (mp.mpc('0.13', '0.07'), mp.mpc('-0.21', '0.04'))
-    a = (mp.mpf('0.5'), 0)
-    b = (0, mp.mpf('0.5'))
+    a = (0.5, 0)
+    b = (0, 0.5)
     derivative = (1, 1)
     unused_tau, unused_operations, reduced_points = (
         mp._rtheta_reduction_data(tau))
@@ -598,8 +852,8 @@ def test_rtheta_reduced_derivative_jet_matches_direct_sum():
         (mp.mpc('0.1', '0.008'), mp.mpc('-0.3', '0.05')),
     )
     z = (mp.mpc('0.13', '0.07'), mp.mpc('-0.21', '0.04'))
-    a = (mp.mpf('0.5'), 0)
-    b = (0, mp.mpf('0.5'))
+    a = (0.5, 0)
+    b = (0, 0.5)
     derivatives = tuple(_multiindices(2, 2))
 
     values = _rtheta_derivatives(mp, z, tau, (a, b), derivatives)
@@ -610,15 +864,17 @@ def test_rtheta_reduced_derivative_jet_matches_direct_sum():
 
 
 def test_rtheta_unreduced_genus_one_against_jtheta():
+    # Classical-theta correspondence: DLMF 21.2.8-21.2.12.
+    # https://dlmf.nist.gov/21.2.iii
     mp.dps = 35
     tau = mp.mpc('0.1', '0.1')
     w = mp.mpc('0.3', '0.17')
     q = exp(pi * j * tau)
     cases = [
-        (([mp.mpf('0.5')], [mp.mpf('0.5')]), -jtheta(1, w, q)),
-        (([mp.mpf('0.5')], [0]), jtheta(2, w, q)),
+        (([0.5], [0.5]), -jtheta(1, w, q)),
+        (([0.5], [0]), jtheta(2, w, q)),
         (([0], [0]), jtheta(3, w, q)),
-        (([0], [mp.mpf('0.5')]), jtheta(4, w, q)),
+        (([0], [0.5]), jtheta(4, w, q)),
     ]
     for characteristic, expected in cases:
         assert mp.almosteq(rtheta([w / pi], [[tau]], characteristic),

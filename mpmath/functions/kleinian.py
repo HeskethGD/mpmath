@@ -1,7 +1,6 @@
 from .functions import ctx_lru_cache, defun
 from .riemann_theta import (
-    _as_vector, _matrix_tuple, _multiindices, _normalise_characteristic,
-    _normalise_tau, _rtheta_derivatives,
+    _as_vector, _matrix_tuple, _normalise_characteristic, _normalise_tau,
 )
 
 
@@ -76,10 +75,8 @@ def _add_indices(genus, *indices):
 def _theta_log_jet(ctx, v, tau_key, characteristic, degree):
     """Return theta and its logarithmic derivatives through degree three."""
     genus = len(v)
-    derivatives = tuple(_multiindices(genus, degree))
-    values = _rtheta_derivatives(
-        ctx, v, tau_key, characteristic, derivatives)
-    theta_derivatives = dict(zip(derivatives, values))
+    theta_derivatives = ctx.rtheta_jet(
+        v, tau_key, degree, characteristic)
     zero = (0,) * genus
     theta = theta_derivatives[zero]
     if degree and not theta:
