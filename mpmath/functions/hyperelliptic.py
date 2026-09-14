@@ -1,13 +1,16 @@
 # Numerical period data for hyperelliptic curves
 # ------------------------------------------------
 #
-# The first implementation covers odd-degree real models
+# The real-branch implementation covers models
 #
-#     y**2 = P(x),  deg(P) = 2*g + 1,
+#     y**2 = P(x),  deg(P) = 2*g + 1 or 2*g + 2,
 #
 # with distinct real branch points.  It uses the classical Baker cycle
 # arrangement written explicitly, for example, in Bernatska, "Computation of
 # P-Functions on Plane Algebraic Curves", J. Exp. Math. 2 (2026), Section 3.
+# In even degree the smallest root is the distinguished branch point e0 and
+# the final cut joins the largest root to e0 through infinity; this shifts the
+# finite interval indices by one relative to the odd-degree construction.
 # Endpoint singularities are removed by a cosine parametrization; mpmath's
 # existing adaptive quadrature then integrates smooth functions.
 #
@@ -34,8 +37,8 @@ def _real_hyperelliptic_coefficients(ctx, coefficients):
            for value in coefficients):
         raise ValueError("coefficients must be finite real numbers")
     degree = len(coefficients) - 1
-    if degree < 3 or not degree & 1:
-        raise ValueError("the polynomial degree must be odd and at least 3")
+    if degree < 3:
+        raise ValueError("the polynomial degree must be at least 3")
     return tuple(ctx.re(value) for value in coefficients)
 
 
@@ -80,8 +83,8 @@ def _real_branch_integrals(ctx, roots, leading, interval, count):
 
 def _second_kind_interval(ctx, coefficients, monomials, row, genus):
     """Combine monomial integrals into one canonical second-kind integral."""
-    # BEL (1.3), with j = row + 1 and a zero x**(2*g+2) coefficient for the
-    # present odd-degree model.
+    # BEL (1.3), with j = row + 1. The caller supplies coefficients through
+    # degree 2*g+2, padding that coefficient with zero in odd degree.
     j = row + 1
     return ctx.fsum(
         (power + 1 - j) * coefficients[power + 1 + j]
@@ -136,14 +139,14 @@ def _real_hyperelliptic_characteristic(ctx, genus):
 def hyperelliptic_periods(ctx, coefficients, method="auto",
                           second_kind=False):
     r"""
-    Compute periods of a real odd-degree hyperelliptic curve.
+    Compute periods of a real hyperelliptic curve.
 
     ``coefficients`` gives the coefficients of a polynomial :math:`P` in the
     ascending order used by :func:`~mpmath.polyval`, defining
 
     .. math::
 
-        y^2 = P(x), \qquad \deg P = 2g+1.
+        y^2 = P(x), \qquad \deg P \in \{2g+1, 2g+2\}.
 
     The polynomial must currently have distinct real roots. The roots are
     ordered automatically; they need not be supplied by the user.
@@ -183,19 +186,24 @@ def hyperelliptic_periods(ctx, coefficients, method="auto",
         coefficients = _real_hyperelliptic_coefficients(ctx, coefficients)
         roots = _real_hyperelliptic_roots(ctx, coefficients)
         genus = (len(coefficients) - 2) // 2
+        even_degree = not (len(coefficients) - 1) % 2
+        # The first finite a-cycle starts at interval zero in odd degree and
+        # interval one in even degree, where e0 is itself a finite root.
+        cycle_offset = 1 if even_degree else 0
         monomial_count = 2 * genus + 1 if second_kind else genus
         intervals = [
             _real_branch_integrals(
                 ctx, roots, coefficients[-1], interval, monomial_count)
-            for interval in range(2 * genus)
+            for interval in range(2 * genus + cycle_offset)
         ]
         omega = ctx.matrix(genus)
         omega_prime = ctx.matrix(genus)
         for row in range(genus):
             for column in range(genus):
-                omega[row, column] = 2 * intervals[2 * column][row]
+                omega[row, column] = (
+                    2 * intervals[2 * column + cycle_offset][row])
                 omega_prime[row, column] = 2 * ctx.fsum(
-                    intervals[2 * edge + 1][row]
+                    intervals[2 * edge + 1 + cycle_offset][row]
                     for edge in range(column, genus))
         inverse_omega = ctx.inverse(omega)
         tau = inverse_omega * omega_prime
@@ -205,8 +213,10 @@ def hyperelliptic_periods(ctx, coefficients, method="auto",
             ctx, tau, target_eps, "period matrix")
         ctx._rtheta_tau_data(_matrix_tuple(tau))
         if second_kind:
-            # Pad the missing degree 2*g+2 coefficient of the odd model.
-            second_coefficients = coefficients + (ctx.zero,)
+            # BEL's formula includes degree 2*g+2. It is zero in odd degree.
+            second_coefficients = coefficients
+            if not even_degree:
+                second_coefficients += (ctx.zero,)
             eta = ctx.matrix(genus)
             eta_prime = ctx.matrix(genus)
             for row in range(genus):
@@ -216,9 +226,10 @@ def hyperelliptic_periods(ctx, coefficients, method="auto",
                     for values in intervals
                 ]
                 for column in range(genus):
-                    eta[row, column] = 2 * second_intervals[2 * column]
+                    eta[row, column] = (
+                        2 * second_intervals[2 * column + cycle_offset])
                     eta_prime[row, column] = 2 * ctx.fsum(
-                        second_intervals[2 * edge + 1]
+                        second_intervals[2 * edge + 1 + cycle_offset]
                         for edge in range(column, genus))
             kappa = eta * inverse_omega
             _symmetrize_period_matrix(
@@ -236,15 +247,16 @@ def hyperelliptic_kleinian_data(ctx, coefficients, method="auto"):
     r"""
     Construct the curve-dependent data required by Kleinian functions.
 
-    This is a convenience interface for the real odd-degree hyperelliptic
+    This is a convenience interface for the real hyperelliptic
     curves supported by :func:`~mpmath.hyperelliptic_periods`. It returns
     ``(omega, tau, kappa, characteristic)``, ready for use with
     :func:`~mpmath.kleinian_sigma`, :func:`~mpmath.kleinian_zeta`, and
     :func:`~mpmath.kleinian_p`.
 
-    The characteristic is the vector of Riemann constants with base point at
-    infinity for the canonical real cycle basis used by the period
-    construction. In Bernatska's notation it is
+    The characteristic is the vector of Riemann constants for the canonical
+    real cycle basis used by the period construction. The base point is the
+    branch point at infinity in odd degree and the smallest finite branch
+    point in even degree. In Bernatska's notation it is
 
     .. math::
 

@@ -73,7 +73,8 @@ Riemann theta jets
 Hyperelliptic period data
 .........................
 
-For an odd-degree hyperelliptic curve with distinct real branch points,
+For a hyperelliptic curve of degree :math:`2g+1` or :math:`2g+2` with
+distinct real branch points,
 :func:`~mpmath.hyperelliptic_periods` constructs full first-kind periods and
 the normalized Riemann matrix directly from the polynomial coefficients. It
 can also construct the associated canonical second-kind periods and
@@ -86,8 +87,10 @@ equation (1.3) of [BEL1997]_.
 For direct use with the Kleinian functions,
 :func:`~mpmath.hyperelliptic_kleinian_data` selects the required period
 matrices and supplies the characteristic of the vector of Riemann constants
-for this cycle basis and a base point at infinity. Period data should normally
-be constructed once and reused for evaluations at many Abelian arguments.
+for this cycle basis. Its base point is the branch point at infinity in odd
+degree and the smallest finite branch point in even degree. Period data should
+normally be constructed once and reused for evaluations at many Abelian
+arguments.
 
 .. autofunction:: mpmath.hyperelliptic_kleinian_data
 
@@ -111,7 +114,7 @@ specified as ``(a, b)`` using the same literal convention as
 :func:`~mpmath.rtheta`.
 
 The supplied period data must be mutually consistent. For the currently
-supported real odd-degree hyperelliptic curves,
+supported real hyperelliptic curves,
 :func:`~mpmath.hyperelliptic_kleinian_data` constructs ``omega``, ``tau``,
 ``kappa`` and the corresponding Riemann characteristic together. The
 canonical sigma normalization constant is not inferred from the curve.

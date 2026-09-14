@@ -154,6 +154,63 @@ def test_hyperelliptic_kleinian_data_genus_two_periodicity():
         100 * mp.eps * max(1, abs(cubic)))
 
 
+def test_hyperelliptic_even_degree_genus_one_cubic():
+    # BEL (1997), the genus-one discussion following equation (3.15), gives
+    # this cubic for a general quartic model. It checks the even-degree
+    # periods, second-kind data, Riemann characteristic and derivatives
+    # together without first transforming the curve to an odd-degree model.
+    mp.dps = 40
+    coefficients = [24, 14, -13, -2, 1]
+    omega, tau, kappa, characteristic = hyperelliptic_kleinian_data(
+        coefficients)
+    u = [mp.mpc('0.2', '0.03')]
+    p11, p111 = kleinian_p(
+        u, omega, tau, kappa, ((0, 0), (0, 0, 0)), characteristic)
+    lambda0, lambda1, lambda2, lambda3, lambda4 = coefficients
+    cubic = (
+        4 * p11 ** 3 + lambda2 * p11 ** 2
+        + (lambda1 * lambda3 - 4 * lambda4 * lambda0) * p11 / 4
+        + (lambda0 * lambda3 ** 2
+           + lambda4 * (lambda1 ** 2 - 4 * lambda2 * lambda0)) / 16
+    )
+    assert abs(p111 ** 2 - cubic) < (
+        100 * mp.eps * max(1, abs(cubic)))
+
+
+def test_hyperelliptic_even_degree_pari_oracle():
+    # PARI/GP 2.18.1 alpha, hyperellperiods(P, 1), at 70 decimal digits for
+    # P=(x+3)(x+2)(x+1)(x-1)(x-2)(x-4). As in the odd-degree oracle, PARI's
+    # interleaved cycles have the opposite intersection orientation. The
+    # anti-symplectic matrix below relates its independent lattice to ours.
+    mp.dps = 30
+    omega, omega_prime, unused_tau = hyperelliptic_periods(
+        [-48, -4, 64, 5, -17, -1, 1])
+    periods = mp.matrix(2, 4)
+    periods[:, :2] = omega
+    periods[:, 2:] = omega_prime
+    r = mp.mpf
+    pari_periods = mp.matrix([
+        [r('0.464901227905802907214915155765884188') * 1j,
+         -r('0.531986563561318428544478628778286555') * 1j,
+         r('0.645056614485840714357434960674649113'),
+         -r('0.757391197830719125377033825465364239')],
+        [r('1.26198488743988016191264235350272064') * 1j,
+         r('1.28526303966470991081119212876082963') * 1j,
+         r('0.946914550864355501738777880064324816'),
+         r('1.12712800022540204589739296431967767')],
+    ])
+    change_of_cycles = mp.matrix([
+        [0, 0, 0, -1],
+        [0, 0, -1, 0],
+        [0, -1, 0, 0],
+        [-1, 0, 0, 0],
+    ])
+    relative_error = (
+        mp.norm(periods * change_of_cycles - pari_periods)
+        / mp.norm(pari_periods))
+    assert relative_error < mp.mpf('1e-28')
+
+
 def test_hyperelliptic_second_kind_bernatska_genus_four():
     # J. Bernatska, "Computation of P-Functions on Plane Algebraic Curves",
     # J. Exp. Math. 2(1) (2026), Example 2. Her first-kind basis is minus one
@@ -279,7 +336,7 @@ def test_hyperelliptic_periods_sage_genus_three_oracle():
 @pytest.mark.parametrize("coefficients, message", [
     ([], "leading coefficient"),
     ([1, 2, 3, 0], "leading coefficient"),
-    ([1, 0, 1], "odd and at least 3"),
+    ([1, 0, 1], "at least 3"),
     ([1, object(), 0, 1], "sequence of real"),
     ([1, mp.inf, 0, 1], "finite real"),
     ([1, 1j, 0, 1], "finite real"),
