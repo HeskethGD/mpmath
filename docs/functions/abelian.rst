@@ -74,13 +74,21 @@ Hyperelliptic period data
 .........................
 
 For a hyperelliptic curve of degree :math:`2g+1` or :math:`2g+2` with
-distinct real branch points,
+distinct branch points,
 :func:`~mpmath.hyperelliptic_periods` constructs full first-kind periods and
 the normalized Riemann matrix directly from the polynomial coefficients. It
 can also construct the associated canonical second-kind periods and
-:math:`\varkappa=\eta\omega^{-1}`. The real cycle arrangement follows Baker
-and Bernatska, while the arbitrary-genus algebraic second-kind basis is
+:math:`\varkappa=\eta\omega^{-1}`. The cycle arrangements follow Baker and
+Bernatska, while the arbitrary-genus algebraic second-kind basis is
 equation (1.3) of [BEL1997]_.
+
+Real branch points use the direct real-axis construction. For general complex
+branch points, the roots are ordered lexicographically by real and imaginary
+part and the square-root sheet is continued along the resulting polygonal
+path. The normalized period matrix and the generalized Legendre relation
+when second-kind data are requested provide numerical checks on the
+constructed paths and periods. This ordering fixes the returned homology
+basis; the basis can change when moving roots exchange their order.
 
 .. autofunction:: mpmath.hyperelliptic_periods
 
@@ -88,9 +96,9 @@ For direct use with the Kleinian functions,
 :func:`~mpmath.hyperelliptic_kleinian_data` selects the required period
 matrices and supplies the characteristic of the vector of Riemann constants
 for this cycle basis. Its base point is the branch point at infinity in odd
-degree and the smallest finite branch point in even degree. Period data should
-normally be constructed once and reused for evaluations at many Abelian
-arguments.
+degree and the first finite branch point in the selected ordering in even
+degree. Period data should normally be constructed once and reused for
+evaluations at many Abelian arguments.
 
 .. autofunction:: mpmath.hyperelliptic_kleinian_data
 
@@ -114,7 +122,7 @@ specified as ``(a, b)`` using the same literal convention as
 :func:`~mpmath.rtheta`.
 
 The supplied period data must be mutually consistent. For the currently
-supported real hyperelliptic curves,
+supported hyperelliptic curves,
 :func:`~mpmath.hyperelliptic_kleinian_data` constructs ``omega``, ``tau``,
 ``kappa`` and the corresponding Riemann characteristic together. The
 canonical sigma normalization constant is not inferred from the curve.

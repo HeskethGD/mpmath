@@ -154,13 +154,17 @@ def test_hyperelliptic_kleinian_data_genus_two_periodicity():
         100 * mp.eps * max(1, abs(cubic)))
 
 
-def test_hyperelliptic_even_degree_genus_one_cubic():
+@pytest.mark.parametrize("coefficients", [
+    [24, 14, -13, -2, 1],
+    [1, 0, 0, 0, 1],
+])
+def test_hyperelliptic_even_degree_genus_one_cubic(coefficients):
     # BEL (1997), the genus-one discussion following equation (3.15), gives
     # this cubic for a general quartic model. It checks the even-degree
     # periods, second-kind data, Riemann characteristic and derivatives
-    # together without first transforming the curve to an odd-degree model.
+    # together for real and nonreal branch points without first transforming
+    # the curve to an odd-degree model.
     mp.dps = 40
-    coefficients = [24, 14, -13, -2, 1]
     omega, tau, kappa, characteristic = hyperelliptic_kleinian_data(
         coefficients)
     u = [mp.mpc('0.2', '0.03')]
@@ -209,6 +213,64 @@ def test_hyperelliptic_even_degree_pari_oracle():
         mp.norm(periods * change_of_cycles - pari_periods)
         / mp.norm(pari_periods))
     assert relative_error < mp.mpf('1e-28')
+
+
+@pytest.mark.parametrize("coefficients", [
+    [0, 4, 0, -5, 0, 1],
+    [-48, -4, 64, 5, -17, -1, 1],
+])
+def test_hyperelliptic_complex_method_matches_real(coefficients):
+    # The polygonal continuation specializes to the established real-axis
+    # construction, including its odd- and even-degree cycle conventions.
+    mp.dps = 25
+    real_periods = hyperelliptic_periods(coefficients, method="real")
+    complex_periods = hyperelliptic_periods(coefficients, method="complex")
+    for real_matrix, complex_matrix in zip(real_periods, complex_periods):
+        assert mp.norm(real_matrix - complex_matrix) < mp.mpf('1e-23')
+
+
+def test_hyperelliptic_complex_bernatska_genus_four():
+    # Bernatska (2026), Examples 1 and 1a. This starts with her complex curve,
+    # constructs all period data, and reproduces the published P-functions.
+    # Her first-kind coordinates are minus one half of ours in reverse order,
+    # so second and third derivatives acquire factors 4 and -8 respectively.
+    mp.dps = 25
+    c = mp.mpc
+    coefficients = [
+        c(-101860560, 245519280), c(-131012592, 28208616),
+        c(-14219032, -29444932), c(4126332, -3930980),
+        c(324058, 455846), c(-79138, 82462), c(-7585, 826),
+        c(217, -288), c(39, -10), 1,
+    ]
+    omega, tau, kappa, characteristic = hyperelliptic_kleinian_data(
+        coefficients)
+    reverse = mp.matrix([
+        [0, 0, 0, 1],
+        [0, 0, 1, 0],
+        [0, 1, 0, 0],
+        [1, 0, 0, 0],
+    ])
+    bernatska_u = mp.matrix([
+        c(-1181275, 204397) / 1000000,
+        c(736446, -379656) / 10000000,
+        c(-480803, 259696) / 100000000,
+        c(6105810, -580815) / 10000000000,
+    ])
+    u = -2 * reverse * bernatska_u
+    values = kleinian_p(
+        u, omega, tau, kappa,
+        ((3, 3), (3, 2), (3, 3, 3), (3, 3, 2)), characteristic)
+    converted = (
+        4 * values[0], 4 * values[1],
+        -8 * values[2], -8 * values[3],
+    )
+    expected = (
+        c(-5, 4), c(44, 46),
+        c(105080464, -182470785) / 1000000,
+        c(-106944505, -1805409841) / 1000000,
+    )
+    for value, reference in zip(converted, expected):
+        assert abs(value - reference) < mp.mpf('0.1')
 
 
 def test_hyperelliptic_second_kind_bernatska_genus_four():
@@ -337,10 +399,8 @@ def test_hyperelliptic_periods_sage_genus_three_oracle():
     ([], "leading coefficient"),
     ([1, 2, 3, 0], "leading coefficient"),
     ([1, 0, 1], "at least 3"),
-    ([1, object(), 0, 1], "sequence of real"),
-    ([1, mp.inf, 0, 1], "finite real"),
-    ([1, 1j, 0, 1], "finite real"),
-    ([0, 1, 0, 1], "only real roots"),
+    ([1, object(), 0, 1], "sequence of numbers"),
+    ([1, mp.inf, 0, 1], "finite numbers"),
     ([0, 0, -1, 1], "distinct roots"),
 ])
 def test_hyperelliptic_periods_validation(coefficients, message):
@@ -349,6 +409,13 @@ def test_hyperelliptic_periods_validation(coefficients, message):
         hyperelliptic_periods(coefficients)
     with pytest.raises(ValueError, match="method"):
         hyperelliptic_periods([0, -1, 0, 1], method="unknown")
+
+
+def test_hyperelliptic_real_method_rejects_complex_data():
+    with pytest.raises(ValueError, match="finite real"):
+        hyperelliptic_periods([1, 1j, 0, 1], method="real")
+    with pytest.raises(ValueError, match="only real roots"):
+        hyperelliptic_periods([0, 1, 0, 1], method="real")
 
 
 def test_hyperelliptic_periods_rejects_inconsistent_integrals(monkeypatch):
@@ -370,3 +437,11 @@ def test_hyperelliptic_periods_rejects_inconsistent_legendre_data():
     with pytest.raises(ValueError, match="generalized Legendre"):
         hyperelliptic._validate_legendre_relation(
             mp, mp.eye(1), zero, zero, zero, +mp.eps)
+
+
+def test_hyperelliptic_rejects_inconsistent_sheet_transport(monkeypatch):
+    monkeypatch.setattr(
+        hyperelliptic, "_complex_branch_data",
+        lambda ctx, roots, leading, interval, count: ((ctx.one,), 1, 1))
+    with pytest.raises(ValueError, match="square-root sheet"):
+        hyperelliptic._complex_branch_integrals(mp, (0, 1, 2), 1, 1)
