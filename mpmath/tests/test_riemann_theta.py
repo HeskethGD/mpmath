@@ -29,6 +29,30 @@ def test_rtheta_genus_one_jtheta_characteristics():
         assert mp.almosteq(rtheta([z], [[tau]], characteristic), expected)
 
 
+def test_rtheta_genus_one_absolute_accuracy_near_theta1_zero():
+    # Theta[1/2, 1/2](0 | tau) = 0 by DLMF 21.3.6.  DLMF 21.2.8
+    # identifies it with -theta1(pi*z, q), providing an independent check
+    # both at the zero and where relative accuracy is lost near it.
+    # https://dlmf.nist.gov/21.2.E8
+    # https://dlmf.nist.gov/21.3.E6
+    mp.dps = 30
+    tau = mp.mpc('0.17', '0.003')
+    characteristic = ((0.5,), (0.5,))
+    arguments = ('0', '1e-5', '1e-20', '1e-40')
+    values = [
+        rtheta([mp.mpf(w) / pi], [[tau]], characteristic)
+        for w in arguments
+    ]
+
+    with mp.workdps(80):
+        reference_tau = mp.mpc('0.17', '0.003')
+        q = exp(pi * j * reference_tau)
+        references = [-jtheta(1, mp.mpf(w), q) for w in arguments]
+
+    for value, reference in zip(values, references):
+        assert abs(value - reference) < 10 * mp.eps
+
+
 def test_rtheta_diagonal_factorisation():
     # A diagonal period matrix separates the defining sum in DLMF 21.2.1.
     # https://dlmf.nist.gov/21.2.E1
@@ -102,6 +126,38 @@ def test_rtheta_all_genus_two_half_characteristic_parities():
         )
         if sign == -1:
             assert abs(rtheta([0, 0], tau, characteristic)) < 100 * mp.eps
+
+
+def test_rtheta_absolute_accuracy_near_odd_characteristic_zero():
+    # An odd characteristic vanishes at the origin (DLMF 21.3.6).  Close to
+    # that zero, test absolute rather than relative accuracy because the
+    # defining sum is evaluated by cancellation.
+    # https://dlmf.nist.gov/21.3.E6
+    mp.dps = 30
+    tau = [[mp.mpc('0.13', '1.05'), mp.mpc('-0.09', '0.06')],
+           [mp.mpc('-0.09', '0.06'), mp.mpc('-0.17', '1.2')]]
+    characteristic = ((0.5, 0), (0.5, 0))
+    offsets = ('1e-5', '1e-20', '1e-40')
+    values = [
+        rtheta([mp.mpf(offset), 2 * mp.mpf(offset)], tau, characteristic)
+        for offset in offsets
+    ]
+
+    with mp.workdps(80):
+        reference_tau = [
+            [mp.mpc('0.13', '1.05'), mp.mpc('-0.09', '0.06')],
+            [mp.mpc('-0.09', '0.06'), mp.mpc('-0.17', '1.2')],
+        ]
+        references = [
+            rtheta(
+                [mp.mpf(offset), 2 * mp.mpf(offset)], reference_tau,
+                characteristic,
+            )
+            for offset in offsets
+        ]
+
+    for value, reference in zip(values, references):
+        assert abs(value - reference) < 10 * mp.eps
 
 
 def test_rtheta_quasiperiodicity():
