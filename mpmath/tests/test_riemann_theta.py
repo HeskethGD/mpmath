@@ -6,7 +6,8 @@ from mpmath import diff, exp, j, jtheta, mp, pi, rtheta
 from mpmath.functions.riemann_theta import (
     _apply_reduction, _derivative_reduction_threshold, _matrix_tuple,
     _ellipsoid_rows, _multiindices, _partial_inversion, _point_estimate,
-    _rtheta_derivatives, _rtheta_sum, _transform_vector,
+    _rtheta_derivatives, _rtheta_sum, _shift_norm_bucket, _transform_vector,
+    _upper_gamma_half_integer_bounds,
 )
 
 
@@ -239,6 +240,42 @@ def test_rtheta_truncation_radius_against_enlarged_sum():
     enlarged = _rtheta_sum(mp, z, tau, zero, zero, ((0, 0),),
                            tuple(tau_data))[0]
     assert mp.almosteq(normal, enlarged, rel_eps=mp.mpf('1e-43'))
+
+
+def test_rtheta_upper_gamma_bounds_are_conservative():
+    mp.dps = 50
+    for x in (mp.mpf('0.75'), mp.mpf(5), mp.mpf(80)):
+        bounds = _upper_gamma_half_integer_bounds(mp, 1, 8, x)
+        for twice_s, bound in enumerate(bounds, start=1):
+            exact = mp.gammainc(mp.mpf(twice_s) / 2, x, mp.inf)
+            assert bound >= exact
+
+
+def test_rtheta_derivative_radius_cache_is_small_and_reusable():
+    mp.dps = 30
+    cached_radius = mp._rtheta_derivative_radius
+    cached_radius.cache_clear()
+    tau_value = mp.mpc('0.2', '1.2')
+    tau = [[tau_value]]
+
+    rtheta([mp.mpc('0.1', '0.01')], tau, derivative=1)
+    first = cached_radius.cache_info()
+    rtheta([mp.mpc('0.2', '0.02')], tau, derivative=1)
+    second = cached_radius.cache_info()
+    assert first.misses == 1
+    assert second.hits == 1
+    assert second.maxsize == 32
+
+    tau_data = mp._rtheta_tau_data(((tau_value,),))
+    for index in range(40):
+        cached_radius(
+            1, (1,), tau_data[4], tau_data[3], mp.mpf(index + 1) / 8)
+    assert cached_radius.cache_info().currsize == 32
+
+    for shift_norm in (mp.zero, mp.mpf('0.01'), mp.mpf('0.99'),
+                       mp.mpf('12.345')):
+        assert _shift_norm_bucket(mp, shift_norm) >= shift_norm
+    cached_radius.cache_clear()
 
 
 def test_rtheta_value_fast_path_matches_generic_sum():
