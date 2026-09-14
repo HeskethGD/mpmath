@@ -70,6 +70,20 @@ Riemann theta jets
 .. autofunction:: mpmath.rtheta_jet
 
 
+Hyperelliptic period data
+.........................
+
+For an odd-degree hyperelliptic curve with distinct real branch points,
+:func:`~mpmath.hyperelliptic_periods` constructs full first-kind periods and
+the normalized Riemann matrix directly from the polynomial coefficients. It
+can also construct the associated canonical second-kind periods and
+:math:`\varkappa=\eta\omega^{-1}`. The real cycle arrangement follows Baker
+and Bernatska, while the arbitrary-genus algebraic second-kind basis is
+equation (1.3) of [BEL1997]_.
+
+.. autofunction:: mpmath.hyperelliptic_periods
+
+
 Kleinian functions
 ...................
 
@@ -88,9 +102,12 @@ half-period matrix when the latter convention is used. The characteristic is
 specified as ``(a, b)`` using the same literal convention as
 :func:`~mpmath.rtheta`.
 
-The supplied period data must be mutually consistent. These functions do not
-yet construct period matrices or the canonical normalization constant of the
-sigma function from a curve.
+The supplied period data must be mutually consistent. For the currently
+supported real odd-degree hyperelliptic curves,
+:func:`~mpmath.hyperelliptic_periods` can construct ``omega``, ``tau`` and
+``kappa`` together by setting ``second_kind=True``. The Kleinian functions do
+not yet infer the Riemann characteristic or canonical sigma normalization
+constant from the curve.
 
 The sigma and P-function definitions follow [Bernatska2026]_. Signs for
 second-kind differentials are not universal. In the half-period notation of

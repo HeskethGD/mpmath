@@ -40,6 +40,11 @@ References not listed here can be found in the source code.
                     2(1) (2026), 114--154.
                     https://doi.org/10.56994/JXM.002.001.005
 
+.. [BEL1997] V. M. Buchstaber, V. Z. Enolskii & D. V. Leykin.
+             "Hyperelliptic Kleinian Functions and Applications".
+             *American Mathematical Society Translations*, Series 2, 179
+             (1997), 1--33. https://arxiv.org/abs/solv-int/9603005
+
 .. [BenderOrszag] C M Bender & S A Orszag. *Advanced Mathematical Methods for
                   Scientists and Engineers*, Springer 1999
 
