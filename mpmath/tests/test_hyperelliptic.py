@@ -52,23 +52,22 @@ def test_hyperelliptic_second_kind_genus_one():
     mp.dps = 30
     data = hyperelliptic_periods([0, -1, 0, 1], second_kind=True)
     omega, omega_prime, eta, eta_prime, tau, kappa = data
-    omega1 = omega[0, 0] / 2
-    omega2 = omega_prime[0, 0] / 2
-    unused_q, unused_scale, expected_kappa = mp._weierzeta_data(
+    omega1 = omega[0, 0]
+    omega2 = omega_prime[0, 0]
+    unused_q, unused_scale, negative_kappa = mp._weierzeta_data(
         omega1, omega2)
     assert mp.almosteq(tau[0, 0], omega2 / omega1)
-    assert mp.almosteq(kappa[0, 0], expected_kappa)
+    assert mp.almosteq(kappa[0, 0], -negative_kappa)
     assert mp.almosteq(eta[0, 0], kappa[0, 0] * omega[0, 0])
     assert mp.almosteq(
         omega[0, 0] * eta_prime[0, 0]
         - omega_prime[0, 0] * eta[0, 0],
-        2 * mp.pi * 1j)
+        -mp.pi * 1j / 2)
 
 
 def test_hyperelliptic_second_kind_genus_two_legendre_relation():
-    # Buchstaber, Enolskii & Leykin (1997), Lemma 1.1. The paper uses
-    # half-period notation and the opposite sign for eta; this is the same
-    # identity in our full-period, Bernatska-sign convention.
+    # Buchstaber, Enolskii & Leykin (1997), Lemma 1.1, in its half-period
+    # convention.
     mp.dps = 30
     data = hyperelliptic_periods(
         [-15, 20.5, 26.5, -13.5, -3.5, 1], second_kind=True)
@@ -85,7 +84,7 @@ def test_hyperelliptic_second_kind_genus_two_legendre_relation():
         [1, 0, 0, 0],
         [0, 1, 0, 0],
     ])
-    expected = 2 * mp.pi * 1j * symplectic
+    expected = -mp.pi * 1j * symplectic / 2
     assert mp.norm(
         periods * symplectic * periods.T - expected) < mp.mpf('1e-27')
 
@@ -99,8 +98,8 @@ def test_hyperelliptic_data_genus_one():
     omega, tau, kappa, characteristic = hyperelliptic_data(
         [0, -1, 0, 1])
     assert characteristic == ((0.5,), (0.5,))
-    omega1 = omega[0, 0] / 2
-    omega2 = (omega * tau)[0, 0] / 2
+    omega1 = omega[0, 0]
+    omega2 = (omega * tau)[0, 0]
     points = (mp.mpf('0.2'), mp.mpc('0.3', '0.04'))
     for point in points:
         arguments = ([point], omega, tau, kappa)
@@ -157,8 +156,8 @@ def test_hyperelliptic_data_genus_two_periodicity():
     assert characteristic == ((half, half), (0, half))
     u = mp.matrix([mp.mpc('0.13', '0.02'), mp.mpc('-0.08', '0.01')])
     shifted = (
-        u + omega * mp.matrix([1, -1])
-        + omega * tau * mp.matrix([1, 1])
+        u + 2 * omega * mp.matrix([1, -1])
+        + 2 * omega * tau * mp.matrix([1, 1])
     )
     indices = ((0, 0), (0, 1), (1, 1), (0, 0, 1), (1, 1, 1))
     values = kleinian_p(
@@ -258,9 +257,9 @@ def test_hyperelliptic_christiansen_p_identities():
 def test_hyperelliptic_enolski_genus_two_branch_pair():
     # Enolski, Hackmann, Kagramanova, Kunz & Lammerzahl (2011),
     # J. Geom. Phys. 61, doi:10.1016/j.geomphys.2011.01.001,
-    # equations (5.7), (5.9), and (5.13). The paper writes full periods as
-    # 2*omega and displays characteristics with epsilon-prime above epsilon.
-    # These are mpmath's omega and literal rtheta (a, b) ordering.
+    # equations (5.7), (5.9), and (5.13). Its half-period omega and
+    # characteristic ordering agree with this interface: epsilon-prime is
+    # rtheta's first component and epsilon is its second.
     mp.dps = 35
     # y**2 = 4*x*(x-1)*(x-2)*(x-3)*(x-4).
     coefficients = [0, 96, -200, 140, -40, 4]
@@ -268,10 +267,10 @@ def test_hyperelliptic_enolski_genus_two_branch_pair():
     half = 0.5
     assert characteristic == ((half, half), (0, half))
 
-    # This is A1+A2 from (5.7), before reduction modulo full periods.
+    # This is A1+A2 from (5.7), before reduction modulo complete periods.
     epsilon_prime = mp.matrix([1, 0])
     epsilon = mp.matrix([half, 0])
-    omega_12 = omega * (epsilon + tau * epsilon_prime)
+    omega_12 = 2 * omega * (epsilon + tau * epsilon_prime)
     p22, p12 = kleinian_p(
         omega_12, omega, tau, kappa, ((1, 1), (0, 1)),
         characteristic)
@@ -281,8 +280,8 @@ def test_hyperelliptic_enolski_genus_two_branch_pair():
 
 def test_hyperelliptic_enolski_genus_three_branch_triple():
     # Enolski et al. (2011), equations (6.7), (6.8), (6.19), and the
-    # explicit curve (6.27). As above, their 2*omega is mpmath's omega,
-    # and the upper characteristic row is rtheta's first component.
+    # explicit curve (6.27), using the same half-period and characteristic
+    # conventions as the genus-two test above.
     mp.dps = 35
     # y**2 = 4*x*(x-1)*(x-2)*(x-3)*(x-4)*(x-5)*(x-6).
     coefficients = [0, 2880, -7056, 6496, -2940, 700, -84, 4]
@@ -291,10 +290,10 @@ def test_hyperelliptic_enolski_genus_three_branch_triple():
     assert characteristic == (
         (half, half, half), (half, 0, half))
 
-    # This is A1+A2+A3 from (6.7), before reduction modulo full periods.
+    # This is A1+A2+A3 from (6.7), before reduction modulo complete periods.
     epsilon_prime = mp.matrix([1, half, 0])
     epsilon = mp.matrix([1, 0, 0])
-    omega_123 = omega * (epsilon + tau * epsilon_prime)
+    omega_123 = 2 * omega * (epsilon + tau * epsilon_prime)
     p33, p23, p13 = kleinian_p(
         omega_123, omega, tau, kappa,
         ((2, 2), (1, 2), (0, 2)), characteristic)
@@ -344,6 +343,7 @@ def test_hyperelliptic_even_degree_pari_oracle():
     periods[:, :2] = omega
     periods[:, 2:] = omega_prime
     r = mp.mpf
+    # PARI returns complete periods; divide them by two for this interface.
     pari_periods = mp.matrix([
         [r('0.464901227905802907214915155765884188') * 1j,
          -r('0.531986563561318428544478628778286555') * 1j,
@@ -353,7 +353,7 @@ def test_hyperelliptic_even_degree_pari_oracle():
          r('1.28526303966470991081119212876082963') * 1j,
          r('0.946914550864355501738777880064324816'),
          r('1.12712800022540204589739296431967767')],
-    ])
+    ]) / 2
     change_of_cycles = mp.matrix([
         [0, 0, 0, -1],
         [0, 0, -1, 0],
@@ -384,8 +384,8 @@ def test_hyperelliptic_complex_sage_oracle():
     # SageMath 10.8, Curve(...).riemann_surface(prec=200,
     # integration_method="rigorous").period_matrix(), for
     # P=(x^2+1)*((x-2)^2+1)*(x-4). Sage integrates x^k dx/(2y), so its
-    # matrix is doubled here. The exact symplectic matrix relates Sage's
-    # independently constructed cycles to our complex polygonal basis.
+    # complete cycle integrals equal our half-periods. The exact symplectic
+    # matrix relates Sage's cycles to our complex polygonal basis.
     mp.dps = 30
     coefficients = [-20, 21, -28, 22, -8, 1]
     omega, omega_prime, unused_tau = hyperelliptic_periods(coefficients)
@@ -393,6 +393,7 @@ def test_hyperelliptic_complex_sage_oracle():
     periods[:, :2] = omega
     periods[:, 2:] = omega_prime
     c = mp.mpc
+    # These literals were originally recorded as twice Sage's output.
     sage_periods = mp.matrix([
         [c('1.56384671072875491960941104798133352',
            '-1.45055102586162674475302640719115732'),
@@ -408,7 +409,7 @@ def test_hyperelliptic_complex_sage_oracle():
          c('-0.332260228163926420134543037814506931'),
          c('2.26672392690881593055956992462214307',
            '3.74579067488946915960599882696213800')],
-    ])
+    ]) / 2
     change_of_cycles = mp.matrix([
         [1, 0, 1, -1],
         [-1, -1, 0, 0],
@@ -468,8 +469,8 @@ def test_hyperelliptic_complex_bernatska_genus_four():
 def test_hyperelliptic_second_kind_bernatska_genus_four():
     # J. Bernatska, "Computation of P-Functions on Plane Algebraic Curves",
     # J. Exp. Math. 2(1) (2026), Example 2. Her first-kind basis is minus one
-    # half of ours in reverse order, while her associated second-kind basis is
-    # minus twice ours in reverse order. Thus kappa_B = 4*R*kappa*R.
+    # of ours in reverse order. Her full-period, positive-integral convention
+    # gives kappa_B = -4*R*kappa*R in terms of our classical kappa.
     mp.dps = 25
     coefficients = [
         -39916800, 54907920, -11079084, -4495768, 506395,
@@ -486,7 +487,7 @@ def test_hyperelliptic_second_kind_bernatska_genus_four():
         [0, 1, 0, 0],
         [1, 0, 0, 0],
     ])
-    bernatska_kappa = 4 * reverse * kappa * reverse
+    bernatska_kappa = -4 * reverse * kappa * reverse
     expected = mp.matrix([
         [-13.123159, 129.285113, 1107.820797, -1910.386399],
         [129.285113, 1362.173530, -26772.601447, 34575.690532],
@@ -510,6 +511,7 @@ def test_hyperelliptic_periods_pari_oracle():
     periods[:, 0:2] = omega
     periods[:, 2:4] = omega_prime
     r = mp.mpf
+    # PARI returns complete periods; divide them by two for this interface.
     pari_periods = mp.matrix([
         [r('1.08130011176124021123551600052774032'),
          -r('0.367824197708891477585526017213356091') * 1j,
@@ -519,7 +521,7 @@ def test_hyperelliptic_periods_pari_oracle():
          r('2.60856570108765335185849523088651511') * 1j,
          r('0.238892490675903278038207391105101907') * 1j,
          r('2.73958313544434386763423081630770745')],
-    ])
+    ]) / 2
     change_of_cycles = mp.matrix([
         [0, 0, 0, -1],
         [-1, 0, 0, -1],
@@ -536,9 +538,9 @@ def test_hyperelliptic_periods_sage_genus_three_oracle():
     # SageMath 10.8, Curve(...).riemann_surface(prec=233), followed by
     # period_matrix() with rigorous integration. This is the independent
     # arbitrary-precision period construction used in the nbruin/RiemannTheta
-    # README. Sage uses x^k dx/(2y), so its period matrix is doubled below.
-    # Its automatically selected cycles are related to ours by the exact
-    # symplectic matrix recorded here.
+    # README. Sage uses x^k dx/(2y), so its complete cycle integrals equal our
+    # half-periods. Its cycles are related to ours by the exact symplectic
+    # matrix recorded here.
     mp.dps = 30
     r = mp.mpf
     coefficients = [
@@ -550,7 +552,7 @@ def test_hyperelliptic_periods_sage_genus_three_oracle():
     periods = mp.matrix(3, 6)
     periods[:, 0:3] = omega
     periods[:, 3:6] = omega_prime
-    sage_periods = 2 * mp.matrix([
+    sage_periods = mp.matrix([
         [-r('0.174993997276248518508584616329222736') * 1j,
          -r('0.057436756315399741218100606662656419') * 1j,
          -r('0.027146339729186879431698083188509171') * 1j,

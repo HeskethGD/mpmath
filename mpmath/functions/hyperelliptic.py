@@ -15,12 +15,11 @@
 # Endpoint singularities are removed by a cosine parametrization; mpmath's
 # existing adaptive quadrature then integrates smooth functions.
 #
-# The associated second-kind differentials are equation (1.3) of Buchstaber,
-# Enolskii and Leykin, "Hyperelliptic Kleinian Functions and Applications".
-# BEL write full periods as 2*omega and attach a minus sign to their eta
-# integrals.  Here omega and eta are full periods and follow Bernatska's sign
-# convention, for which kappa = eta*omega**-1 and the Legendre constant is
-# +2*pi*i.
+# The associated second-kind differentials and period conventions are those
+# of Buchstaber, Enolskii and Leykin, "Hyperelliptic Kleinian Functions and
+# Applications". Thus omega, omega_prime, eta and eta_prime are half-period
+# matrices, with 2*eta = -integral_a(dr). The Kleinian exponential matrix is
+# kappa = eta*omega**-1 and the Legendre constant is -pi*i/2.
 
 import itertools
 
@@ -192,7 +191,7 @@ def _symmetrize_period_matrix(ctx, matrix, target_eps, description):
 
 def _validate_legendre_relation(ctx, omega, omega_prime, eta, eta_prime,
                                 target_eps):
-    """Check the generalized Legendre relation for full period matrices."""
+    """Check the generalized Legendre relation for half-period matrices."""
     genus = omega.rows
     periods = ctx.matrix(2 * genus)
     periods[:genus, :genus] = omega
@@ -203,7 +202,7 @@ def _validate_legendre_relation(ctx, omega, omega_prime, eta, eta_prime,
     for index in range(genus):
         symplectic[index, genus + index] = -1
         symplectic[genus + index, index] = 1
-    expected = 2 * ctx.pi * ctx.j * symplectic
+    expected = -ctx.pi * ctx.j * symplectic / 2
     residual = ctx.norm(periods * symplectic * periods.T - expected)
     scale = max(ctx.one, ctx.norm(periods) ** 2, ctx.norm(expected))
     if residual > 100 * target_eps * scale:
@@ -236,25 +235,35 @@ def hyperelliptic_periods(ctx, coefficients, method="auto",
     automatically; they need not be supplied by the user.
 
     By default the result is ``(omega, omega_prime, tau)``, where ``omega``
-    and ``omega_prime`` are the full first-kind a- and b-period matrices and
-    ``tau = omega**-1 * omega_prime``. If ``second_kind=True``, the result is
-    ``(omega, omega_prime, eta, eta_prime, tau, kappa)``. Here ``eta`` and
-    ``eta_prime`` are the full periods of the associated canonical
-    second-kind differentials and ``kappa = eta * omega**-1``.
+    and ``omega_prime`` are the first-kind a- and b-half-period matrices and
+    ``tau = omega**-1 * omega_prime``. Thus the corresponding complete
+    periods are ``2*omega`` and ``2*omega_prime``. If ``second_kind=True``,
+    the result is ``(omega, omega_prime, eta, eta_prime, tau, kappa)``.
+    Here ``eta`` and ``eta_prime`` are the second-kind half-period matrices,
+    defined with the classical minus sign, and
+    ``kappa = eta * omega**-1``.
 
-    The second-kind convention follows Bernatska's sign and the algebraic
-    differential basis of Buchstaber, Enolskii and Leykin. With full periods,
-    the generalized Legendre relation is
+    In terms of the canonical first- and second-kind differentials,
 
     .. math::
 
-        \mathcal P J \mathcal P^T=2\pi iJ, \qquad
+        2\omega_{ij}=\oint_{a_j}du_i, \qquad
+        2\omega'_{ij}=\oint_{b_j}du_i,
+
+        2\eta_{ij}=-\oint_{a_j}dr_i, \qquad
+        2\eta'_{ij}=-\oint_{b_j}dr_i.
+
+    The second-kind differential basis and half-period convention follow
+    Buchstaber, Enolskii and Leykin. The generalized Legendre relation is
+
+    .. math::
+
+        \mathcal P J \mathcal P^T=-\frac{\pi i}{2}J, \qquad
         \mathcal P=\begin{pmatrix}\omega&\omega'\\
         \eta&\eta'\end{pmatrix}, \qquad
         J=\begin{pmatrix}0&-I\\I&0\end{pmatrix}.
 
-    See [BEL1997]_, particularly equation (1.3) and Lemma 1.1, and
-    [Bernatska2026]_ for the full-period convention used here.
+    See [BEL1997]_, particularly equation (1.3) and Lemma 1.1.
 
     ``method`` may be ``"auto"``, ``"real"`` or ``"complex"``. The default
     uses the real-axis construction when the coefficients and roots are real,
@@ -307,8 +316,8 @@ def hyperelliptic_periods(ctx, coefficients, method="auto",
         for row in range(genus):
             for column in range(genus):
                 omega[row, column] = (
-                    2 * intervals[2 * column + cycle_offset][row])
-                omega_prime[row, column] = 2 * b_sign * ctx.fsum(
+                    intervals[2 * column + cycle_offset][row])
+                omega_prime[row, column] = b_sign * ctx.fsum(
                     intervals[2 * edge + 1 + cycle_offset][row]
                     for edge in range(column, genus))
         inverse_omega = ctx.inverse(omega)
@@ -333,8 +342,8 @@ def hyperelliptic_periods(ctx, coefficients, method="auto",
                 ]
                 for column in range(genus):
                     eta[row, column] = (
-                        2 * second_intervals[2 * column + cycle_offset])
-                    eta_prime[row, column] = 2 * b_sign * ctx.fsum(
+                        -second_intervals[2 * column + cycle_offset])
+                    eta_prime[row, column] = -b_sign * ctx.fsum(
                         second_intervals[2 * edge + 1 + cycle_offset]
                         for edge in range(column, genus))
             kappa = eta * inverse_omega
@@ -362,9 +371,10 @@ def hyperelliptic_data(ctx, coefficients, method="auto"):
     The characteristic is the vector of Riemann constants for the canonical
     cycle basis used by the period construction. The base point is the
     branch point at infinity in odd degree and the first finite branch point
-    in the selected ordering in even degree. In Bernatska's notation,
-    :math:`K` is the vector of Riemann constants, square brackets denote the
-    corresponding half-integer characteristic, and
+    in the selected ordering in even degree. In the branch-point notation
+    recorded explicitly by Bernatska, :math:`K` is the vector of Riemann
+    constants, square brackets denote the corresponding half-integer
+    characteristic, and
     :math:`[\varepsilon_k]` is the characteristic of the Abel image of the
     branch point :math:`e_k`. Thus
 
