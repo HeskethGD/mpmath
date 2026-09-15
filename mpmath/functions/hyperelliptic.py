@@ -22,6 +22,8 @@
 # convention, for which kappa = eta*omega**-1 and the Legendre constant is
 # +2*pi*i.
 
+import itertools
+
 from .functions import defun
 from .riemann_theta import _matrix_tuple
 
@@ -49,7 +51,7 @@ def _hyperelliptic_roots(ctx, coefficients):
     tolerance = ctx.sqrt(ctx.eps) * scale
     roots = sorted(roots, key=lambda root: (ctx.re(root), ctx.im(root)))
     if any(abs(right - left) <= tolerance
-           for left, right in zip(roots, roots[1:])):
+           for left, right in itertools.pairwise(roots)):
         raise ValueError("the polynomial must have distinct roots")
     return tuple(roots), tolerance
 
