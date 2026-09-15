@@ -244,8 +244,14 @@ def hyperelliptic_periods(ctx, coefficients, method="auto",
 
     The second-kind convention follows Bernatska's sign and the algebraic
     differential basis of Buchstaber, Enolskii and Leykin. With full periods,
-    the combined matrix satisfies the generalized Legendre relation with
-    constant :math:`2\pi i`.
+    the generalized Legendre relation is
+
+    .. math::
+
+        \mathcal P J \mathcal P^T=2\pi iJ, \qquad
+        \mathcal P=\begin{pmatrix}\omega&\omega'\\
+        \eta&\eta'\end{pmatrix}, \qquad
+        J=\begin{pmatrix}0&-I\\I&0\end{pmatrix}.
 
     See [BEL1997]_, particularly equation (1.3) and Lemma 1.1, and
     [Bernatska2026]_ for the full-period convention used here.
@@ -368,8 +374,8 @@ def hyperelliptic_data(ctx, coefficients, method="auto"):
 
     It therefore depends on the cycle and base-point conventions and should
     not be combined with period matrices constructed in a different basis.
-    Pass the returned data to :func:`~mpmath.kleinian_sigma` with
-    ``normalization="hyperelliptic"`` to select the canonical
+    The returned data are compatible with ``normalization="hyperelliptic"``
+    in :func:`~mpmath.kleinian_sigma`, which selects the canonical
     Schur--Weierstrass normalization.
 
     See [Bernatska2026]_, equations (3.16) and (3.17).

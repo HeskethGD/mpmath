@@ -4,7 +4,6 @@ from mpmath import (
     diff, kleinian_p, kleinian_sigma, kleinian_zeta, log, mp,
     weierp, weierpprime, weiersigma, weierzeta,
 )
-from mpmath.functions.kleinian import _theta_log_jet
 
 
 def test_kleinian_genus_one_matches_weierstrass_functions():
@@ -34,6 +33,14 @@ def test_kleinian_genus_one_matches_weierstrass_functions():
         assert mp.almosteq(
             kleinian_p(*args, (0, 0, 0), characteristic),
             weierpprime(u, omega1=omega1, omega2=omega2))
+        assert mp.almosteq(
+            kleinian_p(*args, (0,) * 4, characteristic),
+            diff(lambda z: weierpprime(
+                z, omega1=omega1, omega2=omega2), u))
+        assert mp.almosteq(
+            kleinian_p(*args, (0,) * 5, characteristic),
+            diff(lambda z: weierpprime(
+                z, omega1=omega1, omega2=omega2), u, 2))
 
 
 def test_kleinian_derivative_identities_and_batched_p():
@@ -58,7 +65,10 @@ def test_kleinian_derivative_identities_and_batched_p():
             u[i])
         assert mp.almosteq(zeta[i], expected)
 
-    requested = ((0, 0), (0, 1), (1, 0), (0, 0, 1))
+    requested = (
+        (0, 0), (0, 1), (1, 0), (0, 0, 1),
+        (0, 0, 1, 1), (1, 0, 1, 0),
+    )
     values = kleinian_p(
         u, omega, tau, kappa, requested, characteristic)
     assert len(values) == len(requested)
@@ -78,6 +88,13 @@ def test_kleinian_derivative_identities_and_batched_p():
             [u[0], value], omega, tau, kappa, (0, 0), characteristic),
         u[1])
     assert mp.almosteq(values[3], p001_from_p)
+    p0011_from_p = diff(
+        lambda value: kleinian_p(
+            [u[0], value], omega, tau, kappa,
+            (0, 0, 1), characteristic),
+        u[1])
+    assert mp.almosteq(values[4], p0011_from_p)
+    assert mp.almosteq(values[4], values[5])
 
     with pytest.raises(ValueError, match="normalization"):
         kleinian_sigma(
@@ -207,7 +224,7 @@ def test_kleinian_validation():
         kleinian_p(u, omega, tau, kappa, 1)
     with pytest.raises(ValueError, match="at least one"):
         kleinian_p(u, omega, tau, kappa, [])
-    with pytest.raises(ValueError, match="length 2 or 3"):
+    with pytest.raises(ValueError, match="length at least 2"):
         kleinian_p(u, omega, tau, kappa, (0,))
     with pytest.raises(ValueError, match="between 0 and 1"):
         kleinian_p(u, omega, tau, kappa, (0, 2))
@@ -220,4 +237,4 @@ def test_kleinian_theta_divisor(monkeypatch):
         mp, "rtheta_jet",
         lambda v, tau, degree, characteristic: {(0,): mp.zero})
     with pytest.raises(ZeroDivisionError, match="theta divisor"):
-        _theta_log_jet(mp, (0,), ((1j,),), None, 1)
+        kleinian_p([0], [[1]], [[1j]], [[0]], (0, 0))

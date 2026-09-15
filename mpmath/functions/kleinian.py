@@ -1,4 +1,5 @@
 import math
+from itertools import product
 
 from .functions import ctx_lru_cache, defun
 from .riemann_theta import (
@@ -66,63 +67,61 @@ def _prepare_kleinian_data(ctx, u, omega, tau, kappa, characteristic):
     return u, inverse_omega, tau_key, kappa, characteristic
 
 
-def _add_indices(genus, *indices):
-    """Return the derivative multi-index for repeated coordinates."""
-    derivative = [0] * genus
-    for index in indices:
-        derivative[index] += 1
-    return tuple(derivative)
+# The multivariate Faà di Bruno formula expresses derivatives of log(theta)
+# as a sum over set partitions. This single construction handles every order
+# and replaces separate, increasingly complicated formulas for each tensor.
+def _set_partitions(size):
+    """Yield each set partition of range(size) once."""
+    if not size:
+        yield ()
+        return
+    new = size - 1
+    for partition in _set_partitions(new):
+        yield partition + ((new,),)
+        for index, block in enumerate(partition):
+            yield (partition[:index] + (block + (new,),)
+                   + partition[index + 1:])
 
 
-def _theta_log_jet(ctx, v, tau_key, characteristic, degree):
-    """Return theta and its logarithmic derivatives through degree three."""
-    genus = len(v)
-    theta_derivatives = ctx.rtheta_jet(
-        v, tau_key, degree, characteristic)
-    zero = (0,) * genus
-    theta = theta_derivatives[zero]
-    if degree and not theta:
-        raise ZeroDivisionError(
-            "Kleinian logarithmic derivative is singular on the theta divisor")
-    if not degree:
-        return theta, None, None, None
+def _theta_u_derivative(ctx, theta_jet, inverse_omega, indices, cache):
+    """Return a theta derivative transformed to Abelian coordinates."""
+    indices = tuple(sorted(indices))
+    if indices in cache:
+        return cache[indices]
+    genus = inverse_omega.rows
+    terms = []
+    for theta_indices in product(range(genus), repeat=len(indices)):
+        derivative = [0] * genus
+        factor = ctx.one
+        for theta_index, u_index in zip(theta_indices, indices):
+            derivative[theta_index] += 1
+            factor *= inverse_omega[theta_index, u_index]
+        terms.append(factor * theta_jet[tuple(derivative)])
+    value = ctx.fsum(terms)
+    cache[indices] = value
+    return value
 
-    gradient = [
-        theta_derivatives[_add_indices(genus, i)] / theta
-        for i in range(genus)
-    ]
-    if degree == 1:
-        return theta, gradient, None, None
 
-    hessian = [[ctx.zero] * genus for unused in range(genus)]
-    for i in range(genus):
-        for j in range(genus):
-            theta_ij = theta_derivatives[_add_indices(genus, i, j)]
-            hessian[i][j] = theta_ij / theta - gradient[i] * gradient[j]
-    if degree == 2:
-        return theta, gradient, hessian, None
-
-    third = [[[ctx.zero] * genus for unused in range(genus)]
-             for unused in range(genus)]
-    theta_squared = theta ** 2
-    theta_cubed = theta ** 3
-    first = [theta_derivatives[_add_indices(genus, i)]
-             for i in range(genus)]
-    for i in range(genus):
-        for j in range(genus):
-            theta_ij = theta_derivatives[_add_indices(genus, i, j)]
-            for k in range(genus):
-                theta_ik = theta_derivatives[_add_indices(genus, i, k)]
-                theta_jk = theta_derivatives[_add_indices(genus, j, k)]
-                theta_ijk = theta_derivatives[
-                    _add_indices(genus, i, j, k)]
-                third[i][j][k] = (
-                    theta_ijk / theta
-                    - (theta_ij * first[k] + theta_ik * first[j]
-                       + theta_jk * first[i]) / theta_squared
-                    + 2 * first[i] * first[j] * first[k] / theta_cubed
-                )
-    return theta, gradient, hessian, third
+def _theta_log_derivative(ctx, theta_jet, inverse_omega, indices,
+                          derivative_cache, partition_cache):
+    """Return an arbitrary logarithmic theta derivative in u coordinates."""
+    indices = tuple(sorted(indices))
+    order = len(indices)
+    if order not in partition_cache:
+        partition_cache[order] = tuple(_set_partitions(order))
+    theta = derivative_cache[()]
+    terms = []
+    for partition in partition_cache[order]:
+        blocks = len(partition)
+        coefficient = (-1) ** (blocks - 1) * math.factorial(blocks - 1)
+        numerator = ctx.fprod(
+            _theta_u_derivative(
+                ctx, theta_jet, inverse_omega,
+                tuple(indices[position] for position in block),
+                derivative_cache)
+            for block in partition)
+        terms.append(coefficient * numerator / theta ** blocks)
+    return ctx.fsum(terms)
 
 
 def _kleinian_theta_data(ctx, u, omega, tau, kappa, characteristic, degree):
@@ -133,9 +132,12 @@ def _kleinian_theta_data(ctx, u, omega, tau, kappa, characteristic, degree):
     v = tuple(ctx.fsum(inverse_omega[i, j] * u[j]
                        for j in range(len(u)))
               for i in range(len(u)))
-    theta_data = _theta_log_jet(
-        ctx, v, tau_key, characteristic, degree)
-    return u, inverse_omega, tau_key, kappa, characteristic, theta_data
+    theta_jet = ctx.rtheta_jet(v, tau_key, degree, characteristic)
+    theta = theta_jet[(0,) * len(v)]
+    if degree and not theta:
+        raise ZeroDivisionError(
+            "Kleinian logarithmic derivative is singular on the theta divisor")
+    return u, inverse_omega, tau_key, kappa, characteristic, theta_jet
 
 
 @defun
@@ -191,8 +193,8 @@ def _normalise_p_indices(indices, genus):
     if not requested:
         raise ValueError("at least one index tuple is required")
     for item in requested:
-        if len(item) not in (2, 3):
-            raise ValueError("each index tuple must have length 2 or 3")
+        if len(item) < 2:
+            raise ValueError("each index tuple must have length at least 2")
         if any(not isinstance(index, int) or index < 0 or index >= genus
                for index in item):
             raise ValueError("coordinate indices must be between 0 and %i"
@@ -238,7 +240,7 @@ def kleinian_sigma(ctx, u, omega, tau, kappa, characteristic=None,
         data = _kleinian_theta_data(
             ctx, u, omega, tau, kappa, characteristic, 0)
         u, inverse_omega, tau_key, kappa, characteristic, theta_data = data
-        theta = theta_data[0]
+        theta = theta_data[(0,) * len(u)]
         if normalization == "theta":
             constant = ctx.one
         elif normalization == "hyperelliptic":
@@ -268,15 +270,17 @@ def kleinian_zeta(ctx, u, omega, tau, kappa, characteristic=None):
     with ctx.extraprec(10):
         data = _kleinian_theta_data(
             ctx, u, omega, tau, kappa, characteristic, 1)
-        u, inverse_omega, unused_tau, kappa, unused_char, theta_data = data
-        gradient = theta_data[1]
+        u, inverse_omega, unused_tau, kappa, unused_char, theta_jet = data
         genus = len(u)
+        derivative_cache = {(): theta_jet[(0,) * genus]}
+        partition_cache = {}
         result = ctx.matrix(genus, 1)
         for i in range(genus):
             result[i] = (
                 -ctx.fsum(kappa[i, j] * u[j] for j in range(genus))
-                + ctx.fsum(inverse_omega[j, i] * gradient[j]
-                           for j in range(genus))
+                + _theta_log_derivative(
+                    ctx, theta_jet, inverse_omega, (i,),
+                    derivative_cache, partition_cache)
             )
     return +result
 
@@ -286,20 +290,23 @@ def kleinian_p(ctx, u, omega, tau, kappa, indices, characteristic=None):
     r"""
     Evaluate one or several Kleinian P-functions.
 
-    ``indices`` is either one tuple of two or three zero-based coordinate
-    indices, or a sequence of such tuples. For example, ``(0, 1)`` requests
-    :math:`\wp_{0,1}`, while ``[(0, 0), (0, 0, 1)]`` evaluates two functions
-    using a single theta jet. A single index tuple returns a scalar; a
-    sequence returns a tuple.
+    ``indices`` is either one tuple containing at least two zero-based
+    coordinate indices, or a sequence of such tuples. For example, ``(0, 1)``
+    requests :math:`\wp_{0,1}`, while
+    ``[(0, 0), (0, 0, 1), (0, 0, 1, 1)]`` evaluates functions of orders two,
+    three and four using a single theta jet. A single index tuple returns a
+    scalar; a sequence returns a tuple.
 
     The definitions are
 
     .. math::
 
-        \wp_{i,j} = -\partial_{u_i}\partial_{u_j}\log\sigma,
-        \qquad
-        \wp_{i,j,k} = -\partial_{u_i}\partial_{u_j}
-        \partial_{u_k}\log\sigma.
+        \wp_{i_1,\ldots,i_n}
+        =-\partial_{u_{i_1}}\cdots\partial_{u_{i_n}}\log\sigma,
+        \qquad n\geq 2.
+
+    Arbitrary orders are supported. Their cost grows rapidly with the highest
+    requested order.
 
     Period and characteristic conventions are the same as for
     :func:`~mpmath.kleinian_sigma`.
@@ -312,25 +319,18 @@ def kleinian_p(ctx, u, omega, tau, kappa, indices, characteristic=None):
         data = _kleinian_theta_data(
             ctx, u, omega_matrix, tau, kappa, characteristic, degree)
         (unused_u, inverse_omega, unused_tau, kappa, unused_char,
-         theta_data) = data
-        hessian, third = theta_data[2], theta_data[3]
+         theta_jet) = data
         genus = inverse_omega.rows
+        derivative_cache = {(): theta_jet[(0,) * genus]}
+        partition_cache = {}
         results = []
         for item in requested:
-            i, j = item[:2]
+            logarithmic = _theta_log_derivative(
+                ctx, theta_jet, inverse_omega, item,
+                derivative_cache, partition_cache)
             if len(item) == 2:
-                logarithmic = ctx.fsum(
-                    inverse_omega[p, i] * hessian[p][q]
-                    * inverse_omega[q, j]
-                    for p in range(genus) for q in range(genus))
-                results.append(kappa[i, j] - logarithmic)
+                results.append(kappa[item[0], item[1]] - logarithmic)
             else:
-                k = item[2]
-                logarithmic = ctx.fsum(
-                    inverse_omega[p, i] * inverse_omega[q, j]
-                    * inverse_omega[r, k] * third[p][q][r]
-                    for p in range(genus) for q in range(genus)
-                    for r in range(genus))
                 results.append(-logarithmic)
     results = tuple(+result for result in results)
     return results[0] if scalar else results

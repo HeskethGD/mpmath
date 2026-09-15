@@ -84,9 +84,12 @@ and Bernatska, while the arbitrary-genus algebraic second-kind basis is
 equation (1.3) of [BEL1997]_.
 
 The returned periods use a deterministic homology basis derived from a
-lexicographic ordering of the branch points. In a parameterized family, this
-basis can change by a symplectic transformation when branch points exchange
-their order.
+lexicographic ordering of the branch points. For a single curve, this merely
+fixes a reproducible convention. In a parameterized family, branch points can
+exchange their lexicographic order without colliding. The returned period
+matrices and characteristic may then change to a symplectically equivalent
+representation rather than varying continuously, although the underlying
+curve and functions are unchanged when the returned data are used together.
 
 .. autofunction:: mpmath.hyperelliptic_periods
 
