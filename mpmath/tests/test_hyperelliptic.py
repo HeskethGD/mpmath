@@ -181,6 +181,80 @@ def test_hyperelliptic_data_genus_two_periodicity():
         100 * mp.eps * max(1, abs(cubic)))
 
 
+def test_hyperelliptic_christiansen_sigma_expansion():
+    # Christiansen, Eilbeck, Enolskii & Kostov (2000), equation (3.3),
+    # Proc. R. Soc. Lond. A 456, doi:10.1098/rspa.2000.0612,
+    # gives the first terms of the canonically normalized genus-two sigma
+    # function. Ordinary differentiation converts its cubic coefficients to
+    # sigma_111(0) = alpha_2/4 and sigma_222(0) = -2.
+    mp.dps = 35
+    coefficients = [0, mp.mpf(1) / 16, -mp.mpf(15) / 16,
+                    mp.mpf(35) / 8, -mp.mpf(15) / 2, 4]
+    omega, tau, kappa, characteristic = hyperelliptic_data(coefficients)
+
+    def sigma(u1, u2):
+        return kleinian_sigma(
+            [u1, u2], omega, tau, kappa, characteristic,
+            normalization="hyperelliptic")
+
+    assert mp.almosteq(mp.diff(lambda value: sigma(value, 0), 0), 1)
+    assert mp.almosteq(
+        mp.diff(lambda value: sigma(value, 0), 0, 3),
+        coefficients[2] / 4)
+    assert mp.almosteq(
+        mp.diff(lambda value: sigma(0, value), 0, 3), -2)
+
+
+def test_hyperelliptic_christiansen_p_identities():
+    # Christiansen, Eilbeck, Enolskii & Kostov (2000), equations
+    # (3.10)-(3.12) and (3.15)-(3.17), Proc. R. Soc. Lond. A 456,
+    # doi:10.1098/rspa.2000.0612. The paper uses one-based indices; this test
+    # translates them to the zero-based kleinian_p interface.
+    mp.dps = 35
+    coefficients = [0, mp.mpf(1) / 16, -mp.mpf(15) / 16,
+                    mp.mpf(35) / 8, -mp.mpf(15) / 2, 4]
+    omega, tau, kappa, characteristic = hyperelliptic_data(coefficients)
+    u = [mp.mpf("0.13"), mp.mpf("0.27")]
+    indices = (
+        (0, 0), (0, 1), (1, 1), (0, 1, 1), (1, 1, 1),
+        (0, 1, 1, 1), (1, 1, 1, 1),
+    )
+    p11, p12, p22, p122, p222, p1222, p2222 = kleinian_p(
+        u, omega, tau, kappa, indices, characteristic)
+    alpha1, alpha2, alpha3, alpha4 = coefficients[1:5]
+
+    identity_315 = (
+        p222 * p122
+        - (4 * p12 * p22 ** 2 + 2 * p12 ** 2 - 2 * p11 * p22
+           + alpha4 * p12 * p22 + alpha3 * p12 / 2 + alpha1 / 2)
+    )
+    identity_316 = (
+        p2222
+        - (6 * p22 ** 2 + alpha3 / 2 + alpha4 * p22 + 4 * p12)
+    )
+    identity_317 = (
+        p1222 - (6 * p22 * p12 + alpha4 * p12 - 2 * p11)
+    )
+    scale = max(1, abs(p2222), abs(p1222), abs(p222 * p122))
+    assert max(abs(identity_315), abs(identity_316), abs(identity_317)) < (
+        100 * mp.eps * scale)
+
+    # Equations (3.10)-(3.12) solve the Jacobi inversion problem: the roots
+    # mu_i of lambda**2-p22*lambda-p12 have curve coordinates
+    # nu_i = p222*mu_i+p122.
+    mus = mp.polyroots([-p12, -p22, 1])
+    for mu in mus:
+        nu = p222 * mu + p122
+        curve_value = mp.fsum(
+            coefficient * mu ** degree
+            for degree, coefficient in enumerate(coefficients))
+        # Recovering mu numerically and substituting it into a quintic loses
+        # a few guard digits compared with the direct identities above.
+        root_substitution_tolerance = (
+            10000 * mp.eps * max(1, abs(curve_value)))
+        assert abs(nu ** 2 - curve_value) < root_substitution_tolerance
+
+
 @pytest.mark.parametrize("coefficients", [
     [24, 14, -13, -2, 1],
     [1, 0, 0, 0, 1],
