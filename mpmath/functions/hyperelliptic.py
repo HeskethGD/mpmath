@@ -343,7 +343,7 @@ def hyperelliptic_periods(ctx, coefficients, method="auto",
 
 
 @defun
-def hyperelliptic_kleinian_data(ctx, coefficients, method="auto"):
+def hyperelliptic_data(ctx, coefficients, method="auto"):
     r"""
     Construct the curve-dependent data required by Kleinian functions.
 
@@ -356,7 +356,11 @@ def hyperelliptic_kleinian_data(ctx, coefficients, method="auto"):
     The characteristic is the vector of Riemann constants for the canonical
     cycle basis used by the period construction. The base point is the
     branch point at infinity in odd degree and the first finite branch point
-    in the selected ordering in even degree. In Bernatska's notation it is
+    in the selected ordering in even degree. In Bernatska's notation,
+    :math:`K` is the vector of Riemann constants, square brackets denote the
+    corresponding half-integer characteristic, and
+    :math:`[\varepsilon_k]` is the characteristic of the Abel image of the
+    branch point :math:`e_k`. Thus
 
     .. math::
 

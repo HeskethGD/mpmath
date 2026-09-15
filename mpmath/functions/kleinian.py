@@ -229,7 +229,7 @@ def kleinian_sigma(ctx, u, omega, tau, kappa, characteristic=None,
         \lfloor(g+1)/2\rfloor}.
 
     This mode assumes the differential ordering and Riemann characteristic
-    returned by :func:`~mpmath.hyperelliptic_kleinian_data`. In genus one it
+    returned by :func:`~mpmath.hyperelliptic_data`. In genus one it
     agrees with the conventional Weierstrass sigma function. See
     [BEL1997]_, Definition 1.
 

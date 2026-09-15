@@ -78,29 +78,27 @@ distinct branch points,
 :func:`~mpmath.hyperelliptic_periods` constructs full first-kind periods and
 the normalized Riemann matrix directly from the polynomial coefficients. It
 can also construct the associated canonical second-kind periods and
-:math:`\varkappa=\eta\omega^{-1}`. The cycle arrangements follow Baker and
-Bernatska, while the arbitrary-genus algebraic second-kind basis is
+:math:`\varkappa=\eta\omega^{-1}`, where :math:`\eta` is the full a-period
+matrix of the second-kind differentials. The cycle arrangements follow Baker
+and Bernatska, while the arbitrary-genus algebraic second-kind basis is
 equation (1.3) of [BEL1997]_.
 
-Real branch points use the direct real-axis construction. For general complex
-branch points, the roots are ordered lexicographically by real and imaginary
-part and the square-root sheet is continued along the resulting polygonal
-path. The normalized period matrix and the generalized Legendre relation
-when second-kind data are requested provide numerical checks on the
-constructed paths and periods. This ordering fixes the returned homology
-basis; the basis can change when moving roots exchange their order.
+The returned periods use a deterministic homology basis derived from a
+lexicographic ordering of the branch points. In a parameterized family, this
+basis can change by a symplectic transformation when branch points exchange
+their order.
 
 .. autofunction:: mpmath.hyperelliptic_periods
 
 For direct use with the Kleinian functions,
-:func:`~mpmath.hyperelliptic_kleinian_data` selects the required period
+:func:`~mpmath.hyperelliptic_data` selects the required period
 matrices and supplies the characteristic of the vector of Riemann constants
 for this cycle basis. Its base point is the branch point at infinity in odd
 degree and the first finite branch point in the selected ordering in even
 degree. Period data should normally be constructed once and reused for
 evaluations at many Abelian arguments.
 
-.. autofunction:: mpmath.hyperelliptic_kleinian_data
+.. autofunction:: mpmath.hyperelliptic_data
 
 
 Kleinian functions
@@ -109,8 +107,9 @@ Kleinian functions
 The Kleinian functions use unnormalized Abelian coordinates ``u``. Their
 period data are the first-kind a-period matrix ``omega``, the normalized
 Riemann matrix ``tau``, and the symmetric matrix ``kappa`` equal to
-:math:`\eta\omega^{-1}`. These matrices must all have size :math:`g\times g`.
-The convention is
+:math:`\eta\omega^{-1}`, where :math:`\eta` is the full a-period matrix of
+the associated second-kind differentials. These matrices must all have size
+:math:`g\times g`. The convention is
 
 .. math::
 
@@ -123,7 +122,7 @@ specified as ``(a, b)`` using the same literal convention as
 
 The supplied period data must be mutually consistent. For the currently
 supported hyperelliptic curves,
-:func:`~mpmath.hyperelliptic_kleinian_data` constructs ``omega``, ``tau``,
+:func:`~mpmath.hyperelliptic_data` constructs ``omega``, ``tau``,
 ``kappa`` and the corresponding Riemann characteristic together. With these
 data, ``normalization="hyperelliptic"`` selects the canonical sigma
 normalization whose leading term is the Schur--Weierstrass polynomial.

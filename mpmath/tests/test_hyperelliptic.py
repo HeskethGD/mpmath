@@ -1,7 +1,7 @@
 import pytest
 
 from mpmath import (
-    hyperelliptic_kleinian_data, hyperelliptic_periods, kleinian_p,
+    hyperelliptic_data, hyperelliptic_periods, kleinian_p,
     kleinian_sigma, kleinian_zeta, mp, weierp, weiersigma, weierzeta,
 )
 from mpmath.functions import hyperelliptic
@@ -90,13 +90,13 @@ def test_hyperelliptic_second_kind_genus_two_legendre_relation():
         periods * symplectic * periods.T - expected) < mp.mpf('1e-27')
 
 
-def test_hyperelliptic_kleinian_data_genus_one():
+def test_hyperelliptic_data_genus_one():
     # In genus one, Bernatska's sum of branch-point characteristics gives the
     # classical odd characteristic [1/2, 1/2]. The resulting logarithmic
     # derivatives and the Schur-normalized sigma agree with the conventional
     # Weierstrass functions.
     mp.dps = 30
-    omega, tau, kappa, characteristic = hyperelliptic_kleinian_data(
+    omega, tau, kappa, characteristic = hyperelliptic_data(
         [0, -1, 0, 1])
     assert characteristic == ((0.5,), (0.5,))
     omega1 = omega[0, 0] / 2
@@ -126,7 +126,7 @@ def test_hyperelliptic_sigma_schur_normalization(coefficients):
     # sigma function starts with delta(u)=det(u[i+j-1]). The coefficient of
     # u_m**m is the sign of the reversing permutation, m=floor((g+1)/2).
     mp.dps = 35
-    omega, tau, kappa, characteristic = hyperelliptic_kleinian_data(
+    omega, tau, kappa, characteristic = hyperelliptic_data(
         coefficients)
     genus = omega.rows
     degree = (genus + 1) // 2
@@ -144,14 +144,14 @@ def test_hyperelliptic_sigma_schur_normalization(coefficients):
     assert mp.almosteq(derivative, sign * mp.factorial(degree))
 
 
-def test_hyperelliptic_kleinian_data_genus_two_periodicity():
+def test_hyperelliptic_data_genus_two_periodicity():
     # Eilbeck, Enolskii & Leykin (2000), Definition 3.7, gives full-lattice
     # periodicity. BEL (1997), equation (3.9), gives the genus-two cubic
     # identity checked below. Together they test that periods, kappa and the
     # Riemann characteristic constructed from one curve work coherently.
     mp.dps = 40
     coefficients = [0, 16, 0, -20, 0, 4]
-    omega, tau, kappa, characteristic = hyperelliptic_kleinian_data(
+    omega, tau, kappa, characteristic = hyperelliptic_data(
         coefficients)
     half = 0.5
     assert characteristic == ((half, half), (0, half))
@@ -192,7 +192,7 @@ def test_hyperelliptic_even_degree_genus_one_cubic(coefficients):
     # together for real and nonreal branch points without first transforming
     # the curve to an odd-degree model.
     mp.dps = 40
-    omega, tau, kappa, characteristic = hyperelliptic_kleinian_data(
+    omega, tau, kappa, characteristic = hyperelliptic_data(
         coefficients)
     u = [mp.mpc('0.2', '0.03')]
     p11, p111 = kleinian_p(
@@ -310,7 +310,7 @@ def test_hyperelliptic_complex_bernatska_genus_four():
         c(324058, 455846), c(-79138, 82462), c(-7585, 826),
         c(217, -288), c(39, -10), 1,
     ]
-    omega, tau, kappa, characteristic = hyperelliptic_kleinian_data(
+    omega, tau, kappa, characteristic = hyperelliptic_data(
         coefficients)
     reverse = mp.matrix([
         [0, 0, 0, 1],
@@ -352,7 +352,7 @@ def test_hyperelliptic_second_kind_bernatska_genus_four():
         82441, -4602, -514, 11, 1,
     ]
     unused_omega, unused_tau, kappa, characteristic = (
-        hyperelliptic_kleinian_data(coefficients))
+        hyperelliptic_data(coefficients))
     half = 0.5
     assert characteristic == (
         (half, half, half, half), (0, half, 0, half))
