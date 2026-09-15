@@ -1,8 +1,8 @@
 import pytest
 
 from mpmath import (
-    diff, kleinian_p, kleinian_sigma, kleinian_zeta, log, mp,
-    weierp, weierpprime, weiersigma, weierzeta,
+    diff, kleinian_p, kleinian_sigma, kleinian_sigma_jet, kleinian_zeta,
+    log, mp, weierp, weierpprime, weiersigma, weierzeta,
 )
 
 
@@ -103,6 +103,66 @@ def test_kleinian_derivative_identities_and_batched_p():
     with pytest.raises(ValueError, match="characteristic is incompatible"):
         kleinian_sigma(
             u, omega, tau, kappa, normalization="hyperelliptic")
+
+
+def test_kleinian_sigma_jet_derivatives():
+    mp.dps = 25
+    omega = [[mp.mpf('1.2'), mp.mpf('0.1')],
+             [mp.mpf('0.05'), mp.mpf('0.9')]]
+    tau = [[mp.mpc('0.1', '1.0'), mp.mpc('-0.08', '0.05')],
+           [mp.mpc('-0.08', '0.05'), mp.mpc('-0.15', '1.2')]]
+    kappa = [[mp.mpc('0.3', '0.1'), mp.mpc('-0.12', '0.04')],
+             [mp.mpc('-0.12', '0.04'), mp.mpc('0.2', '-0.03')]]
+    characteristic = ([mp.mpf('0.5'), 0], [0, mp.mpf('0.5')])
+    u = [mp.mpc('0.17', '0.03'), mp.mpc('-0.11', '0.02')]
+    jet = kleinian_sigma_jet(
+        u, omega, tau, kappa, 3, characteristic)
+
+    assert list(jet) == [
+        (0, 0), (1, 0), (0, 1), (2, 0), (1, 1), (0, 2),
+        (3, 0), (2, 1), (1, 2), (0, 3),
+    ]
+    assert mp.almosteq(
+        jet[(0, 0)],
+        kleinian_sigma(u, omega, tau, kappa, characteristic))
+
+    def sigma_at(first, second):
+        return kleinian_sigma(
+            [first, second], omega, tau, kappa, characteristic)
+
+    expected = {
+        (1, 0): diff(lambda first: sigma_at(first, u[1]), u[0]),
+        (0, 2): diff(lambda second: sigma_at(u[0], second), u[1], 2),
+        (1, 1): diff(
+            lambda first: diff(
+                lambda second: sigma_at(first, second), u[1]),
+            u[0]),
+        (2, 1): diff(
+            lambda first: diff(
+                lambda second: sigma_at(first, second), u[1]),
+            u[0], 2),
+    }
+    for index, value in expected.items():
+        assert mp.almosteq(jet[index], value)
+
+
+def test_kleinian_sigma_jet_genus_one_and_normalization():
+    mp.dps = 30
+    omega1 = mp.mpf('0.7')
+    omega2 = mp.mpc('0.2', '0.9')
+    unused_q, unused_scale, negative_kappa = mp._weierzeta_data(
+        omega1, omega2)
+    kappa = [[-negative_kappa]]
+    characteristic = ([mp.mpf('0.5')], [mp.mpf('0.5')])
+    u = mp.mpc('0.23', '0.07')
+    jet = kleinian_sigma_jet(
+        [u], [[omega1]], [[omega2 / omega1]], kappa, 4,
+        characteristic, normalization="hyperelliptic")
+    for order in range(5):
+        assert mp.almosteq(
+            jet[(order,)],
+            diff(lambda value: weiersigma(
+                value, omega1=omega1, omega2=omega2), u, order))
 
 
 def test_kleinian_p_periodicity_and_sigma_parity():
@@ -235,11 +295,23 @@ def test_kleinian_validation():
         kleinian_p(u, omega, tau, kappa, (0, 2))
     with pytest.raises(ValueError, match="between 0 and 1"):
         kleinian_p(u, omega, tau, kappa, [(0, mp.mpf(1))])
+    with pytest.raises(ValueError, match="nonnegative integer"):
+        kleinian_sigma_jet(u, omega, tau, kappa, -1)
+    with pytest.raises(ValueError, match="nonnegative integer"):
+        kleinian_sigma_jet(u, omega, tau, kappa, mp.mpf(1))
+    with pytest.raises(ValueError, match="normalization"):
+        kleinian_sigma_jet(
+            u, omega, tau, kappa, 0, normalization="unknown")
 
 
 def test_kleinian_theta_divisor(monkeypatch):
     monkeypatch.setattr(
         mp, "rtheta_jet",
-        lambda v, tau, degree, characteristic: {(0,): mp.zero})
+        lambda v, tau, degree, characteristic: {
+            (order,): mp.one if order == 1 else mp.zero
+            for order in range(degree + 1)})
+    jet = kleinian_sigma_jet([0], [[1]], [[1j]], [[0]], 2)
+    assert jet[(0,)] == 0
+    assert jet[(1,)] == mp.mpf('0.5')
     with pytest.raises(ZeroDivisionError, match="theta divisor"):
         kleinian_p([0], [[1]], [[1j]], [[0]], (0, 0))

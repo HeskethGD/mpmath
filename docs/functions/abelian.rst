@@ -140,6 +140,8 @@ functions, see [BakerAbel]_ and [BakerMultiply]_.
 
 .. autofunction:: mpmath.kleinian_sigma
 
+.. autofunction:: mpmath.kleinian_sigma_jet
+
 .. autofunction:: mpmath.kleinian_zeta
 
 .. autofunction:: mpmath.kleinian_p

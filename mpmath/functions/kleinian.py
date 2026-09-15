@@ -3,7 +3,8 @@ from itertools import product
 
 from .functions import ctx_lru_cache, defun
 from .riemann_theta import (
-    _as_vector, _matrix_tuple, _normalise_characteristic, _normalise_tau,
+    _as_vector, _matrix_tuple, _multiindices, _normalise_characteristic,
+    _normalise_tau,
 )
 
 
@@ -124,8 +125,9 @@ def _theta_log_derivative(ctx, theta_jet, inverse_period, indices,
     return ctx.fsum(terms)
 
 
-def _kleinian_theta_data(ctx, u, omega, tau, kappa, characteristic, degree):
-    """Return normalized data and theta log derivatives in Abelian coordinates."""
+def _kleinian_theta_data(ctx, u, omega, tau, kappa, characteristic, degree,
+                         logarithmic=False):
+    """Return normalized data and theta derivatives in Abelian coordinates."""
     data = _prepare_kleinian_data(
         ctx, u, omega, tau, kappa, characteristic)
     u, inverse_period, tau_key, kappa, characteristic = data
@@ -134,7 +136,7 @@ def _kleinian_theta_data(ctx, u, omega, tau, kappa, characteristic, degree):
               for i in range(len(u)))
     theta_jet = ctx.rtheta_jet(v, tau_key, degree, characteristic)
     theta = theta_jet[(0,) * len(v)]
-    if degree and not theta:
+    if logarithmic and not theta:
         raise ZeroDivisionError(
             "Kleinian logarithmic derivative is singular on the theta divisor")
     return u, inverse_period, tau_key, kappa, characteristic, theta_jet
@@ -176,6 +178,54 @@ def _hyperelliptic_sigma_normalization(ctx, inverse_period_key, tau_key,
     # u[degree-1]**degree coefficient equal to the reversing permutation sign.
     sign = -1 if (degree * (degree - 1) // 2) & 1 else 1
     return sign * degree_factorial / directional_derivative
+
+
+def _sigma_normalization_constant(ctx, normalization, inverse_period,
+                                  tau_key, characteristic):
+    """Return the requested multiplicative normalization of sigma."""
+    if normalization == "theta":
+        return ctx.one
+    if normalization == "hyperelliptic":
+        return ctx._hyperelliptic_sigma_normalization(
+            _matrix_tuple(inverse_period), tau_key, characteristic)
+    raise ValueError("normalization must be 'theta' or 'hyperelliptic'")
+
+
+def _quadratic_exponential_jet(ctx, u, kappa, multiindices):
+    """Return derivatives of exp(u.T*kappa*u/2) for given multi-indices."""
+    genus = len(u)
+    zero = (0,) * genus
+    quadratic = ctx.fsum(
+        u[i] * kappa[i, j] * u[j]
+        for i in range(genus) for j in range(genus))
+    gradient = tuple(ctx.fsum(kappa[i, j] * u[j]
+                              for j in range(genus))
+                     for i in range(genus))
+    result = {zero: ctx.exp(quadratic / 2)}
+    for index in multiindices[1:]:
+        coordinate = next(i for i, value in enumerate(index) if value)
+        previous = list(index)
+        previous[coordinate] -= 1
+        previous = tuple(previous)
+        terms = [gradient[coordinate] * result[previous]]
+        for j, multiplicity in enumerate(previous):
+            if multiplicity:
+                lower = list(previous)
+                lower[j] -= 1
+                terms.append(
+                    multiplicity * kappa[coordinate, j]
+                    * result[tuple(lower)])
+        result[index] = ctx.fsum(terms)
+    return result
+
+
+def _multiindex_subindices(index):
+    """Yield componentwise subindices and their binomial coefficients."""
+    for subindex in product(*(range(value + 1) for value in index)):
+        coefficient = math.prod(
+            math.comb(value, subvalue)
+            for value, subvalue in zip(index, subindex))
+        yield subindex, coefficient
 
 
 def _normalise_p_indices(indices, genus):
@@ -241,20 +291,94 @@ def kleinian_sigma(ctx, u, omega, tau, kappa, characteristic=None,
             ctx, u, omega, tau, kappa, characteristic, 0)
         u, inverse_period, tau_key, kappa, characteristic, theta_data = data
         theta = theta_data[(0,) * len(u)]
-        if normalization == "theta":
-            constant = ctx.one
-        elif normalization == "hyperelliptic":
-            constant = ctx._hyperelliptic_sigma_normalization(
-                _matrix_tuple(inverse_period), tau_key,
-                characteristic)
-        else:
-            raise ValueError(
-                "normalization must be 'theta' or 'hyperelliptic'")
+        constant = _sigma_normalization_constant(
+            ctx, normalization, inverse_period, tau_key, characteristic)
         quadratic = ctx.fsum(
             u[i] * kappa[i, j] * u[j]
             for i in range(len(u)) for j in range(len(u)))
         result = constant * ctx.exp(quadratic / 2) * theta
     return +result
+
+
+@defun
+def kleinian_sigma_jet(ctx, u, omega, tau, kappa, order,
+                       characteristic=None, normalization="theta"):
+    r"""
+    Evaluate a derivative jet of the Kleinian sigma function.
+
+    A jet is the function value together with all ordinary mixed partial
+    derivatives through the requested total order at the same point. The
+    result is a dictionary keyed by derivative-count tuples. For example, in
+    genus two an order-two jet contains
+
+    .. math::
+
+        \begin{aligned}
+        (0,0)&:\ \sigma, &
+        (1,0)&:\ \partial_{u_0}\sigma, &
+        (0,1)&:\ \partial_{u_1}\sigma,\\
+        (2,0)&:\ \partial_{u_0}^2\sigma, &
+        (1,1)&:\ \partial_{u_0}\partial_{u_1}\sigma, &
+        (0,2)&:\ \partial_{u_1}^2\sigma.
+        \end{aligned}
+
+    ``order`` must be a nonnegative integer. The keys use the graded reverse
+    lexicographic ordering of :func:`~mpmath.rtheta_jet`; the values are not
+    divided by multi-index factorials. All theta derivatives are accumulated
+    in one theta jet. Unlike logarithmic derivatives such as the Kleinian
+    zeta and P-functions, a sigma jet remains defined on the theta divisor.
+
+    Period, characteristic, and normalization conventions are the same as
+    for :func:`~mpmath.kleinian_sigma`.
+
+    **Example**
+
+    Evaluate the sigma value, gradient, and Hessian together::
+
+        >>> from mpmath import kleinian_sigma_jet
+        >>> omega = [[1, 0], [0, 1]]
+        >>> tau = [[1j, 0], [0, 1.2j]]
+        >>> kappa = [[0.2, 0.1], [0.1, 0.3]]
+        >>> jet = kleinian_sigma_jet([0.1, 0.2], omega, tau, kappa, 2)
+        >>> list(jet)
+        [(0, 0), (1, 0), (0, 1), (2, 0), (1, 1), (0, 2)]
+
+    """
+    if not isinstance(order, int) or order < 0:
+        raise ValueError("order must be a nonnegative integer")
+    with ctx.extraprec(10):
+        data = _kleinian_theta_data(
+            ctx, u, omega, tau, kappa, characteristic, order)
+        u, inverse_period, tau_key, kappa, characteristic, theta_jet = data
+        genus = len(u)
+        indices = tuple(_multiindices(genus, order))
+        constant = _sigma_normalization_constant(
+            ctx, normalization, inverse_period, tau_key, characteristic)
+
+        theta_derivatives = {}
+        derivative_cache = {(): theta_jet[(0,) * genus]}
+        for index in indices:
+            repeated = tuple(
+                coordinate
+                for coordinate, multiplicity in enumerate(index)
+                for unused in range(multiplicity))
+            theta_derivatives[index] = _theta_u_derivative(
+                ctx, theta_jet, inverse_period, repeated, derivative_cache)
+
+        exponential_derivatives = _quadratic_exponential_jet(
+            ctx, u, kappa, indices)
+        result = {}
+        for index in indices:
+            terms = []
+            for subindex, coefficient in _multiindex_subindices(index):
+                complement = tuple(
+                    value - subvalue
+                    for value, subvalue in zip(index, subindex))
+                terms.append(
+                    coefficient * exponential_derivatives[subindex]
+                    * theta_derivatives[complement])
+            result[index] = constant * ctx.fsum(terms)
+    return {index: +value for index, value in result.items()}
 
 
 @defun
@@ -269,7 +393,8 @@ def kleinian_zeta(ctx, u, omega, tau, kappa, characteristic=None):
     """
     with ctx.extraprec(10):
         data = _kleinian_theta_data(
-            ctx, u, omega, tau, kappa, characteristic, 1)
+            ctx, u, omega, tau, kappa, characteristic, 1,
+            logarithmic=True)
         u, inverse_period, unused_tau, kappa, unused_char, theta_jet = data
         genus = len(u)
         derivative_cache = {(): theta_jet[(0,) * genus]}
@@ -317,7 +442,8 @@ def kleinian_p(ctx, u, omega, tau, kappa, indices, characteristic=None):
     degree = max(map(len, requested))
     with ctx.extraprec(10):
         data = _kleinian_theta_data(
-            ctx, u, omega_matrix, tau, kappa, characteristic, degree)
+            ctx, u, omega_matrix, tau, kappa, characteristic, degree,
+            logarithmic=True)
         (unused_u, inverse_period, unused_tau, kappa, unused_char,
          theta_jet) = data
         genus = inverse_period.rows

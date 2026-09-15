@@ -50,6 +50,7 @@ jtheta = mp.jtheta
 rtheta = mp.rtheta
 rtheta_jet = mp.rtheta_jet
 kleinian_sigma = mp.kleinian_sigma
+kleinian_sigma_jet = mp.kleinian_sigma_jet
 kleinian_zeta = mp.kleinian_zeta
 kleinian_p = mp.kleinian_p
 hyperelliptic_periods = mp.hyperelliptic_periods
