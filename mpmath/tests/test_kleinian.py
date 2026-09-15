@@ -19,12 +19,12 @@ def test_kleinian_genus_one_matches_weierstrass_functions():
     characteristic = ([half], [half])
     points = (mp.mpc('0.23', '0.07'), mp.mpc('-0.31', '0.04'))
 
-    sigma_ratios = []
     for u in points:
         args = ([u], omega, tau, kappa)
-        sigma_ratios.append(
-            kleinian_sigma(*args, characteristic)
-            / weiersigma(u, omega1=omega1, omega2=omega2))
+        assert mp.almosteq(
+            kleinian_sigma(
+                *args, characteristic, normalization="hyperelliptic"),
+            weiersigma(u, omega1=omega1, omega2=omega2))
         assert mp.almosteq(
             kleinian_zeta(*args, characteristic)[0],
             weierzeta(u, omega1=omega1, omega2=omega2))
@@ -34,7 +34,6 @@ def test_kleinian_genus_one_matches_weierstrass_functions():
         assert mp.almosteq(
             kleinian_p(*args, (0, 0, 0), characteristic),
             weierpprime(u, omega1=omega1, omega2=omega2))
-    assert mp.almosteq(sigma_ratios[0], sigma_ratios[1])
 
 
 def test_kleinian_derivative_identities_and_batched_p():
@@ -49,8 +48,7 @@ def test_kleinian_derivative_identities_and_batched_p():
     u = [mp.mpc('0.17', '0.03'), mp.mpc('-0.11', '0.02')]
 
     def sigma_at(values):
-        return kleinian_sigma(
-            values, omega, tau, kappa, characteristic, constant=3)
+        return kleinian_sigma(values, omega, tau, kappa, characteristic)
 
     zeta = kleinian_zeta(u, omega, tau, kappa, characteristic)
     for i in range(2):
@@ -81,11 +79,12 @@ def test_kleinian_derivative_identities_and_batched_p():
         u[1])
     assert mp.almosteq(values[3], p001_from_p)
 
-    doubled = kleinian_sigma(
-        u, omega, tau, kappa, characteristic, constant=2)
-    ordinary = kleinian_sigma(
-        u, omega, tau, kappa, characteristic)
-    assert mp.almosteq(doubled, 2 * ordinary)
+    with pytest.raises(ValueError, match="normalization"):
+        kleinian_sigma(
+            u, omega, tau, kappa, characteristic, normalization="unknown")
+    with pytest.raises(ValueError, match="characteristic is incompatible"):
+        kleinian_sigma(
+            u, omega, tau, kappa, normalization="hyperelliptic")
 
 
 def test_kleinian_p_periodicity_and_sigma_parity():
@@ -214,8 +213,6 @@ def test_kleinian_validation():
         kleinian_p(u, omega, tau, kappa, (0, 2))
     with pytest.raises(ValueError, match="between 0 and 1"):
         kleinian_p(u, omega, tau, kappa, [(0, mp.mpf(1))])
-    with pytest.raises(ValueError, match="constant must be finite"):
-        kleinian_sigma(u, omega, tau, kappa, constant=mp.inf)
 
 
 def test_kleinian_theta_divisor(monkeypatch):

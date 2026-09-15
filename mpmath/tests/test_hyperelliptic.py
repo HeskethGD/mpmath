@@ -93,8 +93,8 @@ def test_hyperelliptic_second_kind_genus_two_legendre_relation():
 def test_hyperelliptic_kleinian_data_genus_one():
     # In genus one, Bernatska's sum of branch-point characteristics gives the
     # classical odd characteristic [1/2, 1/2]. The resulting logarithmic
-    # derivatives agree with the conventional Weierstrass functions; sigma
-    # agrees up to its deliberately unspecified constant normalization.
+    # derivatives and the Schur-normalized sigma agree with the conventional
+    # Weierstrass functions.
     mp.dps = 30
     omega, tau, kappa, characteristic = hyperelliptic_kleinian_data(
         [0, -1, 0, 1])
@@ -102,7 +102,6 @@ def test_hyperelliptic_kleinian_data_genus_one():
     omega1 = omega[0, 0] / 2
     omega2 = (omega * tau)[0, 0] / 2
     points = (mp.mpf('0.2'), mp.mpc('0.3', '0.04'))
-    sigma_ratios = []
     for point in points:
         arguments = ([point], omega, tau, kappa)
         assert mp.almosteq(
@@ -111,10 +110,38 @@ def test_hyperelliptic_kleinian_data_genus_one():
         assert mp.almosteq(
             kleinian_zeta(*arguments, characteristic)[0],
             weierzeta(point, omega1=omega1, omega2=omega2))
-        sigma_ratios.append(
-            kleinian_sigma(*arguments, characteristic)
-            / weiersigma(point, omega1=omega1, omega2=omega2))
-    assert mp.almosteq(sigma_ratios[0], sigma_ratios[1])
+        assert mp.almosteq(
+            kleinian_sigma(
+                *arguments, characteristic,
+                normalization="hyperelliptic"),
+            weiersigma(point, omega1=omega1, omega2=omega2))
+
+
+@pytest.mark.parametrize("coefficients", [
+    [0, 16, 0, -20, 0, 4],
+    [0, -36, 0, 49, 0, -14, 0, 1],
+])
+def test_hyperelliptic_sigma_schur_normalization(coefficients):
+    # Buchstaber, Enolskii & Leykin (1997), Definition 1: the fundamental
+    # sigma function starts with delta(u)=det(u[i+j-1]). The coefficient of
+    # u_m**m is the sign of the reversing permutation, m=floor((g+1)/2).
+    mp.dps = 35
+    omega, tau, kappa, characteristic = hyperelliptic_kleinian_data(
+        coefficients)
+    genus = omega.rows
+    degree = (genus + 1) // 2
+    coordinate = degree - 1
+
+    def sigma_on_axis(value):
+        u = [mp.zero] * genus
+        u[coordinate] = value
+        return kleinian_sigma(
+            u, omega, tau, kappa, characteristic,
+            normalization="hyperelliptic")
+
+    derivative = mp.diff(sigma_on_axis, 0, degree)
+    sign = -1 if (degree * (degree - 1) // 2) & 1 else 1
+    assert mp.almosteq(derivative, sign * mp.factorial(degree))
 
 
 def test_hyperelliptic_kleinian_data_genus_two_periodicity():
@@ -227,6 +254,47 @@ def test_hyperelliptic_complex_method_matches_real(coefficients):
     complex_periods = hyperelliptic_periods(coefficients, method="complex")
     for real_matrix, complex_matrix in zip(real_periods, complex_periods):
         assert mp.norm(real_matrix - complex_matrix) < mp.mpf('1e-23')
+
+
+def test_hyperelliptic_complex_sage_oracle():
+    # SageMath 10.8, Curve(...).riemann_surface(prec=200,
+    # integration_method="rigorous").period_matrix(), for
+    # P=(x^2+1)*((x-2)^2+1)*(x-4). Sage integrates x^k dx/(2y), so its
+    # matrix is doubled here. The exact symplectic matrix relates Sage's
+    # independently constructed cycles to our complex polygonal basis.
+    mp.dps = 30
+    coefficients = [-20, 21, -28, 22, -8, 1]
+    omega, omega_prime, unused_tau = hyperelliptic_periods(coefficients)
+    periods = mp.matrix(2, 4)
+    periods[:, :2] = omega
+    periods[:, 2:] = omega_prime
+    c = mp.mpc
+    sage_periods = mp.matrix([
+        [c('1.56384671072875491960941104798133352',
+           '-1.45055102586162674475302640719115732'),
+         c('0.931285985364503503267561065416687167',
+           '-1.00889336426389769076190379066101802'),
+         c('1.26512145072850283268369996512929270'),
+         c('-0.333835465363999329416138899712605535',
+           '1.00889336426389769076190379066101802')],
+        [c('1.76833358466292630035775536790038267',
+           '-1.20041069205898473031384430225626537'),
+         c('1.93446369874488951042502688680763613',
+           '-3.74579067488946915960599882696213800'),
+         c('-0.332260228163926420134543037814506931'),
+         c('2.26672392690881593055956992462214307',
+           '3.74579067488946915960599882696213800')],
+    ])
+    change_of_cycles = mp.matrix([
+        [1, 0, 1, -1],
+        [-1, -1, 0, 0],
+        [-1, 0, 0, 0],
+        [1, 1, 0, -1],
+    ])
+    relative_error = (
+        mp.norm(periods * change_of_cycles - sage_periods)
+        / mp.norm(sage_periods))
+    assert relative_error < mp.mpf('1e-28')
 
 
 def test_hyperelliptic_complex_bernatska_genus_four():

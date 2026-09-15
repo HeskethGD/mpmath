@@ -124,8 +124,9 @@ specified as ``(a, b)`` using the same literal convention as
 The supplied period data must be mutually consistent. For the currently
 supported hyperelliptic curves,
 :func:`~mpmath.hyperelliptic_kleinian_data` constructs ``omega``, ``tau``,
-``kappa`` and the corresponding Riemann characteristic together. The
-canonical sigma normalization constant is not inferred from the curve.
+``kappa`` and the corresponding Riemann characteristic together. With these
+data, ``normalization="hyperelliptic"`` selects the canonical sigma
+normalization whose leading term is the Schur--Weierstrass polynomial.
 
 The sigma and P-function definitions follow [Bernatska2026]_. Signs for
 second-kind differentials are not universal. In the half-period notation of

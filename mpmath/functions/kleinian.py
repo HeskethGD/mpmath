@@ -1,3 +1,5 @@
+import math
+
 from .functions import ctx_lru_cache, defun
 from .riemann_theta import (
     _as_vector, _matrix_tuple, _normalise_characteristic, _normalise_tau,
@@ -133,7 +135,45 @@ def _kleinian_theta_data(ctx, u, omega, tau, kappa, characteristic, degree):
               for i in range(len(u)))
     theta_data = _theta_log_jet(
         ctx, v, tau_key, characteristic, degree)
-    return u, inverse_omega, kappa, theta_data
+    return u, inverse_omega, tau_key, kappa, characteristic, theta_data
+
+
+@defun
+@ctx_lru_cache(maxsize=16)
+def _hyperelliptic_sigma_normalization(ctx, inverse_omega_key, tau_key,
+                                       characteristic):
+    """Normalize sigma by its leading Schur--Weierstrass polynomial."""
+    inverse_omega = ctx.matrix(inverse_omega_key)
+    genus = inverse_omega.rows
+    degree = (genus + 1) // 2
+    coordinate = degree - 1
+    theta_jet = ctx.rtheta_jet(
+        (ctx.zero,) * genus, tau_key, degree, characteristic)
+    directional_derivative = ctx.zero
+    degree_factorial = math.factorial(degree)
+    for derivative, value in theta_jet.items():
+        if sum(derivative) != degree:
+            continue
+        multinomial = degree_factorial
+        factor = ctx.one
+        for index, order in enumerate(derivative):
+            multinomial //= math.factorial(order)
+            factor *= inverse_omega[index, coordinate] ** order
+        directional_derivative += multinomial * factor * value
+    a, b = characteristic
+    half_integer = all(ctx.isint(2 * value) for value in a + b)
+    characteristic_parity = int(ctx.nint(
+        4 * ctx.fsum(left * right for left, right in zip(a, b)))) & 1
+    incompatible_parity = (
+        half_integer and characteristic_parity != (degree & 1))
+    if incompatible_parity or not directional_derivative:
+        raise ValueError(
+            "characteristic is incompatible with hyperelliptic "
+            "sigma normalization")
+    # In zero-based notation, the Hankel determinant delta(u)=det(u[i+j]) has
+    # u[degree-1]**degree coefficient equal to the reversing permutation sign.
+    sign = -1 if (degree * (degree - 1) // 2) & 1 else 1
+    return sign * degree_factorial / directional_derivative
 
 
 def _normalise_p_indices(indices, genus):
@@ -162,9 +202,9 @@ def _normalise_p_indices(indices, genus):
 
 @defun
 def kleinian_sigma(ctx, u, omega, tau, kappa, characteristic=None,
-                    constant=1):
+                    normalization="theta"):
     r"""
-    Kleinian sigma function, with a supplied normalization constant.
+    Kleinian sigma function.
 
     The input uses unnormalized Abelian coordinates ``u`` and the convention
 
@@ -176,18 +216,38 @@ def kleinian_sigma(ctx, u, omega, tau, kappa, characteristic=None,
     ``omega`` is the first-kind a-period matrix, ``tau`` is the normalized
     Riemann matrix, and ``kappa`` is the symmetric matrix
     :math:`\eta\omega^{-1}`. The characteristic uses the literal
-    ``(a, b)`` convention of :func:`~mpmath.rtheta`. The default ``constant``
-    is one; its curve-dependent canonical value is not inferred.
+    ``(a, b)`` convention of :func:`~mpmath.rtheta`.
+
+    The default ``normalization="theta"`` uses :math:`C=1`, which is defined
+    for arbitrary coherent period data. ``normalization="hyperelliptic"``
+    chooses :math:`C` so that the leading term at the origin is the
+    Schur--Weierstrass polynomial
+
+    .. math::
+
+        \delta(u)=\det\big(u_{i+j-1}\big)_{i,j=1}^{
+        \lfloor(g+1)/2\rfloor}.
+
+    This mode assumes the differential ordering and Riemann characteristic
+    returned by :func:`~mpmath.hyperelliptic_kleinian_data`. In genus one it
+    agrees with the conventional Weierstrass sigma function. See
+    [BEL1997]_, Definition 1.
 
     """
     with ctx.extraprec(10):
         data = _kleinian_theta_data(
             ctx, u, omega, tau, kappa, characteristic, 0)
-        u, unused_inverse, kappa, theta_data = data
+        u, inverse_omega, tau_key, kappa, characteristic, theta_data = data
         theta = theta_data[0]
-        constant = ctx.convert(constant)
-        if not ctx.isfinite(constant):
-            raise ValueError("constant must be finite")
+        if normalization == "theta":
+            constant = ctx.one
+        elif normalization == "hyperelliptic":
+            constant = ctx._hyperelliptic_sigma_normalization(
+                _matrix_tuple(inverse_omega), tau_key,
+                characteristic)
+        else:
+            raise ValueError(
+                "normalization must be 'theta' or 'hyperelliptic'")
         quadratic = ctx.fsum(
             u[i] * kappa[i, j] * u[j]
             for i in range(len(u)) for j in range(len(u)))
@@ -208,7 +268,7 @@ def kleinian_zeta(ctx, u, omega, tau, kappa, characteristic=None):
     with ctx.extraprec(10):
         data = _kleinian_theta_data(
             ctx, u, omega, tau, kappa, characteristic, 1)
-        u, inverse_omega, kappa, theta_data = data
+        u, inverse_omega, unused_tau, kappa, unused_char, theta_data = data
         gradient = theta_data[1]
         genus = len(u)
         result = ctx.matrix(genus, 1)
@@ -251,7 +311,8 @@ def kleinian_p(ctx, u, omega, tau, kappa, indices, characteristic=None):
     with ctx.extraprec(10):
         data = _kleinian_theta_data(
             ctx, u, omega_matrix, tau, kappa, characteristic, degree)
-        unused_u, inverse_omega, kappa, theta_data = data
+        (unused_u, inverse_omega, unused_tau, kappa, unused_char,
+         theta_data) = data
         hessian, third = theta_data[2], theta_data[3]
         genus = inverse_omega.rows
         results = []

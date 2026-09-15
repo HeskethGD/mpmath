@@ -364,8 +364,9 @@ def hyperelliptic_kleinian_data(ctx, coefficients, method="auto"):
 
     It therefore depends on the cycle and base-point conventions and should
     not be combined with period matrices constructed in a different basis.
-    The curve-dependent normalization constant of the sigma function is not
-    included.
+    Pass the returned data to :func:`~mpmath.kleinian_sigma` with
+    ``normalization="hyperelliptic"`` to select the canonical
+    Schur--Weierstrass normalization.
 
     See [Bernatska2026]_, equations (3.16) and (3.17).
 
