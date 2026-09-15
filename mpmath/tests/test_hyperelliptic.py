@@ -2,7 +2,8 @@ import pytest
 
 from mpmath import (
     hyperelliptic_data, hyperelliptic_periods, kleinian_p,
-    kleinian_sigma, kleinian_zeta, mp, weierp, weiersigma, weierzeta,
+    kleinian_sigma, kleinian_sigma_jet, kleinian_zeta, mp, weierp,
+    weiersigma, weierzeta,
 )
 from mpmath.functions import hyperelliptic
 
@@ -254,10 +255,46 @@ def test_hyperelliptic_christiansen_p_identities():
         assert abs(nu ** 2 - curve_value) < root_substitution_tolerance
 
 
-def test_hyperelliptic_enolski_genus_two_branch_pair():
+def test_hyperelliptic_buchstaber_genus_three_identities():
+    # Buchstaber, "The Mumford Dynamical System and Hyperelliptic
+    # Kleinian Functions" (2024), arXiv:2402.09218, Corollary 8.2.
+    # Its weighted coordinates (z1, z3, z5) correspond to our (u3, u2, u1),
+    # so wp2, wp4, wp6 and wp3,3 map respectively to wp33, wp23, wp13 and
+    # wp22 in one-based Abelian-coordinate notation.
+    mp.dps = 35
+    # 4*(x+5)*(x+3)*(x+1)*x*(x-1)*(x-2)*(x-6)
+    # = 4*(x**7 - 38*x**5 - 24*x**4 + 217*x**3
+    #     + 24*x**2 - 180*x).
+    coefficients = [0, -720, 96, 868, -96, -152, 0, 4]
+    lambda4 = -38
+    lambda6 = -24
+    omega, tau, kappa, characteristic = hyperelliptic_data(coefficients)
+    u = [mp.mpf('0.13'), mp.mpf('0.17'), mp.mpf('0.19')]
+    indices = (
+        (2, 2), (1, 2), (0, 2), (1, 1),
+        (2, 2, 2), (2, 2, 2, 2), (1, 2, 2, 2),
+    )
+    p2, p4, p6, p33, p2_prime, p2_second, p4_second = kleinian_p(
+        u, omega, tau, kappa, indices, characteristic)
+
+    expected_p2_second = 6 * p2 ** 2 + 4 * p4 + 2 * lambda4
+    expected_p4_second = 6 * (p2 * p4 + p6) - 2 * p33
+    expected_p2_prime_squared = 4 * (
+        p2 ** 3 + (p4 + lambda4) * p2 + p33 - p6 + lambda6)
+    comparisons = (
+        (p2_second, expected_p2_second),
+        (p4_second, expected_p4_second),
+        (p2_prime ** 2, expected_p2_prime_squared),
+    )
+    for value, expected in comparisons:
+        assert abs(value - expected) < (
+            100 * mp.eps * max(1, abs(value), abs(expected)))
+
+
+def test_hyperelliptic_enolski_genus_two_branch_identities():
     # Enolski, Hackmann, Kagramanova, Kunz & Lammerzahl (2011),
     # J. Geom. Phys. 61, doi:10.1016/j.geomphys.2011.01.001,
-    # equations (5.7), (5.9), and (5.13). Its half-period omega and
+    # equations (5.7)-(5.9), (5.13), and (5.21). Its half-period omega and
     # characteristic ordering agree with this interface: epsilon-prime is
     # rtheta's first component and epsilon is its second.
     mp.dps = 35
@@ -277,9 +314,32 @@ def test_hyperelliptic_enolski_genus_two_branch_pair():
     assert mp.almosteq(p22, 1)
     assert mp.almosteq(p12, 0)
 
+    # Equation (5.21) recovers each finite branch point directly on the
+    # theta divisor as e_i = -sigma_1(A_i)/sigma_2(A_i). The table entries
+    # below are the upper and lower rows of (5.7) and (5.8).
+    branch_characteristics = (
+        ((half, 0), (0, 0)),
+        ((half, 0), (half, 0)),
+        ((0, half), (half, 0)),
+        ((0, half), (half, half)),
+        ((0, 0), (half, half)),
+    )
+    for branch_point, (epsilon_prime, epsilon) in enumerate(
+            branch_characteristics):
+        branch_image = 2 * omega * (
+            mp.matrix(epsilon) + tau * mp.matrix(epsilon_prime))
+        jet = kleinian_sigma_jet(
+            branch_image, omega, tau, kappa, 1, characteristic,
+            normalization="hyperelliptic")
+        derivative_scale = max(abs(jet[(1, 0)]), abs(jet[(0, 1)]))
+        assert abs(jet[(0, 0)]) < 100 * mp.eps * derivative_scale
+        recovered = -jet[(1, 0)] / jet[(0, 1)]
+        assert abs(recovered - branch_point) < (
+            1000 * mp.eps * max(1, branch_point))
 
-def test_hyperelliptic_enolski_genus_three_branch_triple():
-    # Enolski et al. (2011), equations (6.7), (6.8), (6.19), and the
+
+def test_hyperelliptic_enolski_genus_three_branch_identities():
+    # Enolski et al. (2011), equations (6.7), (6.8), (6.19), (6.26), and the
     # explicit curve (6.27), using the same half-period and characteristic
     # conventions as the genus-two test above.
     mp.dps = 35
@@ -302,6 +362,31 @@ def test_hyperelliptic_enolski_genus_three_branch_triple():
     # The exact product contains the branch point zero. Its numerical value
     # results from cancellation among period and theta-derivative terms.
     assert abs(p13) < 1000 * mp.eps
+
+    # Equation (6.26) gives the same branch-point recovery quotient in genus
+    # three. These characteristics are the seven finite entries of (6.7).
+    branch_characteristics = (
+        ((half, 0, 0), (0, 0, 0)),
+        ((half, 0, 0), (half, 0, 0)),
+        ((0, half, 0), (half, 0, 0)),
+        ((0, half, 0), (half, half, 0)),
+        ((0, 0, half), (half, half, 0)),
+        ((0, 0, half), (half, half, half)),
+        ((0, 0, 0), (half, half, half)),
+    )
+    for branch_point, (epsilon_prime, epsilon) in enumerate(
+            branch_characteristics):
+        branch_image = 2 * omega * (
+            mp.matrix(epsilon) + tau * mp.matrix(epsilon_prime))
+        jet = kleinian_sigma_jet(
+            branch_image, omega, tau, kappa, 1, characteristic,
+            normalization="hyperelliptic")
+        derivative_scale = max(
+            abs(jet[(1, 0, 0)]), abs(jet[(0, 1, 0)]))
+        assert abs(jet[(0, 0, 0)]) < 100 * mp.eps * derivative_scale
+        recovered = -jet[(1, 0, 0)] / jet[(0, 1, 0)]
+        assert abs(recovered - branch_point) < (
+            1000 * mp.eps * max(1, branch_point))
 
 
 @pytest.mark.parametrize("coefficients", [
