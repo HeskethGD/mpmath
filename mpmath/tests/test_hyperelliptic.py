@@ -255,6 +255,56 @@ def test_hyperelliptic_christiansen_p_identities():
         assert abs(nu ** 2 - curve_value) < root_substitution_tolerance
 
 
+def test_hyperelliptic_enolski_genus_two_branch_pair():
+    # Enolski, Hackmann, Kagramanova, Kunz & Lammerzahl (2011),
+    # J. Geom. Phys. 61, doi:10.1016/j.geomphys.2011.01.001,
+    # equations (5.7), (5.9), and (5.13). The paper writes full periods as
+    # 2*omega and displays characteristics with epsilon-prime above epsilon.
+    # These are mpmath's omega and literal rtheta (a, b) ordering.
+    mp.dps = 35
+    # y**2 = 4*x*(x-1)*(x-2)*(x-3)*(x-4).
+    coefficients = [0, 96, -200, 140, -40, 4]
+    omega, tau, kappa, characteristic = hyperelliptic_data(coefficients)
+    half = 0.5
+    assert characteristic == ((half, half), (0, half))
+
+    # This is A1+A2 from (5.7), before reduction modulo full periods.
+    epsilon_prime = mp.matrix([1, 0])
+    epsilon = mp.matrix([half, 0])
+    omega_12 = omega * (epsilon + tau * epsilon_prime)
+    p22, p12 = kleinian_p(
+        omega_12, omega, tau, kappa, ((1, 1), (0, 1)),
+        characteristic)
+    assert mp.almosteq(p22, 1)
+    assert mp.almosteq(p12, 0)
+
+
+def test_hyperelliptic_enolski_genus_three_branch_triple():
+    # Enolski et al. (2011), equations (6.7), (6.8), (6.19), and the
+    # explicit curve (6.27). As above, their 2*omega is mpmath's omega,
+    # and the upper characteristic row is rtheta's first component.
+    mp.dps = 35
+    # y**2 = 4*x*(x-1)*(x-2)*(x-3)*(x-4)*(x-5)*(x-6).
+    coefficients = [0, 2880, -7056, 6496, -2940, 700, -84, 4]
+    omega, tau, kappa, characteristic = hyperelliptic_data(coefficients)
+    half = 0.5
+    assert characteristic == (
+        (half, half, half), (half, 0, half))
+
+    # This is A1+A2+A3 from (6.7), before reduction modulo full periods.
+    epsilon_prime = mp.matrix([1, half, 0])
+    epsilon = mp.matrix([1, 0, 0])
+    omega_123 = omega * (epsilon + tau * epsilon_prime)
+    p33, p23, p13 = kleinian_p(
+        omega_123, omega, tau, kappa,
+        ((2, 2), (1, 2), (0, 2)), characteristic)
+    assert mp.almosteq(p33, 3)
+    assert mp.almosteq(p23, -2)
+    # The exact product contains the branch point zero. Its numerical value
+    # results from cancellation among period and theta-derivative terms.
+    assert abs(p13) < 1000 * mp.eps
+
+
 @pytest.mark.parametrize("coefficients", [
     [24, 14, -13, -2, 1],
     [1, 0, 0, 0, 1],
