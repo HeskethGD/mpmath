@@ -54,6 +54,7 @@ kleinian_sigma_jet = mp.kleinian_sigma_jet
 kleinian_zeta = mp.kleinian_zeta
 kleinian_p = mp.kleinian_p
 hyperelliptic_periods = mp.hyperelliptic_periods
+hyperelliptic_abel_map = mp.hyperelliptic_abel_map
 hyperelliptic_data = mp.hyperelliptic_data
 kleinj = mp.kleinj
 kleinjinv = mp.kleinjinv

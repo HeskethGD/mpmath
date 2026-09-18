@@ -93,6 +93,13 @@ curve and functions are unchanged when the returned data are used together.
 
 .. autofunction:: mpmath.hyperelliptic_periods
 
+The corresponding Abel map integrates the same first-kind differential
+basis from the base point fixed by the period construction. It accepts one
+affine curve point or an effective divisor and returns unnormalized Abelian
+coordinates ready for the Kleinian functions.
+
+.. autofunction:: mpmath.hyperelliptic_abel_map
+
 For direct use with the Kleinian functions,
 :func:`~mpmath.hyperelliptic_data` selects the required period
 matrices and supplies the characteristic of the vector of Riemann constants

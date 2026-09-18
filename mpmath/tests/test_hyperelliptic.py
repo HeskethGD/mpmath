@@ -1,9 +1,9 @@
 import pytest
 
 from mpmath import (
-    hyperelliptic_data, hyperelliptic_periods, kleinian_p,
+    hyperelliptic_abel_map, hyperelliptic_data, hyperelliptic_periods, kleinian_p,
     kleinian_sigma, kleinian_sigma_jet, kleinian_zeta, mp, weierp,
-    weiersigma, weierzeta,
+    weierpprime, weiersigma, weierzeta,
 )
 from mpmath.functions import hyperelliptic
 
@@ -115,6 +115,197 @@ def test_hyperelliptic_data_genus_one():
                 *arguments, characteristic,
                 normalization="hyperelliptic"),
             weiersigma(point, omega1=omega1, omega2=omega2))
+
+
+def test_hyperelliptic_abel_map_genus_one_inversion():
+    # The classical Weierstrass parametrization is x=wp(u), y=wp'(u) for
+    # y^2=4*x^3-4*x. Its inverse checks the Abel map, its sheet convention,
+    # and compatibility with the Kleinian functions independently of the
+    # path chosen by the numerical integral.
+    mp.dps = 30
+    coefficients = [0, -4, 0, 4]
+    omega, tau, kappa, characteristic = hyperelliptic_data(coefficients)
+    omega1 = omega[0, 0]
+    omega2 = (omega * tau)[0, 0]
+    for u in (mp.mpf('0.3'), mp.mpc('0.3', '0.07')):
+        x = weierp(u, omega1=omega1, omega2=omega2)
+        y = weierpprime(u, omega1=omega1, omega2=omega2)
+        image = hyperelliptic_abel_map(coefficients, (x, y))
+        reduced = hyperelliptic_abel_map(
+            coefficients, (x, y), reduce=True)
+        assert mp.almosteq(reduced[0], u)
+        assert abs(kleinian_p(
+            image, omega, tau, kappa, (0, 0), characteristic) - x) < (
+                mp.mpf('1e-27') * max(1, abs(x)))
+        assert abs(kleinian_p(
+            image, omega, tau, kappa, (0, 0, 0), characteristic) - y) < (
+                mp.mpf('1e-27') * max(1, abs(y)))
+
+        # P + its hyperelliptic involution is a principal divisor relative
+        # to two copies of the point at infinity, so its Abel image is zero
+        # modulo the period lattice (Abel's theorem).
+        involution = hyperelliptic_abel_map(
+            coefficients, ((x, y), (x, -y)), reduce=True)
+        assert mp.norm(involution) < mp.mpf('1e-28')
+    assert mp.norm(hyperelliptic_abel_map(coefficients, ())) == 0
+
+
+def test_hyperelliptic_abel_map_sage_oracle():
+    # SageMath 10.8 RiemannSurface.abel_jacobi at 130 bits, on the two
+    # sheets above x=2 of y^2=4*x^3-4*x. Subtracting the two images removes
+    # Sage's base point. Sage integrates dx/(2*y), so its sheet difference
+    # 0.58408284167715170669284916892566789240 is doubled here.
+    mp.dps = 35
+    coefficients = [0, -4, 0, 4]
+    x = mp.mpf(2)
+    y = mp.sqrt(24)
+    difference = (
+        hyperelliptic_abel_map(coefficients, (x, y))
+        - hyperelliptic_abel_map(coefficients, (x, -y)))
+    positive_image = hyperelliptic_abel_map(coefficients, (x, y))
+    assert mp.almosteq(
+        positive_image[0], -mp.elliprf(x + 1, x, x - 1))
+    expected = 2 * mp.mpf(
+        '0.58408284167715170669284916892566789240')
+    assert abs(difference[0] - expected) < mp.mpf('1e-34')
+
+
+def test_hyperelliptic_abel_map_genus_two_jacobi_inversion():
+    # BEL (1997), equation (3.10), gives x1+x2=wp_22 and
+    # x1*x2=-wp_12. Equation (3.11) gives
+    # y_k=wp_222*x_k+wp_122 in the present y^2=P(x) convention.
+    mp.dps = 30
+    coefficients = [0, 16, 0, -20, 0, 4]
+    omega, tau, kappa, characteristic = hyperelliptic_data(coefficients)
+    u = mp.matrix([mp.mpf('0.13'), mp.mpf('0.27')])
+    indices = ((1, 1), (0, 1), (1, 1, 1), (0, 1, 1))
+    p22, p12, p222, p122 = kleinian_p(
+        u, omega, tau, kappa, indices, characteristic)
+    roots = mp.polyroots([-p12, -p22, 1], maxsteps=200)
+    divisor = tuple((x, p222 * x + p122) for x in roots)
+
+    image = hyperelliptic_abel_map(coefficients, divisor)
+    reduced = hyperelliptic_abel_map(
+        coefficients, divisor, reduce=True)
+    assert mp.norm(reduced - u) < mp.mpf('1e-27')
+    recovered = kleinian_p(
+        image, omega, tau, kappa, indices, characteristic)
+    for value, expected in zip(recovered, (p22, p12, p222, p122)):
+        assert abs(value - expected) < (
+            mp.mpf('1e-26') * max(1, abs(expected)))
+
+    # An Abel map is additive on divisors before lattice reduction.
+    point_images = [
+        hyperelliptic_abel_map(coefficients, point) for point in divisor]
+    assert mp.norm(image - sum(point_images, mp.zeros(2, 1))) < mp.mpf('1e-28')
+    complex_image = hyperelliptic_abel_map(
+        coefficients, divisor, method="complex")
+    assert mp.norm(complex_image - image) < mp.mpf('1e-28')
+
+
+def test_hyperelliptic_abel_map_complex_jacobi_inversion():
+    # The same BEL (1997), equations (3.10)-(3.11), closed loop exercises
+    # the polygonal backbone and the path from infinity when the canonical
+    # genus-two curve has two conjugate pairs of branch points.
+    mp.dps = 30
+    coefficients = [80, -44, 80, -40, 0, 4]
+    omega, tau, kappa, characteristic = hyperelliptic_data(coefficients)
+    u = mp.matrix([mp.mpc('0.13', '0.02'), mp.mpc('0.27', '-0.01')])
+    indices = ((1, 1), (0, 1), (1, 1, 1), (0, 1, 1))
+    p22, p12, p222, p122 = kleinian_p(
+        u, omega, tau, kappa, indices, characteristic)
+    roots = mp.polyroots([-p12, -p22, 1], maxsteps=200)
+    divisor = tuple((x, p222 * x + p122) for x in roots)
+    image = hyperelliptic_abel_map(
+        coefficients, divisor, method="complex", reduce=True)
+    assert mp.norm(image - u) < mp.mpf('1e-27')
+
+
+@pytest.mark.parametrize("coefficients, branch", [
+    ([0, 16, 0, -20, 0, 4], 1),
+    ([6, 1, -7, -1, 1], 1),
+])
+def test_hyperelliptic_abel_map_branch_point_torsion(coefficients, branch):
+    # Twice a branch point minus twice the Abel-map base point is principal,
+    # hence every branch-point image is two-torsion in the Jacobian.
+    mp.dps = 25
+    roots = mp.polyroots(coefficients)
+    x = sorted(roots, key=lambda root: (mp.re(root), mp.im(root)))[branch]
+    image = hyperelliptic_abel_map(
+        coefficients, ((x, 0), (x, 0)), reduce=True)
+    assert mp.norm(image) < mp.mpf('1e-22')
+
+
+def test_hyperelliptic_abel_map_complex_curve_involution():
+    # Abel's theorem applies without a real branch-point ordering as well:
+    # P plus its hyperelliptic involution maps to zero modulo full periods.
+    mp.dps = 25
+    coefficients = [-20, 21, -28, 22, -8, 1]
+    x = mp.mpc('0.3', '0.2')
+    y = mp.sqrt(sum(
+        coefficient * x ** degree
+        for degree, coefficient in enumerate(coefficients)))
+    image = hyperelliptic_abel_map(
+        coefficients, ((x, y), (x, -y)), reduce=True)
+    assert mp.norm(image) < mp.mpf('1e-22')
+
+
+@pytest.mark.parametrize("target, message", [
+    (1, "affine point"),
+    ([1], "pair"),
+    (((1,),), "pair"),
+    (((1, 2), 3), "pair"),
+    (((1, object()),), "numbers"),
+    ((mp.inf, 0), "finite"),
+    (((0, 0), (mp.inf, 0)), "finite"),
+])
+def test_hyperelliptic_abel_map_target_validation(target, message):
+    with pytest.raises(ValueError, match=message):
+        hyperelliptic_abel_map([0, -4, 0, 4], target)
+
+
+def test_hyperelliptic_abel_map_rejects_point_off_curve():
+    with pytest.raises(ValueError, match=r"y\*\*2 = P\(x\)"):
+        hyperelliptic_abel_map([0, -4, 0, 4], (1, 1))
+
+
+def test_hyperelliptic_abel_map_internal_failures(monkeypatch):
+    with pytest.raises(ValueError, match="square-root sheet"):
+        hyperelliptic._branch_target_integrals(
+            mp, (0, 1, 2), 1, 0, 3, 1, 1, +mp.eps)
+
+    zero = mp.zeros(1, 1)
+    with pytest.raises(ValueError, match="full period lattice"):
+        hyperelliptic._reduce_abel_value(mp, zero, zero, zero, +mp.eps)
+
+    monkeypatch.setattr(
+        mp, "lu_solve", lambda matrix, vector: mp.matrix([0, 0]))
+    with pytest.raises(ValueError, match="full period lattice"):
+        hyperelliptic._reduce_abel_value(
+            mp, mp.matrix([1]), mp.matrix([[1]]), mp.matrix([[1j]]),
+            +mp.eps)
+
+
+def test_hyperelliptic_infinity_ray_avoids_roots(monkeypatch):
+    direction = hyperelliptic._infinity_direction(mp, (3, 1, 2))
+    assert not mp.almosteq(direction, 1)
+
+    monkeypatch.setattr(mp, "exp", lambda value: mp.one)
+    with pytest.raises(ValueError, match="root-free path"):
+        hyperelliptic._infinity_direction(mp, (3, 1, 2))
+
+
+def test_hyperelliptic_endpoint_limits(monkeypatch):
+    # The quadrature implementation does not ordinarily sample exact
+    # endpoints, but these removable-limit branches support backends that do.
+    monkeypatch.setattr(
+        mp, "quad", lambda function, interval: (
+            function(0) + function(mp.mpf('0.5')) + function(1)))
+    values = hyperelliptic._infinity_branch_integrals(
+        mp, (-2, -1, 0, 1, 2), 1, 2)
+    assert all(mp.isfinite(value) for value in values)
+    with pytest.raises(ValueError, match="branch-point path"):
+        hyperelliptic._admissible_branch_vertex(mp, 0, (), +mp.eps)
 
 
 @pytest.mark.parametrize("coefficients", [

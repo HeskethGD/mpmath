@@ -15,6 +15,14 @@
 # Endpoint singularities are removed by a cosine parametrization; mpmath's
 # existing adaptive quadrature then integrates smooth functions.
 #
+# Abel maps reuse these adjacent-root integrals as a path backbone. Odd-degree
+# curves add one reciprocal-coordinate path from infinity; each affine target
+# is joined to an unobstructed branch point by x = e + (x_target-e)*t**2.
+# Factorwise square-root continuation along only that last segment fixes a
+# reference sheet, which is matched against the y-coordinate supplied by the
+# caller. Optional reduction resolves the result in the real full-period
+# lattice and selects a centered fundamental-parallelotope representative.
+#
 # The associated second-kind differentials and period conventions are those
 # of Buchstaber, Enolskii and Leykin, "Hyperelliptic Kleinian Functions and
 # Applications". Thus omega, omega_prime, eta and eta_prime are half-period
@@ -63,6 +71,26 @@ def _real_hyperelliptic_data(ctx, coefficients, roots, tolerance):
         raise ValueError("the polynomial must have only real roots")
     return (tuple(ctx.re(value) for value in coefficients),
             tuple(ctx.re(root) for root in roots))
+
+
+def _prepare_hyperelliptic_curve(ctx, coefficients, method):
+    """Normalize a curve and select its real or complex path construction."""
+    if method not in ("auto", "real", "complex"):
+        raise ValueError("method must be 'auto', 'real' or 'complex'")
+    coefficients = _hyperelliptic_coefficients(ctx, coefficients)
+    roots, root_tolerance = _hyperelliptic_roots(ctx, coefficients)
+    real_data = (
+        not any(ctx.im(value) for value in coefficients)
+        and not any(abs(ctx.im(root)) > root_tolerance for root in roots)
+    )
+    use_real_method = method == "real" or (method == "auto" and real_data)
+    if use_real_method:
+        coefficients, roots = _real_hyperelliptic_data(
+            ctx, coefficients, roots, root_tolerance)
+    genus = (len(coefficients) - 2) // 2
+    even_degree = not (len(coefficients) - 1) % 2
+    return (coefficients, roots, root_tolerance, use_real_method,
+            genus, even_degree)
 
 
 def _real_branch_integrals(ctx, roots, leading, interval, count):
@@ -162,6 +190,263 @@ def _complex_branch_integrals(ctx, roots, leading, count):
     return [tuple(multiplier * value for value in values)
             for multiplier, (values, unused_left, unused_right)
             in zip(multipliers, data)]
+
+
+def _hyperelliptic_intervals(ctx, coefficients, roots, use_real_method,
+                             count):
+    """Return adjacent branch integrals and the b-period orientation."""
+    if use_real_method:
+        intervals = [
+            _real_branch_integrals(
+                ctx, roots, coefficients[-1], interval, count)
+            for interval in range(len(roots) - 1)
+        ]
+        b_sign = ctx.one
+    else:
+        intervals = _complex_branch_integrals(
+            ctx, roots, coefficients[-1], count)
+        b_sign = -ctx.one
+    return intervals, b_sign
+
+
+def _first_kind_periods(ctx, intervals, genus, even_degree, b_sign,
+                        target_eps):
+    """Construct first-kind half-periods from adjacent branch integrals."""
+    cycle_offset = 1 if even_degree else 0
+    omega = ctx.matrix(genus)
+    omega_prime = ctx.matrix(genus)
+    for row in range(genus):
+        for column in range(genus):
+            omega[row, column] = intervals[2 * column + cycle_offset][row]
+            omega_prime[row, column] = b_sign * ctx.fsum(
+                intervals[2 * edge + 1 + cycle_offset][row]
+                for edge in range(column, genus))
+    inverse_omega = ctx.inverse(omega)
+    tau = inverse_omega * omega_prime
+    _symmetrize_period_matrix(ctx, tau, target_eps, "period matrix")
+    ctx._rtheta_tau_data(_matrix_tuple(tau))
+    return omega, omega_prime, tau, inverse_omega
+
+
+def _infinity_direction(ctx, roots):
+    """Choose a deterministic root-free ray leaving the terminal root."""
+    terminal = roots[-1]
+    initial = terminal - roots[-2]
+    clearance = 100 * ctx.sqrt(ctx.eps)
+    count = 2 * len(roots) + 1
+    for step in range(count):
+        direction = initial * ctx.exp(ctx.j * ctx.pi * step / count)
+        blocked = False
+        for root in roots[:-1]:
+            ratio = (root - terminal) / direction
+            if (ctx.re(ratio) > 0
+                    and abs(ctx.im(ratio)) <= clearance * max(
+                        ctx.one, abs(ratio))):
+                blocked = True
+                break
+        if not blocked:
+            return direction
+    raise ValueError("failed to choose a root-free path from infinity")
+
+
+def _infinity_branch_integrals(ctx, roots, leading, count):
+    """Integrate first-kind differentials from infinity to the last root."""
+    terminal = roots[-1]
+    direction = _infinity_direction(ctx, roots)
+    root_direction = ctx.sqrt(direction)
+    root_leading = ctx.sqrt(leading)
+    root_count = len(roots)
+    ratios = tuple((terminal - root) / direction for root in roots)
+    endpoint_product = ctx.fprod(
+        ctx.sqrt(ratio) for ratio in ratios[:-1])
+
+    def integrand(unit, power):
+        if not unit:
+            exponent = root_count - 3 - 2 * power
+            if exponent:
+                return ctx.zero
+            return (-2 * direction * direction ** power
+                    / (root_leading * root_direction ** root_count))
+        if unit == 1:
+            return (-2 * direction * terminal ** power
+                    / (root_leading * root_direction ** root_count
+                       * endpoint_product))
+        parameter = unit / (1 - unit)
+        product = ctx.fprod(
+            ctx.sqrt(1 + ratio * parameter ** 2) for ratio in ratios)
+        exponent = root_count - 3 - 2 * power
+        numerator = (-2 * direction
+                     * (terminal * parameter ** 2 + direction) ** power
+                     * parameter ** exponent)
+        derivative = 1 / (1 - unit) ** 2
+        return (numerator * derivative
+                / (root_leading * root_direction ** root_count * product))
+
+    return tuple(ctx.quad(
+        lambda unit, power=power: integrand(unit, power), [0, 1])
+        for power in range(count))
+
+
+def _branch_abel_values(ctx, roots, intervals, leading, genus, even_degree):
+    """Return deterministic Abel images of all finite branch points."""
+    values = [None] * len(roots)
+    if even_degree:
+        values[0] = (ctx.zero,) * genus
+        for index, interval in enumerate(intervals):
+            values[index + 1] = tuple(
+                values[index][power] + interval[power]
+                for power in range(genus))
+    else:
+        values[-1] = _infinity_branch_integrals(
+            ctx, roots, leading, genus)
+        for index in range(len(intervals) - 1, -1, -1):
+            values[index] = tuple(
+                values[index + 1][power] - intervals[index][power]
+                for power in range(genus))
+    return tuple(values)
+
+
+def _normalise_abel_targets(ctx, target):
+    """Normalize one affine point or a sequence of affine points."""
+    try:
+        items = tuple(target)
+    except TypeError:
+        raise ValueError(
+            "target must be an affine point (x, y) or a sequence of points")
+    if not items:
+        return ()
+
+    def point(value):
+        try:
+            entries = tuple(value)
+        except TypeError:
+            raise ValueError("each target point must be a pair (x, y)")
+        if len(entries) != 2:
+            raise ValueError("each target point must be a pair (x, y)")
+        try:
+            x, y = (ctx.convert(entry) for entry in entries)
+        except (TypeError, ValueError):
+            raise ValueError("target coordinates must be numbers")
+        if not ctx.isfinite(x) or not ctx.isfinite(y):
+            raise ValueError("target coordinates must be finite")
+        return x, y
+
+    if len(items) == 2:
+        try:
+            x, y = (ctx.convert(item) for item in items)
+        except (TypeError, ValueError):
+            pass
+        else:
+            if not ctx.isfinite(x) or not ctx.isfinite(y):
+                raise ValueError("target coordinates must be finite")
+            return ((x, y),)
+    return tuple(point(value) for value in items)
+
+
+def _evaluate_polynomial(ctx, coefficients, value):
+    """Evaluate an ascending coefficient vector by Horner's rule."""
+    result = ctx.zero
+    for coefficient in reversed(coefficients):
+        result = result * value + coefficient
+    return result
+
+
+def _target_branch_index(ctx, x, y, roots, target_eps):
+    """Return the index if an affine target is a branch point."""
+    scale = max([ctx.one, abs(x)] + [abs(root) for root in roots])
+    tolerance = 100 * target_eps * scale
+    for index, root in enumerate(roots):
+        if abs(x - root) <= tolerance and abs(y) <= tolerance:
+            return index
+    return None
+
+
+def _admissible_branch_vertex(ctx, target, roots, target_eps):
+    """Choose the nearest branch point with an unobstructed final segment."""
+    path_tolerance = 100 * ctx.sqrt(target_eps)
+    candidates = []
+    for index, branch in enumerate(roots):
+        difference = target - branch
+        obstructed = False
+        for other_index, other in enumerate(roots):
+            if other_index == index:
+                continue
+            ratio = (other - branch) / difference
+            if (0 < ctx.re(ratio) < 1
+                    and abs(ctx.im(ratio)) <= path_tolerance * max(
+                        ctx.one, abs(ratio))):
+                obstructed = True
+                break
+        if not obstructed:
+            candidates.append((abs(difference), index))
+    if not candidates:
+        raise ValueError("failed to find a branch-point path to target")
+    return min(candidates)[1]
+
+
+def _branch_target_integrals(ctx, roots, leading, branch_index, target,
+                             supplied_y, count, target_eps):
+    """Integrate from one branch point to a selected affine lift."""
+    branch = roots[branch_index]
+    difference = target - branch
+    other_roots = tuple(
+        root for index, root in enumerate(roots) if index != branch_index)
+    references = tuple(branch - root for root in other_roots)
+    ratios = tuple(difference / reference for reference in references)
+    denominator = (ctx.sqrt(leading) * ctx.sqrt(difference)
+                   * ctx.fprod(ctx.sqrt(reference)
+                               for reference in references))
+
+    def integrand(parameter, power):
+        x = branch + difference * parameter ** 2
+        continuation = ctx.fprod(
+            ctx.sqrt(1 + ratio * parameter ** 2) for ratio in ratios)
+        return 2 * difference * x ** power / (denominator * continuation)
+
+    continued_y = denominator * ctx.fprod(
+        ctx.sqrt(1 + ratio) for ratio in ratios)
+    sheet_tolerance = 1000 * target_eps * max(
+        ctx.one, abs(supplied_y), abs(continued_y))
+    if abs(continued_y - supplied_y) <= sheet_tolerance:
+        sign = ctx.one
+    elif abs(continued_y + supplied_y) <= sheet_tolerance:
+        sign = -ctx.one
+    else:
+        raise ValueError("failed to select the target's square-root sheet")
+    return tuple(sign * ctx.quad(
+        lambda parameter, power=power: integrand(parameter, power), [0, 1])
+        for power in range(count))
+
+
+def _reduce_abel_value(ctx, value, omega, omega_prime, target_eps):
+    """Reduce an Abelian vector to a centered period parallelotope."""
+    genus = omega.rows
+    periods = ctx.matrix(genus, 2 * genus)
+    periods[:, :genus] = 2 * omega
+    periods[:, genus:] = 2 * omega_prime
+    real_periods = ctx.matrix(2 * genus)
+    right_hand_side = ctx.matrix(2 * genus, 1)
+    for row in range(genus):
+        right_hand_side[row] = ctx.re(value[row])
+        right_hand_side[genus + row] = ctx.im(value[row])
+        for column in range(2 * genus):
+            real_periods[row, column] = ctx.re(periods[row, column])
+            real_periods[genus + row, column] = ctx.im(
+                periods[row, column])
+    try:
+        coordinates = ctx.lu_solve(real_periods, right_hand_side)
+    except (ValueError, ZeroDivisionError):
+        raise ValueError("failed to resolve the full period lattice")
+    reconstructed = periods * coordinates
+    scale = max(ctx.one, ctx.norm(value), ctx.norm(periods) * ctx.norm(
+        coordinates))
+    if ctx.norm(reconstructed - value) > 100 * target_eps * scale:
+        raise ValueError("failed to resolve the full period lattice")
+    lattice_shift = ctx.matrix([
+        ctx.floor(coordinate + ctx.convert(0.5))
+        for coordinate in coordinates
+    ])
+    return value - periods * lattice_shift
 
 
 def _second_kind_interval(ctx, coefficients, monomials, row, genus):
@@ -271,8 +556,6 @@ def hyperelliptic_periods(ctx, coefficients, method="auto",
     points. The latter order is lexicographic by real and imaginary part.
 
     """
-    if method not in ("auto", "real", "complex"):
-        raise ValueError("method must be 'auto', 'real' or 'complex'")
     # Unary plus freezes this context constant at the caller's precision;
     # otherwise ctx.eps would follow the temporary guard precision below.
     target_eps = +ctx.eps
@@ -283,50 +566,18 @@ def hyperelliptic_periods(ctx, coefficients, method="auto",
     # whether they were sufficient for a particular curve.
     second_kind_cancellation_guard = 40 if second_kind else 0
     with ctx.extraprec(quadrature_guard + second_kind_cancellation_guard):
-        coefficients = _hyperelliptic_coefficients(ctx, coefficients)
-        roots, root_tolerance = _hyperelliptic_roots(ctx, coefficients)
-        real_data = (
-            not any(ctx.im(value) for value in coefficients)
-            and not any(abs(ctx.im(root)) > root_tolerance for root in roots)
-        )
-        use_real_method = (
-            method == "real" or (method == "auto" and real_data))
-        if use_real_method:
-            coefficients, roots = _real_hyperelliptic_data(
-                ctx, coefficients, roots, root_tolerance)
-        genus = (len(coefficients) - 2) // 2
-        even_degree = not (len(coefficients) - 1) % 2
+        curve_data = _prepare_hyperelliptic_curve(
+            ctx, coefficients, method)
+        (coefficients, roots, unused_root_tolerance, use_real_method,
+         genus, even_degree) = curve_data
         # The first finite a-cycle starts at interval zero in odd degree and
         # interval one in even degree, where e0 is itself a finite root.
         cycle_offset = 1 if even_degree else 0
         monomial_count = 2 * genus + 1 if second_kind else genus
-        if use_real_method:
-            intervals = [
-                _real_branch_integrals(
-                    ctx, roots, coefficients[-1], interval, monomial_count)
-                for interval in range(2 * genus + cycle_offset)
-            ]
-            b_sign = ctx.one
-        else:
-            intervals = _complex_branch_integrals(
-                ctx, roots, coefficients[-1], monomial_count)
-            b_sign = -ctx.one
-        omega = ctx.matrix(genus)
-        omega_prime = ctx.matrix(genus)
-        for row in range(genus):
-            for column in range(genus):
-                omega[row, column] = (
-                    intervals[2 * column + cycle_offset][row])
-                omega_prime[row, column] = b_sign * ctx.fsum(
-                    intervals[2 * edge + 1 + cycle_offset][row]
-                    for edge in range(column, genus))
-        inverse_omega = ctx.inverse(omega)
-        tau = inverse_omega * omega_prime
-        # Symmetry is a sensitive independent check on the paths, signs and
-        # numerical integration.  Do not average away a material discrepancy.
-        _symmetrize_period_matrix(
-            ctx, tau, target_eps, "period matrix")
-        ctx._rtheta_tau_data(_matrix_tuple(tau))
+        intervals, b_sign = _hyperelliptic_intervals(
+            ctx, coefficients, roots, use_real_method, monomial_count)
+        omega, omega_prime, tau, inverse_omega = _first_kind_periods(
+            ctx, intervals, genus, even_degree, b_sign, target_eps)
         if second_kind:
             # BEL's formula includes degree 2*g+2. It is zero in odd degree.
             second_coefficients = coefficients
@@ -355,6 +606,111 @@ def hyperelliptic_periods(ctx, coefficients, method="auto",
         return (+omega, +omega_prime, +eta, +eta_prime,
                 +tau, +kappa)
     return +omega, +omega_prime, +tau
+
+
+@defun
+def hyperelliptic_abel_map(ctx, coefficients, target, method="auto",
+                           reduce=False):
+    r"""
+    Evaluate the Abel map of points on a hyperelliptic curve.
+
+    ``coefficients`` defines the curve :math:`y^2=P(x)` in the same
+    ascending order accepted by :func:`~mpmath.hyperelliptic_periods`.
+    ``target`` is either one affine point ``(x, y)`` or a sequence of such
+    points representing an effective divisor. Repetition represents
+    multiplicity, and an empty sequence returns the zero vector. Both
+    coordinates are required: away from a branch point, the sign of ``y``
+    selects the sheet.
+
+    For a divisor :math:`D=P_1+\cdots+P_n`, this returns
+
+    .. math::
+
+        A(D)=\sum_{j=1}^n\int_{P_0}^{P_j}
+        \left(\frac{dx}{y},\frac{x\,dx}{y},\ldots,
+        \frac{x^{g-1}dx}{y}\right)^T.
+
+    The base point :math:`P_0` is the unique point at infinity for an
+    odd-degree curve and the first ordered branch point for an even-degree
+    curve. Coordinates have the same order as the rows of ``omega`` returned
+    by :func:`~mpmath.hyperelliptic_periods`, so the result can be passed
+    directly to the Kleinian functions without a Riemann-constant shift.
+
+    ``method`` has the same ``"auto"``, ``"real"`` and ``"complex"``
+    choices as :func:`~mpmath.hyperelliptic_periods`. The integration paths
+    are deterministic but an Abel map is naturally defined only modulo the
+    full period lattice. By default the path-dependent value is returned.
+    If ``reduce=True``, full periods are subtracted to put its real lattice
+    coordinates in the centered parallelotope :math:`[-1/2,1/2)^{2g}`.
+    This is fundamental-cell reduction, not a closest-vector calculation.
+
+    **Example**
+
+    Recover a point on a genus-one curve from its Abel image::
+
+        >>> from mpmath import hyperelliptic_abel_map, kleinian_p
+        >>> from mpmath import hyperelliptic_data, mp
+        >>> coefficients = [0, -4, 0, 4]
+        >>> omega, tau, kappa, characteristic = hyperelliptic_data(
+        ...     coefficients)
+        >>> u = mp.mpf('0.3')
+        >>> x = mp.weierp(u, omega1=omega[0, 0],
+        ...                  omega2=(omega*tau)[0, 0])
+        >>> y = mp.weierpprime(u, omega1=omega[0, 0],
+        ...                       omega2=(omega*tau)[0, 0])
+        >>> image = hyperelliptic_abel_map(coefficients, (x, y))
+        >>> mp.almosteq(kleinian_p(
+        ...     image, omega, tau, kappa, (0, 0), characteristic), x)
+        True
+
+    """
+    target_eps = +ctx.eps
+    quadrature_guard = 20
+    with ctx.extraprec(quadrature_guard):
+        targets = _normalise_abel_targets(ctx, target)
+        curve_data = _prepare_hyperelliptic_curve(
+            ctx, coefficients, method)
+        (coefficients, roots, unused_root_tolerance, use_real_method,
+         genus, even_degree) = curve_data
+        for x, y in targets:
+            curve_value = _evaluate_polynomial(ctx, coefficients, x)
+            evaluation_scale = max(
+                ctx.one, abs(y ** 2),
+                ctx.fsum(abs(coefficient * x ** degree)
+                         for degree, coefficient in enumerate(coefficients)))
+            tolerance = 100 * target_eps * evaluation_scale
+            if not ctx.almosteq(
+                    y ** 2, curve_value,
+                    rel_eps=100 * target_eps, abs_eps=tolerance):
+                raise ValueError("target point must satisfy y**2 = P(x)")
+
+        intervals, b_sign = _hyperelliptic_intervals(
+            ctx, coefficients, roots, use_real_method, genus)
+        branch_values = _branch_abel_values(
+            ctx, roots, intervals, coefficients[-1], genus, even_degree)
+        result = ctx.zeros(genus, 1)
+        for x, y in targets:
+            branch_index = _target_branch_index(
+                ctx, x, y, roots, target_eps)
+            if branch_index is None:
+                branch_index = _admissible_branch_vertex(
+                    ctx, x, roots, target_eps)
+                final_integral = _branch_target_integrals(
+                    ctx, roots, coefficients[-1], branch_index, x, y,
+                    genus, target_eps)
+            else:
+                final_integral = (ctx.zero,) * genus
+            for row in range(genus):
+                result[row] += (
+                    branch_values[branch_index][row] + final_integral[row])
+
+        if reduce:
+            omega, omega_prime, unused_tau, unused_inverse = (
+                _first_kind_periods(
+                    ctx, intervals, genus, even_degree, b_sign, target_eps))
+            result = _reduce_abel_value(
+                ctx, result, omega, omega_prime, target_eps)
+    return +result
 
 
 @defun
