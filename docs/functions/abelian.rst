@@ -96,7 +96,9 @@ curve and functions are unchanged when the returned data are used together.
 The corresponding Abel map integrates the same first-kind differential
 basis from the base point fixed by the period construction. It accepts one
 affine curve point or an effective divisor and returns unnormalized Abelian
-coordinates ready for the Kleinian functions.
+coordinates ready for the Kleinian functions. On request it also returns the
+matched vector of incomplete second-kind integrals, using the same paths and
+cycle reduction.
 
 .. autofunction:: mpmath.hyperelliptic_abel_map
 
@@ -146,6 +148,8 @@ For the classical development of Abelian, theta, sigma, and multiply periodic
 functions, see [BakerAbel]_ and [BakerMultiply]_.
 
 .. autofunction:: mpmath.kleinian_sigma
+
+.. autofunction:: mpmath.kleinian_baker_akhiezer
 
 .. autofunction:: mpmath.kleinian_sigma_jet
 

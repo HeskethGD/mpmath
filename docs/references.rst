@@ -45,6 +45,12 @@ References not listed here can be found in the source code.
              *American Mathematical Society Translations*, Series 2, 179
              (1997), 1--33. https://arxiv.org/abs/solv-int/9603005
 
+.. [CEEK2000] P. L. Christiansen, J. C. Eilbeck, V. Z. Enolskii &
+              N. A. Kostov. "Quasi-periodic and periodic solutions for
+              systems of coupled nonlinear Schrödinger equations".
+              *Proceedings of the Royal Society A* 456 (2000), 2263--2281.
+              https://arxiv.org/abs/solv-int/9904017
+
 .. [BenderOrszag] C M Bender & S A Orszag. *Advanced Mathematical Methods for
                   Scientists and Engineers*, Springer 1999
 

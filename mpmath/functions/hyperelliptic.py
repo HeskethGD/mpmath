@@ -22,6 +22,11 @@
 # reference sheet, which is matched against the y-coordinate supplied by the
 # caller. Optional reduction resolves the result in the real full-period
 # lattice and selects a centered fundamental-parallelotope representative.
+# Incomplete second-kind integrals follow the same paths. At the unique
+# odd-degree point at infinity, their Laurent principal parts in the
+# reciprocal local parameter are removed before quadrature; even-degree maps
+# retain the finite base point e0. Lattice reduction applies one shared cycle
+# shift to the first- and second-kind vectors.
 #
 # The associated second-kind differentials and period conventions are those
 # of Buchstaber, Enolskii and Leykin, "Hyperelliptic Kleinian Functions and
@@ -287,6 +292,100 @@ def _infinity_branch_integrals(ctx, roots, leading, count):
         for power in range(count))
 
 
+def _inverse_sqrt_product_series(ctx, ratios, order):
+    """Expand the inverse square root of a product of linear factors."""
+    result = [ctx.one] + [ctx.zero] * order
+    for ratio in ratios:
+        factor = [ctx.one]
+        for degree in range(1, order + 1):
+            factor.append(
+                -factor[-1] * (2 * degree - 1) * ratio / (2 * degree))
+        result = [ctx.fsum(
+            result[index] * factor[degree - index]
+            for index in range(degree + 1))
+            for degree in range(order + 1)]
+    return result
+
+
+def _infinity_second_kind_integrals(ctx, coefficients, roots, genus):
+    """Regularize second-kind integrals from infinity to the last root."""
+    terminal = roots[-1]
+    direction = _infinity_direction(ctx, roots)
+    root_direction = ctx.sqrt(direction)
+    root_count = len(roots)
+    root_leading = ctx.sqrt(coefficients[root_count])
+    ratios = tuple((terminal - root) / direction for root in roots)
+    denominator = root_leading * root_direction ** root_count
+    common_constant = -2 * direction / denominator
+
+    # With x = terminal + direction/t**2, every transformed differential is
+    # s**(-pole_order) H(s) dt, s=t**2, where H is analytic at zero. Removing
+    # the first ``pole_order`` Taylor coefficients gives the Hadamard finite
+    # part at infinity. Keeping |ratio*s| <= 1/16 makes the short Taylor tail
+    # used on the first subinterval gain at least four bits per term; the
+    # genus-dependent guard covers the product of all root factors.
+    pole_order = genus + 1
+    ratio_scale = max(abs(ratio) for ratio in ratios)
+    series_endpoint = min(
+        ctx.one, 1 / (4 * ctx.sqrt(ratio_scale)))
+    series_bits_per_term = 4
+    series_guard_terms = 12 + genus
+    series_order = pole_order + max(
+        series_guard_terms,
+        (ctx.prec + series_bits_per_term - 1) // series_bits_per_term)
+    inverse_root_series = _inverse_sqrt_product_series(
+        ctx, ratios, series_order)
+    results = []
+    for row in range(genus):
+        numerator = [ctx.zero] * (2 * genus + 1)
+        j = row + 1
+        for power in range(j, 2 * genus + 2 - j):
+            coefficient = ((power + 1 - j)
+                           * coefficients[power + 1 + j] / 4)
+            for degree in range(power + 1):
+                index = genus - 1 - power + degree + pole_order
+                numerator[index] += (
+                    coefficient * ctx.binomial(power, degree)
+                    * terminal ** degree * direction ** (power - degree))
+        analytic_series = [
+            common_constant * ctx.fsum(
+                numerator[index] * inverse_root_series[degree - index]
+                for index in range(min(degree, len(numerator) - 1) + 1))
+            for degree in range(series_order + 1)
+        ]
+        principal_part = ctx.fsum(
+            analytic_series[degree]
+            * series_endpoint ** (2 * (degree - pole_order) + 1)
+            / (2 * (degree - pole_order) + 1)
+            for degree in range(pole_order)
+        )
+        regular_part = ctx.fsum(
+            analytic_series[degree]
+            * series_endpoint ** (2 * (degree - pole_order) + 1)
+            / (2 * (degree - pole_order) + 1)
+            for degree in range(pole_order, series_order + 1)
+        )
+
+        def integrand(parameter):
+            if ctx.isinf(parameter):
+                return ctx.zero
+            square = parameter ** 2
+            x = terminal + direction / square
+            product = ctx.fprod(
+                ctx.sqrt(1 + ratio * square) for ratio in ratios)
+            polynomial = ctx.fsum(
+                (power + 1 - j) * coefficients[power + 1 + j]
+                * x ** power / 4
+                for power in range(j, 2 * genus + 2 - j))
+            return (common_constant * parameter ** (root_count - 3)
+                    * polynomial / product)
+
+        remainder = ctx.quad(
+            integrand, [series_endpoint, ctx.one, ctx.inf])
+        results.append(principal_part + regular_part + remainder)
+    return tuple(results)
+
+
 def _branch_abel_values(ctx, roots, intervals, leading, genus, even_degree):
     """Return deterministic Abel images of all finite branch points."""
     values = [None] * len(roots)
@@ -303,6 +402,29 @@ def _branch_abel_values(ctx, roots, intervals, leading, genus, even_degree):
             values[index] = tuple(
                 values[index + 1][power] - intervals[index][power]
                 for power in range(genus))
+    return tuple(values)
+
+
+def _branch_second_kind_values(ctx, coefficients, roots, intervals, genus,
+                               even_degree):
+    """Return compatible second-kind integrals at every branch point."""
+    second_intervals = tuple(tuple(
+        _second_kind_interval(ctx, coefficients, monomials, row, genus)
+        for row in range(genus)) for monomials in intervals)
+    values = [None] * len(roots)
+    if even_degree:
+        values[0] = (ctx.zero,) * genus
+        for index, interval in enumerate(second_intervals):
+            values[index + 1] = tuple(
+                values[index][row] + interval[row]
+                for row in range(genus))
+    else:
+        values[-1] = _infinity_second_kind_integrals(
+            ctx, coefficients, roots, genus)
+        for index in range(len(second_intervals) - 1, -1, -1):
+            values[index] = tuple(
+                values[index + 1][row] - second_intervals[index][row]
+                for row in range(genus))
     return tuple(values)
 
 
@@ -418,8 +540,8 @@ def _branch_target_integrals(ctx, roots, leading, branch_index, target,
         for power in range(count))
 
 
-def _reduce_abel_value(ctx, value, omega, omega_prime, target_eps):
-    """Reduce an Abelian vector to a centered period parallelotope."""
+def _abel_lattice_shift(ctx, value, omega, omega_prime, target_eps):
+    """Resolve an Abelian vector into the full period lattice."""
     genus = omega.rows
     periods = ctx.matrix(genus, 2 * genus)
     periods[:, :genus] = 2 * omega
@@ -446,7 +568,7 @@ def _reduce_abel_value(ctx, value, omega, omega_prime, target_eps):
         ctx.floor(coordinate + ctx.convert(0.5))
         for coordinate in coordinates
     ])
-    return value - periods * lattice_shift
+    return periods, lattice_shift
 
 
 def _second_kind_interval(ctx, coefficients, monomials, row, genus):
@@ -458,6 +580,27 @@ def _second_kind_interval(ctx, coefficients, monomials, row, genus):
         (power + 1 - j) * coefficients[power + 1 + j]
         * monomials[power] / 4
         for power in range(j, 2 * genus + 2 - j))
+
+
+def _second_kind_periods(ctx, coefficients, intervals, genus, even_degree,
+                         b_sign):
+    """Construct canonical second-kind half-period matrices."""
+    cycle_offset = 1 if even_degree else 0
+    eta = ctx.matrix(genus)
+    eta_prime = ctx.matrix(genus)
+    for row in range(genus):
+        second_intervals = [
+            _second_kind_interval(
+                ctx, coefficients, values, row, genus)
+            for values in intervals
+        ]
+        for column in range(genus):
+            eta[row, column] = -second_intervals[
+                2 * column + cycle_offset]
+            eta_prime[row, column] = -b_sign * ctx.fsum(
+                second_intervals[2 * edge + 1 + cycle_offset]
+                for edge in range(column, genus))
+    return eta, eta_prime
 
 
 def _symmetrize_period_matrix(ctx, matrix, target_eps, description):
@@ -570,9 +713,6 @@ def hyperelliptic_periods(ctx, coefficients, method="auto",
             ctx, coefficients, method)
         (coefficients, roots, unused_root_tolerance, use_real_method,
          genus, even_degree) = curve_data
-        # The first finite a-cycle starts at interval zero in odd degree and
-        # interval one in even degree, where e0 is itself a finite root.
-        cycle_offset = 1 if even_degree else 0
         monomial_count = 2 * genus + 1 if second_kind else genus
         intervals, b_sign = _hyperelliptic_intervals(
             ctx, coefficients, roots, use_real_method, monomial_count)
@@ -583,20 +723,9 @@ def hyperelliptic_periods(ctx, coefficients, method="auto",
             second_coefficients = coefficients
             if not even_degree:
                 second_coefficients += (ctx.zero,)
-            eta = ctx.matrix(genus)
-            eta_prime = ctx.matrix(genus)
-            for row in range(genus):
-                second_intervals = [
-                    _second_kind_interval(
-                        ctx, second_coefficients, values, row, genus)
-                    for values in intervals
-                ]
-                for column in range(genus):
-                    eta[row, column] = (
-                        -second_intervals[2 * column + cycle_offset])
-                    eta_prime[row, column] = -b_sign * ctx.fsum(
-                        second_intervals[2 * edge + 1 + cycle_offset]
-                        for edge in range(column, genus))
+            eta, eta_prime = _second_kind_periods(
+                ctx, second_coefficients, intervals, genus, even_degree,
+                b_sign)
             kappa = eta * inverse_omega
             _symmetrize_period_matrix(
                 ctx, kappa, target_eps, "kappa matrix")
@@ -610,7 +739,7 @@ def hyperelliptic_periods(ctx, coefficients, method="auto",
 
 @defun
 def hyperelliptic_abel_map(ctx, coefficients, target, method="auto",
-                           reduce=False):
+                           reduce=False, second_kind=False):
     r"""
     Evaluate the Abel map of points on a hyperelliptic curve.
 
@@ -630,6 +759,18 @@ def hyperelliptic_abel_map(ctx, coefficients, target, method="auto",
         \left(\frac{dx}{y},\frac{x\,dx}{y},\ldots,
         \frac{x^{g-1}dx}{y}\right)^T.
 
+    If ``second_kind=True``, the return value is ``(A, R)``, where ``A`` is
+    the same Abel image and
+
+    .. math::
+
+        R(D)=\sum_{j=1}^n\int_{P_0}^{P_j}dr
+
+    uses the canonical second-kind differential vector of [BEL1997]_,
+    equation (1.3). At the odd-degree point at infinity these integrals mean
+    their finite parts in a reciprocal local parameter. For even degree the
+    base point is finite and no regularization is needed.
+
     The base point :math:`P_0` is the unique point at infinity for an
     odd-degree curve and the first ordered branch point for an even-degree
     curve. Coordinates have the same order as the rows of ``omega`` returned
@@ -643,6 +784,11 @@ def hyperelliptic_abel_map(ctx, coefficients, target, method="auto",
     If ``reduce=True``, full periods are subtracted to put its real lattice
     coordinates in the centered parallelotope :math:`[-1/2,1/2)^{2g}`.
     This is fundamental-cell reduction, not a closest-vector calculation.
+    When second-kind values are requested, the same cycle shift is applied
+    to both vectors. With the half-period conventions of
+    :func:`~mpmath.hyperelliptic_periods`, subtracting
+    :math:`2\omega m+2\omega'n` from ``A`` adds
+    :math:`2\eta m+2\eta'n` to ``R``.
 
     **Example**
 
@@ -666,7 +812,10 @@ def hyperelliptic_abel_map(ctx, coefficients, target, method="auto",
     """
     target_eps = +ctx.eps
     quadrature_guard = 20
-    with ctx.extraprec(quadrature_guard):
+    # Higher monomials and the regularized Laurent terms can cancel in the
+    # canonical second-kind combinations, as they do for complete periods.
+    second_kind_cancellation_guard = 40 if second_kind else 0
+    with ctx.extraprec(quadrature_guard + second_kind_cancellation_guard):
         targets = _normalise_abel_targets(ctx, target)
         curve_data = _prepare_hyperelliptic_curve(
             ctx, coefficients, method)
@@ -684,32 +833,60 @@ def hyperelliptic_abel_map(ctx, coefficients, target, method="auto",
                     rel_eps=100 * target_eps, abs_eps=tolerance):
                 raise ValueError("target point must satisfy y**2 = P(x)")
 
+        second_coefficients = coefficients
+        if second_kind and not even_degree:
+            second_coefficients += (ctx.zero,)
+        monomial_count = 2 * genus + 1 if second_kind else genus
         intervals, b_sign = _hyperelliptic_intervals(
-            ctx, coefficients, roots, use_real_method, genus)
+            ctx, coefficients, roots, use_real_method, monomial_count)
         branch_values = _branch_abel_values(
             ctx, roots, intervals, coefficients[-1], genus, even_degree)
+        if second_kind:
+            second_branch_values = _branch_second_kind_values(
+                ctx, second_coefficients, roots, intervals, genus,
+                even_degree)
         result = ctx.zeros(genus, 1)
+        if second_kind:
+            second_result = ctx.zeros(genus, 1)
         for x, y in targets:
             branch_index = _target_branch_index(
                 ctx, x, y, roots, target_eps)
             if branch_index is None:
                 branch_index = _admissible_branch_vertex(
                     ctx, x, roots, target_eps)
-                final_integral = _branch_target_integrals(
+                final_monomials = _branch_target_integrals(
                     ctx, roots, coefficients[-1], branch_index, x, y,
-                    genus, target_eps)
+                    monomial_count, target_eps)
             else:
-                final_integral = (ctx.zero,) * genus
+                final_monomials = (ctx.zero,) * monomial_count
             for row in range(genus):
                 result[row] += (
-                    branch_values[branch_index][row] + final_integral[row])
+                    branch_values[branch_index][row]
+                    + final_monomials[row])
+                if second_kind:
+                    second_result[row] += (
+                        second_branch_values[branch_index][row]
+                        + _second_kind_interval(
+                            ctx, second_coefficients, final_monomials, row,
+                            genus))
 
         if reduce:
             omega, omega_prime, unused_tau, unused_inverse = (
                 _first_kind_periods(
                     ctx, intervals, genus, even_degree, b_sign, target_eps))
-            result = _reduce_abel_value(
+            periods, lattice_shift = _abel_lattice_shift(
                 ctx, result, omega, omega_prime, target_eps)
+            result -= periods * lattice_shift
+            if second_kind:
+                eta, eta_prime = _second_kind_periods(
+                    ctx, second_coefficients, intervals, genus, even_degree,
+                    b_sign)
+                second_periods = ctx.matrix(genus, 2 * genus)
+                second_periods[:, :genus] = 2 * eta
+                second_periods[:, genus:] = 2 * eta_prime
+                second_result += second_periods * lattice_shift
+    if second_kind:
+        return +result, +second_result
     return +result
 
 

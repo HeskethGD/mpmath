@@ -301,6 +301,63 @@ def kleinian_sigma(ctx, u, omega, tau, kappa, characteristic=None,
 
 
 @defun
+def kleinian_baker_akhiezer(ctx, u, abel, second_kind, omega, tau, kappa,
+                             characteristic=None):
+    r"""
+    Evaluate an unnormalized Kleinian Baker--Akhiezer function.
+
+    Given compatible first- and second-kind integral vectors
+    :math:`A(P)` and :math:`R(P)`, this evaluates
+
+    .. math::
+
+        \Psi(P,u)=\frac{\sigma(A(P)-u)}{\sigma(u)}
+        \exp\!\left(-R(P)^T u\right).
+
+    The result is defined up to a nonzero factor depending on :math:`P` but
+    not on ``u``. This is enough for logarithmic derivatives, ratios with a
+    fixed spectral point, and the associated differential equations.
+
+    ``abel`` and ``second_kind`` should normally be obtained together from
+    :func:`~mpmath.hyperelliptic_abel_map` with ``second_kind=True``. The
+    remaining inputs use the same conventions as
+    :func:`~mpmath.kleinian_sigma`; the multiplicative normalization of sigma
+    cancels in the quotient. The denominator is singular when ``u`` lies on
+    the sigma divisor.
+
+    The sign in the exponential converts the positive second-kind periods of
+    Christiansen, Eilbeck, Enolskii and Kostov to the classical BEL convention
+    used here, :math:`2\eta=-\oint_a dr`. See [CEEK2000]_, equations (3.21)
+    and (3.22).
+
+    For an odd-degree hyperelliptic curve,
+    :func:`~mpmath.hyperelliptic_abel_map` uses the unique point at infinity
+    required by this standard spectral interpretation. Its even-degree base
+    point is instead finite; constructing a BA function with an essential
+    singularity at either of the two even-degree points at infinity requires
+    an additional marked-infinity convention.
+
+    """
+    with ctx.extraprec(10):
+        omega_matrix = _normalise_kleinian_matrix(ctx, omega, "omega")
+        genus = omega_matrix.rows
+        u = _as_vector(ctx, u, "u", genus)
+        abel = _as_vector(ctx, abel, "abel", genus)
+        second_kind = _as_vector(
+            ctx, second_kind, "second_kind", genus)
+        shifted = tuple(abel[index] - u[index]
+                        for index in range(genus))
+        numerator = ctx.kleinian_sigma(
+            shifted, omega_matrix, tau, kappa, characteristic)
+        denominator = ctx.kleinian_sigma(
+            u, omega_matrix, tau, kappa, characteristic)
+        exponent = -ctx.fsum(
+            second_kind[index] * u[index] for index in range(genus))
+        result = numerator * ctx.exp(exponent) / denominator
+    return +result
+
+
+@defun
 def kleinian_sigma_jet(ctx, u, omega, tau, kappa, order,
                        characteristic=None, normalization="theta"):
     r"""

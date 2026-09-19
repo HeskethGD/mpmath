@@ -1,9 +1,9 @@
 import pytest
 
 from mpmath import (
-    hyperelliptic_abel_map, hyperelliptic_data, hyperelliptic_periods, kleinian_p,
-    kleinian_sigma, kleinian_sigma_jet, kleinian_zeta, mp, weierp,
-    weierpprime, weiersigma, weierzeta,
+    hyperelliptic_abel_map, hyperelliptic_data, hyperelliptic_periods,
+    kleinian_baker_akhiezer, kleinian_p, kleinian_sigma, kleinian_sigma_jet,
+    kleinian_zeta, mp, weierp, weierpprime, weiersigma, weierzeta,
 )
 from mpmath.functions import hyperelliptic
 
@@ -150,6 +150,170 @@ def test_hyperelliptic_abel_map_genus_one_inversion():
     assert mp.norm(hyperelliptic_abel_map(coefficients, ())) == 0
 
 
+def test_hyperelliptic_abel_map_second_kind_genus_one():
+    # BEL (1997), equation (1.3), gives dr=x*dx/y on
+    # y**2=4*x**3-4*x. Under x=wp(u), y=wp'(u), its finite-part integral
+    # from infinity is -zeta(u). This also pins the regularization constant.
+    mp.dps = 35
+    coefficients = [0, -4, 0, 4]
+    omega, tau, unused_kappa, unused_characteristic = hyperelliptic_data(
+        coefficients)
+    omega1 = omega[0, 0]
+    omega2 = (omega * tau)[0, 0]
+    u = mp.mpc('0.3', '0.07')
+    x = weierp(u, omega1=omega1, omega2=omega2)
+    y = weierpprime(u, omega1=omega1, omega2=omega2)
+    image, second = hyperelliptic_abel_map(
+        coefficients, (x, y), second_kind=True, reduce=True)
+    assert mp.almosteq(image[0], u)
+    assert mp.almosteq(
+        second[0], -weierzeta(u, omega1=omega1, omega2=omega2))
+
+    # At this branch point, fundamental-cell reduction changes the path by
+    # one a-cycle. The zeta identity verifies the coupled eta correction.
+    for reduce in (False, True):
+        image, second = hyperelliptic_abel_map(
+            coefficients, (1, 0), second_kind=True, reduce=reduce)
+        assert mp.almosteq(
+            second[0],
+            -weierzeta(image[0], omega1=omega1, omega2=omega2))
+
+    image, second = hyperelliptic_abel_map(
+        coefficients, (), second_kind=True)
+    assert mp.norm(image) == mp.norm(second) == 0
+
+
+def test_hyperelliptic_abel_map_second_kind_differential():
+    # Differentiating the incomplete integral must recover BEL (1997),
+    # equation (1.3). This genus-two case also exercises the higher-order
+    # finite part at the odd-degree point at infinity.
+    mp.dps = 35
+    coefficients = [0, 16, 0, -20, 0, 4]
+    second_coefficients = coefficients + [0]
+    x = mp.mpf(3)
+    step = mp.mpf('1e-12')
+
+    def point(value):
+        polynomial = mp.fsum(
+            coefficient * value ** degree
+            for degree, coefficient in enumerate(coefficients))
+        return value, mp.sqrt(polynomial)
+
+    unused_left, second_left = hyperelliptic_abel_map(
+        coefficients, point(x - step), second_kind=True)
+    unused_right, second_right = hyperelliptic_abel_map(
+        coefficients, point(x + step), second_kind=True)
+    y = point(x)[1]
+    for row in range(2):
+        j = row + 1
+        polynomial = mp.fsum(
+            (power + 1 - j) * second_coefficients[power + 1 + j]
+            * x ** power / 4
+            for power in range(j, 6 - j))
+        derivative = (second_right[row] - second_left[row]) / (2 * step)
+        assert abs(derivative - polynomial / y) < mp.mpf('1e-22')
+
+
+def test_hyperelliptic_abel_map_second_kind_even_degree():
+    # With even degree, both first- and second-kind maps use the finite branch
+    # point e0 as base point. The quartic therefore needs no finite-part
+    # regularization, and both returned vectors vanish there.
+    mp.dps = 30
+    coefficients = [24, 14, -13, -2, 1]
+    image, second = hyperelliptic_abel_map(
+        coefficients, (-3, 0), second_kind=True)
+    assert mp.norm(image) == mp.norm(second) == 0
+
+    x = mp.mpf(5)
+    y = mp.sqrt(mp.fsum(
+        coefficient * x ** degree
+        for degree, coefficient in enumerate(coefficients)))
+    image, second = hyperelliptic_abel_map(
+        coefficients, (x, y), second_kind=True, reduce=True)
+    assert all(mp.isfinite(value) for value in image)
+    assert all(mp.isfinite(value) for value in second)
+
+    step = mp.mpf('1e-10')
+
+    def second_value(value):
+        ordinate = mp.sqrt(mp.fsum(
+            coefficient * value ** degree
+            for degree, coefficient in enumerate(coefficients)))
+        unused_image, result = hyperelliptic_abel_map(
+            coefficients, (value, ordinate), second_kind=True)
+        return result[0]
+
+    derivative = (
+        second_value(x + step) - second_value(x - step)) / (2 * step)
+    expected = (coefficients[3] * x / 4
+                + coefficients[4] * x ** 2 / 2) / y
+    assert abs(derivative - expected) < mp.mpf('1e-18')
+
+
+def test_kleinian_baker_akhiezer_genus_one_schrodinger():
+    # The genus-one specialization of CEEK (2000), equations (3.21)-(3.22),
+    # is the classical one-gap Lame equation. The factor depending only on
+    # the spectral point cancels from this differential equation.
+    mp.dps = 30
+    coefficients = [0, -4, 0, 4]
+    omega, tau, kappa, characteristic = hyperelliptic_data(coefficients)
+    x = mp.mpf(2)
+    y = mp.sqrt(4 * x ** 3 - 4 * x)
+    abel, second = hyperelliptic_abel_map(
+        coefficients, (x, y), second_kind=True)
+
+    def baker(argument):
+        return kleinian_baker_akhiezer(
+            [argument], abel, second, omega, tau, kappa, characteristic)
+
+    u = mp.mpf('0.3')
+    value = baker(u)
+    potential = kleinian_p(
+        [u], omega, tau, kappa, (0, 0), characteristic)
+    eigenvalue = (mp.diff(baker, u, 2) - 2 * potential * value) / value
+    assert mp.almosteq(eigenvalue, x)
+
+
+def test_kleinian_baker_akhiezer_genus_two_schrodinger():
+    # CEEK (2000), equation (3.22), states
+    # (d_2**2-2*wp_22) Psi = (lambda+alpha_4/4) Psi. Here alpha_4=0.
+    # This tests the sigma quotient, the finite-part second-kind vector and
+    # the conversion from CEEK's positive eta convention together.
+    mp.dps = 30
+    coefficients = [0, 16, 0, -20, 0, 4]
+    omega, tau, kappa, characteristic = hyperelliptic_data(coefficients)
+    x = mp.mpf(3)
+    y = mp.sqrt(mp.fsum(
+        coefficient * x ** degree
+        for degree, coefficient in enumerate(coefficients)))
+    abel, second = hyperelliptic_abel_map(
+        coefficients, (x, y), second_kind=True)
+    u1 = mp.mpf('0.13')
+
+    def baker(u2):
+        return kleinian_baker_akhiezer(
+            [u1, u2], abel, second, omega, tau, kappa, characteristic)
+
+    u2 = mp.mpf('0.27')
+    value = baker(u2)
+    potential = kleinian_p(
+        [u1, u2], omega, tau, kappa, (1, 1), characteristic)
+    eigenvalue = (mp.diff(baker, u2, 2) - 2 * potential * value) / value
+    assert abs(eigenvalue - x) < mp.mpf('1e-27')
+
+
+def test_kleinian_baker_akhiezer_vector_validation():
+    omega = [[1]]
+    tau = [[1j]]
+    kappa = [[0]]
+    with pytest.raises(ValueError, match="abel must have length 1"):
+        kleinian_baker_akhiezer([0.2], [0.1, 0.2], [0.3],
+                                omega, tau, kappa)
+    with pytest.raises(ValueError, match="second_kind must have length 1"):
+        kleinian_baker_akhiezer([0.2], [0.1], [0.2, 0.3],
+                                omega, tau, kappa)
+
+
 def test_hyperelliptic_abel_map_sage_oracle():
     # SageMath 10.8 RiemannSurface.abel_jacobi at 130 bits, on the two
     # sheets above x=2 of y^2=4*x^3-4*x. Subtracting the two images removes
@@ -276,12 +440,12 @@ def test_hyperelliptic_abel_map_internal_failures(monkeypatch):
 
     zero = mp.zeros(1, 1)
     with pytest.raises(ValueError, match="full period lattice"):
-        hyperelliptic._reduce_abel_value(mp, zero, zero, zero, +mp.eps)
+        hyperelliptic._abel_lattice_shift(mp, zero, zero, zero, +mp.eps)
 
     monkeypatch.setattr(
         mp, "lu_solve", lambda matrix, vector: mp.matrix([0, 0]))
     with pytest.raises(ValueError, match="full period lattice"):
-        hyperelliptic._reduce_abel_value(
+        hyperelliptic._abel_lattice_shift(
             mp, mp.matrix([1]), mp.matrix([[1]]), mp.matrix([[1j]]),
             +mp.eps)
 
@@ -303,6 +467,11 @@ def test_hyperelliptic_endpoint_limits(monkeypatch):
             function(0) + function(mp.mpf('0.5')) + function(1)))
     values = hyperelliptic._infinity_branch_integrals(
         mp, (-2, -1, 0, 1, 2), 1, 2)
+    assert all(mp.isfinite(value) for value in values)
+    monkeypatch.setattr(
+        mp, "quad", lambda function, interval: function(mp.inf))
+    values = hyperelliptic._infinity_second_kind_integrals(
+        mp, (0, -4, 0, 4, 0), (-1, 0, 1), 1)
     assert all(mp.isfinite(value) for value in values)
     with pytest.raises(ValueError, match="branch-point path"):
         hyperelliptic._admissible_branch_vertex(mp, 0, (), +mp.eps)
