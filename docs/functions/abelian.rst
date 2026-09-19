@@ -149,6 +149,18 @@ functions, see [BakerAbel]_ and [BakerMultiply]_.
 
 .. autofunction:: mpmath.kleinian_sigma
 
+For an odd-degree hyperelliptic curve, the Baker--Akhiezer function is
+normalized at its unique point at infinity. In sigma notation this requires
+the factor :math:`\sigma_\sharp(A(P))`, because the one-point Abel image lies
+on the sigma divisor when :math:`g>1`, so :math:`\sigma(A(P))` itself
+vanishes. Following [Onishi2005]_, :math:`\sigma_\sharp` means sigma in genus
+one and the mixed derivative with zero-based multi-index
+``(0, 1, 0, 1, ...)`` in higher genus. It is the first nonvanishing
+theta-stratum derivative and fixes the spectral-point-dependent constant. In
+genus two this reduces to the :math:`\sigma_2(A(P))` normalization used in
+[BEH2005]_. The arbitrary-genus addition and prime-form identities of
+[GMO2012]_ provide the corresponding normalization check beyond genus two.
+
 .. autofunction:: mpmath.kleinian_baker_akhiezer
 
 .. autofunction:: mpmath.kleinian_sigma_jet

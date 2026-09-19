@@ -302,6 +302,69 @@ def test_kleinian_baker_akhiezer_genus_two_schrodinger():
     assert abs(eigenvalue - x) < mp.mpf('1e-27')
 
 
+def test_kleinian_baker_akhiezer_genus_two_product():
+    # Braden, Enolskii & Hone (2005), equations (3.3) and (3.8), normalize
+    # the two sheet-related Baker functions by sigma_2(A(P)) and give their
+    # product as the genus-two Bolza polynomial.
+    mp.dps = 30
+    coefficients = [0, 16, 0, -20, 0, 4]
+    omega, tau, kappa, characteristic = hyperelliptic_data(coefficients)
+    x = mp.mpf(3)
+    y = mp.sqrt(mp.fsum(
+        coefficient * x ** degree
+        for degree, coefficient in enumerate(coefficients)))
+    u = [mp.mpf('0.13'), mp.mpf('0.27')]
+    values = []
+    for ordinate in (y, -y):
+        abel, second = hyperelliptic_abel_map(
+            coefficients, (x, ordinate), second_kind=True)
+        values.append(kleinian_baker_akhiezer(
+            u, abel, second, omega, tau, kappa, characteristic))
+    wp_22, wp_12 = kleinian_p(
+        u, omega, tau, kappa, [(1, 1), (0, 1)], characteristic)
+    bolza = x ** 2 - wp_22 * x - wp_12
+    assert abs(values[0] * values[1] - bolza) < mp.mpf('1e-27')
+
+
+def test_sigma_stratum_derivatives_genus_three_addition():
+    # Gibbons, Matsutani & Onishi (2013), Proposition 7.9, gives the
+    # arbitrary-genus one-point-stratum addition formula. In genus three,
+    # sigma_natural1 = sigma_2 and sigma_natural2 = sigma_3. With mpmath's
+    # argument ordering its right side is x_v-x_u. This checks both the
+    # sigma-sharp derivative selected by the BA normalization and its scale.
+    mp.dps = 25
+    coefficients = [0, -144, 0, 196, 0, -56, 0, 4]
+    omega, tau, kappa, characteristic = hyperelliptic_data(coefficients)
+
+    def image(x):
+        y = mp.sqrt(mp.fsum(
+            coefficient * x ** degree
+            for degree, coefficient in enumerate(coefficients)))
+        return hyperelliptic_abel_map(coefficients, (x, y))
+
+    x_u = mp.mpf(4)
+    x_v = mp.mpf(5)
+    u = image(x_u)
+    v = image(x_v)
+
+    def derivative(argument, index):
+        jet = kleinian_sigma_jet(
+            argument, omega, tau, kappa, 1, characteristic,
+            normalization="hyperelliptic")
+        return jet[index]
+
+    plus = [u[index] + v[index] for index in range(3)]
+    minus = [u[index] - v[index] for index in range(3)]
+    sigma_natural2_product = (
+        derivative(plus, (0, 0, 1))
+        * derivative(minus, (0, 0, 1)))
+    sigma_sharp_product = (
+        derivative(u, (0, 1, 0)) ** 2
+        * derivative(v, (0, 1, 0)) ** 2)
+    result = sigma_natural2_product / sigma_sharp_product
+    assert abs(result - (x_v - x_u)) < mp.mpf('1e-22')
+
+
 def test_kleinian_baker_akhiezer_vector_validation():
     omega = [[1]]
     tau = [[1j]]

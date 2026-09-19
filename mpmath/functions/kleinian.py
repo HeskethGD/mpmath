@@ -191,6 +191,21 @@ def _sigma_normalization_constant(ctx, normalization, inverse_period,
     raise ValueError("normalization must be 'theta' or 'hyperelliptic'")
 
 
+def _sigma_sharp_index(genus):
+    """Return Onishi's sigma-sharp derivative as a zero-based multi-index."""
+    return tuple(index & 1 for index in range(genus))
+
+
+def _kleinian_sigma_sharp(ctx, u, omega, tau, kappa, characteristic):
+    """Evaluate the canonical sigma derivative on the one-point stratum."""
+    index = _sigma_sharp_index(len(u))
+    order = sum(index)
+    jet = ctx.kleinian_sigma_jet(
+        u, omega, tau, kappa, order, characteristic,
+        normalization="hyperelliptic")
+    return jet[index]
+
+
 def _quadratic_exponential_jet(ctx, u, kappa, multiindices):
     """Return derivatives of exp(u.T*kappa*u/2) for given multi-indices."""
     genus = len(u)
@@ -304,26 +319,35 @@ def kleinian_sigma(ctx, u, omega, tau, kappa, characteristic=None,
 def kleinian_baker_akhiezer(ctx, u, abel, second_kind, omega, tau, kappa,
                              characteristic=None):
     r"""
-    Evaluate an unnormalized Kleinian Baker--Akhiezer function.
+    Evaluate the normalized odd-degree Kleinian Baker--Akhiezer function.
 
     Given compatible first- and second-kind integral vectors
     :math:`A(P)` and :math:`R(P)`, this evaluates
 
     .. math::
 
-        \Psi(P,u)=\frac{\sigma(A(P)-u)}{\sigma(u)}
+        \Psi(P,u)=
+        \frac{\sigma(A(P)-u)}
+             {\sigma_\sharp(A(P))\sigma(u)}
         \exp\!\left(-R(P)^T u\right).
 
-    The result is defined up to a nonzero factor depending on :math:`P` but
-    not on ``u``. This is enough for logarithmic derivatives, ratios with a
-    fixed spectral point, and the associated differential equations.
+    Here :math:`\sigma_\sharp` is the first nonzero sigma derivative on the
+    one-point theta stratum: :math:`\sigma` in genus one and, in the present
+    coordinate order, the derivative with multi-index ``(0, 1, 0, 1, ...)``
+    in higher genus. This is Onishi's ``sigma_sharp`` normalization; in
+    genus two it is the conventional :math:`\sigma_2(A(P))` factor of the
+    normalized Baker function. It fixes the formerly arbitrary factor
+    depending on :math:`P` and gives the standard leading local behavior at
+    the unique point at infinity. See [Onishi2005]_, Definition 6.1 and
+    Proposition 6.6, and [BEH2005]_, equation (3.3).
 
     ``abel`` and ``second_kind`` should normally be obtained together from
     :func:`~mpmath.hyperelliptic_abel_map` with ``second_kind=True``. The
     remaining inputs use the same conventions as
-    :func:`~mpmath.kleinian_sigma`; the multiplicative normalization of sigma
-    cancels in the quotient. The denominator is singular when ``u`` lies on
-    the sigma divisor.
+    :func:`~mpmath.kleinian_sigma`. Sigma is evaluated with its canonical
+    ``normalization="hyperelliptic"``; this is required because its
+    multiplicative constant does not cancel from the normalized expression.
+    The denominator is singular when ``u`` lies on the sigma divisor.
 
     The sign in the exponential converts the positive second-kind periods of
     Christiansen, Eilbeck, Enolskii and Kostov to the classical BEL convention
@@ -348,12 +372,17 @@ def kleinian_baker_akhiezer(ctx, u, abel, second_kind, omega, tau, kappa,
         shifted = tuple(abel[index] - u[index]
                         for index in range(genus))
         numerator = ctx.kleinian_sigma(
-            shifted, omega_matrix, tau, kappa, characteristic)
+            shifted, omega_matrix, tau, kappa, characteristic,
+            normalization="hyperelliptic")
         denominator = ctx.kleinian_sigma(
-            u, omega_matrix, tau, kappa, characteristic)
+            u, omega_matrix, tau, kappa, characteristic,
+            normalization="hyperelliptic")
+        spectral_normalization = _kleinian_sigma_sharp(
+            ctx, abel, omega_matrix, tau, kappa, characteristic)
         exponent = -ctx.fsum(
             second_kind[index] * u[index] for index in range(genus))
-        result = numerator * ctx.exp(exponent) / denominator
+        result = (numerator * ctx.exp(exponent)
+                  / (spectral_normalization * denominator))
     return +result
 
 

@@ -45,6 +45,12 @@ References not listed here can be found in the source code.
              *American Mathematical Society Translations*, Series 2, 179
              (1997), 1--33. https://arxiv.org/abs/solv-int/9603005
 
+.. [BEH2005] H. W. Braden, V. Z. Enolskii & A. N. W. Hone.
+             "Bilinear Recurrences and Addition Formulae for Hyperelliptic
+             Sigma Functions". *Journal of Nonlinear Mathematical Physics*
+             12, Supplement 2 (2005), 46--62.
+             https://arxiv.org/abs/math/0501162
+
 .. [CEEK2000] P. L. Christiansen, J. C. Eilbeck, V. Z. Enolskii &
               N. A. Kostov. "Quasi-periodic and periodic solutions for
               systems of coupled nonlinear Schrödinger equations".
@@ -122,6 +128,16 @@ References not listed here can be found in the source code.
               Construction of Abelian Functions of Canonical Algebraic
               Curves". *CRM Proceedings and Lecture Notes* 25 (2000),
               121--138. https://doi.org/10.1090/crmp/025/12
+
+.. [GMO2012] J. Gibbons, S. Matsutani & Y. Onishi. "Relationship Between the
+             Prime Form and the Sigma Function for Some Cyclic (r,s)
+             Curves". *Journal of Physics A: Mathematical and Theoretical*
+             46 (2013), 175203. https://arxiv.org/abs/1204.3747
+
+.. [Onishi2005] Y. Onishi. "Determinant Expressions for Hyperelliptic
+                 Functions". *Proceedings of the Edinburgh Mathematical
+                 Society* 48(3) (2005), 705--742.
+                 https://arxiv.org/abs/math/0105189
 
 .. [DLMF] NIST Digital Library of Mathematical Functions. http://dlmf.nist.gov/
 
