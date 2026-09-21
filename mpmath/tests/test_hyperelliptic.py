@@ -365,6 +365,85 @@ def test_sigma_stratum_derivatives_genus_three_addition():
     assert abs(result - (x_v - x_u)) < mp.mpf('1e-22')
 
 
+def test_onishi_frobenius_stickelberger_genus_two():
+    # Onishi (2005), Theorem 7.2, with g=2 and n=4.  mpmath writes the
+    # curve as Y**2=P(x) and integrates dx/Y, while Onishi writes y**2=f(x)
+    # and integrates dx/(2*y), so P=4*f and the determinant uses y=Y/2.
+    # In the Schur normalization selected by normalization="hyperelliptic",
+    # the prefactor for this case is +1.
+    mp.dps = 30
+    coefficients = [0, 16, 0, -20, 0, 4]
+    omega, tau, kappa, characteristic = hyperelliptic_data(coefficients)
+
+    def polynomial(x):
+        return mp.fsum(coefficient * x ** degree
+                       for degree, coefficient in enumerate(coefficients))
+
+    points = []
+    images = []
+    for x in map(mp.mpf, (3, 4, 5, 6)):
+        big_y = mp.sqrt(polynomial(x))
+        points.append((x, big_y))
+        images.append(hyperelliptic_abel_map(
+            coefficients, (x, big_y)))
+
+    total = [mp.fsum(image[index] for image in images)
+             for index in range(2)]
+    numerator = kleinian_sigma(
+        total, omega, tau, kappa, characteristic,
+        normalization="hyperelliptic")
+    for left in range(4):
+        for right in range(left + 1, 4):
+            difference = [
+                images[left][index] - images[right][index]
+                for index in range(2)
+            ]
+            numerator *= kleinian_sigma(
+                difference, omega, tau, kappa, characteristic,
+                normalization="hyperelliptic")
+
+    denominator = mp.one
+    for image in images:
+        sigma_sharp = kleinian_sigma_jet(
+            image, omega, tau, kappa, 1, characteristic,
+            normalization="hyperelliptic")[(0, 1)]
+        denominator *= sigma_sharp ** 4
+
+    sigma_side = numerator / denominator
+    determinant_side = mp.det(mp.matrix([
+        [mp.one, x, x ** 2, big_y / 2] for x, big_y in points
+    ]))
+    assert abs(sigma_side - determinant_side) < (
+        mp.mpf('1e-25') * abs(determinant_side))
+
+
+def test_onishi_kiepert_genus_two():
+    # Onishi (2005), Theorem 8.3, specialized to g=2, n=3 and j=1.
+    # With D=d/du_1=Y*d/dx on Y**2=P(x), the confluent determinant is
+    # det[[D*x,D*x**2],[D**2*x,D**2*x**2]]=2*P(x)*Y.  The mpmath
+    # Schur-normalized prefactor is -1, giving -2*psi_3 on the sigma side.
+    mp.dps = 30
+    coefficients = [0, 16, 0, -20, 0, 4]
+    omega, tau, kappa, characteristic = hyperelliptic_data(coefficients)
+    x = mp.mpf(3)
+    polynomial = mp.fsum(
+        coefficient * x ** degree
+        for degree, coefficient in enumerate(coefficients))
+    big_y = mp.sqrt(polynomial)
+    image = hyperelliptic_abel_map(coefficients, (x, big_y))
+
+    sigma_three_u = kleinian_sigma(
+        [3 * value for value in image], omega, tau, kappa,
+        characteristic, normalization="hyperelliptic")
+    sigma_sharp = kleinian_sigma_jet(
+        image, omega, tau, kappa, 1, characteristic,
+        normalization="hyperelliptic")[(0, 1)]
+    sigma_side = -2 * sigma_three_u / sigma_sharp ** 9
+    determinant_side = 2 * polynomial * big_y
+    assert abs(sigma_side - determinant_side) < (
+        mp.mpf('1e-25') * abs(determinant_side))
+
+
 def test_kleinian_baker_akhiezer_vector_validation():
     omega = [[1]]
     tau = [[1j]]
