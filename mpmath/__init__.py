@@ -57,6 +57,7 @@ kleinian_p = mp.kleinian_p
 hyperelliptic_periods = mp.hyperelliptic_periods
 hyperelliptic_abel_map = mp.hyperelliptic_abel_map
 hyperelliptic_data = mp.hyperelliptic_data
+algebraic_curve_data = mp.algebraic_curve_data
 kleinj = mp.kleinj
 kleinjinv = mp.kleinjinv
 eta = mp.eta

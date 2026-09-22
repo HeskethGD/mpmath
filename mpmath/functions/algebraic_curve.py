@@ -9,6 +9,8 @@ from collections import namedtuple
 from fractions import Fraction
 from math import comb
 
+from .functions import defun
+
 
 _PlaneCurve = namedtuple(
     "_PlaneCurve", "terms x_degree y_degree")
@@ -23,8 +25,18 @@ _MonodromyData = namedtuple(
     "_MonodromyData",
     "base_point base_sheets branch_points permutations "
     "infinity_permutation ramification genus continuations")
+_BranchGenerator = namedtuple(
+    "_BranchGenerator",
+    "kind value permutation continuation radius")
+_OrderedMonodromyData = namedtuple(
+    "_OrderedMonodromyData",
+    "base_point base_sheets center branch_points product_generators "
+    "ribbon_generators ramification genus minimum_clearance")
 _PathIntegrals = namedtuple(
     "_PathIntegrals", "values max_sheet_residual segments")
+_IteratedPathIntegrals = namedtuple(
+    "_IteratedPathIntegrals",
+    "values iterated max_sheet_residual segments")
 _PlaneCurvePlace = namedtuple(
     "_PlaneCurvePlace", "x y")
 _LiftedPlaneCurvePath = namedtuple(
@@ -56,10 +68,169 @@ _PlaneCurvePeriods = namedtuple(
     "_PlaneCurvePeriods",
     "periods a_periods b_periods tau symmetry_residual "
     "imaginary_eigenvalues max_sheet_residual")
+AlgebraicCurveData = namedtuple(
+    "AlgebraicCurveData",
+    "genus omega omega_prime tau eta eta_prime kappa base_place "
+    "characteristic diagnostics")
+_AlgebraicCurveDiagnostics = namedtuple(
+    "_AlgebraicCurveDiagnostics",
+    "curve branch_points resultant monodromy graph canonical_cycles "
+    "periods second_periods symmetry_residual kappa_symmetry_residual "
+    "imaginary_eigenvalues max_sheet_residual")
 
 
 # Curve representation and evaluation
 # -----------------------------------
+
+def _polynomial_trim(ctx, coefficients, tolerance=None):
+    """Trim an ascending univariate polynomial."""
+    coefficients = list(coefficients)
+    if tolerance is None:
+        while len(coefficients) > 1 and not coefficients[-1]:
+            coefficients.pop()
+    else:
+        scale = max([ctx.one] + [abs(value) for value in coefficients])
+        while (len(coefficients) > 1
+               and abs(coefficients[-1]) <= tolerance * scale):
+            coefficients.pop()
+    return tuple(coefficients or (ctx.zero,))
+
+
+def _polynomial_add(ctx, left, right, right_scale=1):
+    size = max(len(left), len(right))
+    result = [ctx.zero] * size
+    for index in range(size):
+        result[index] = (
+            (left[index] if index < len(left) else ctx.zero)
+            + right_scale * (
+                right[index] if index < len(right) else ctx.zero))
+    return _polynomial_trim(ctx, result)
+
+
+def _polynomial_multiply(ctx, left, right):
+    result = [ctx.zero] * (len(left) + len(right) - 1)
+    for left_degree, left_coefficient in enumerate(left):
+        for right_degree, right_coefficient in enumerate(right):
+            result[left_degree + right_degree] += (
+                left_coefficient * right_coefficient)
+    return _polynomial_trim(ctx, result)
+
+
+def _polynomial_derivative(ctx, coefficients):
+    """Differentiate an ascending univariate polynomial."""
+    if len(coefficients) <= 1:
+        return (ctx.zero,)
+    return _polynomial_trim(ctx, tuple(
+        degree * coefficients[degree]
+        for degree in range(1, len(coefficients))))
+
+
+def _polynomial_divmod(ctx, dividend, divisor, tolerance=None):
+    """Divide ascending polynomials, trimming numerical roundoff."""
+    if tolerance is None:
+        tolerance = 100 * ctx.eps
+    dividend = list(_polynomial_trim(ctx, dividend, tolerance))
+    divisor = _polynomial_trim(ctx, divisor, tolerance)
+    if len(divisor) == 1 and not divisor[0]:
+        raise ZeroDivisionError("polynomial division by zero")
+    quotient = [ctx.zero] * max(1, len(dividend) - len(divisor) + 1)
+    while len(dividend) >= len(divisor):
+        degree = len(dividend) - len(divisor)
+        coefficient = dividend[-1] / divisor[-1]
+        quotient[degree] += coefficient
+        for index, value in enumerate(divisor):
+            dividend[index + degree] -= coefficient * value
+        dividend = list(_polynomial_trim(ctx, dividend, tolerance))
+        if len(dividend) == 1 and abs(dividend[0]) <= tolerance:
+            dividend[0] = ctx.zero
+            break
+    return (_polynomial_trim(ctx, quotient, tolerance),
+            _polynomial_trim(ctx, dividend, tolerance))
+
+
+def _polynomial_exact_quotient(ctx, dividend, divisor):
+    tolerance = ctx.sqrt(ctx.eps)
+    quotient, remainder = _polynomial_divmod(
+        ctx, dividend, divisor, tolerance=tolerance)
+    scale = max([ctx.one] + [abs(value) for value in dividend])
+    if max(abs(value) for value in remainder) > tolerance * scale:
+        raise ValueError("polynomial Bareiss division was not exact")
+    return quotient
+
+
+def _polynomial_monic(ctx, coefficients, tolerance):
+    coefficients = _polynomial_trim(ctx, coefficients, tolerance)
+    if len(coefficients) == 1 and not coefficients[0]:
+        return coefficients
+    leading = coefficients[-1]
+    return tuple(value / leading for value in coefficients)
+
+
+def _polynomial_gcd(ctx, left, right):
+    """Return a numerical monic GCD of ascending polynomials."""
+    tolerance = ctx.sqrt(ctx.eps)
+    left = _polynomial_monic(ctx, left, tolerance)
+    right = _polynomial_monic(ctx, right, tolerance)
+    while not (len(right) == 1 and not right[0]):
+        unused, remainder = _polynomial_divmod(
+            ctx, left, right, tolerance=tolerance)
+        scale = max([ctx.one] + [abs(value) for value in left])
+        if max(abs(value) for value in remainder) <= tolerance * scale:
+            remainder = (ctx.zero,)
+        left, right = right, _polynomial_monic(
+            ctx, remainder, tolerance)
+    return left
+
+
+def _polynomial_squarefree_part(ctx, coefficients):
+    """Remove repeated factors from a univariate polynomial."""
+    tolerance = ctx.sqrt(ctx.eps)
+    coefficients = _polynomial_trim(ctx, coefficients, tolerance)
+    derivative = _polynomial_derivative(ctx, coefficients)
+    divisor = _polynomial_gcd(ctx, coefficients, derivative)
+    quotient, remainder = _polynomial_divmod(
+        ctx, coefficients, divisor, tolerance=tolerance)
+    scale = max([ctx.one] + [abs(value) for value in coefficients])
+    if max(abs(value) for value in remainder) > tolerance * scale:
+        raise ValueError("failed to form squarefree critical polynomial")
+    return _polynomial_monic(ctx, quotient, tolerance)
+
+
+def _polynomial_determinant(ctx, matrix):
+    """Return a polynomial-matrix determinant by Bareiss elimination."""
+    matrix = [[tuple(entry) for entry in row] for row in matrix]
+    size = len(matrix)
+    if not size or any(len(row) != size for row in matrix):
+        raise ValueError("polynomial determinant requires a square matrix")
+    sign = 1
+    previous = (ctx.one,)
+    for pivot_index in range(size - 1):
+        pivot_row = next((row for row in range(pivot_index, size)
+                          if any(matrix[row][pivot_index])), None)
+        if pivot_row is None:
+            return (ctx.zero,)
+        if pivot_row != pivot_index:
+            matrix[pivot_index], matrix[pivot_row] = (
+                matrix[pivot_row], matrix[pivot_index])
+            sign = -sign
+        pivot = matrix[pivot_index][pivot_index]
+        for row in range(pivot_index + 1, size):
+            for column in range(pivot_index + 1, size):
+                numerator = _polynomial_add(
+                    ctx,
+                    _polynomial_multiply(ctx, pivot, matrix[row][column]),
+                    _polynomial_multiply(
+                        ctx, matrix[row][pivot_index],
+                        matrix[pivot_index][column]),
+                    right_scale=-1)
+                matrix[row][column] = (
+                    numerator if pivot_index == 0 else
+                    _polynomial_exact_quotient(ctx, numerator, previous))
+        previous = pivot
+    determinant = matrix[-1][-1]
+    if sign < 0:
+        determinant = tuple(-value for value in determinant)
+    return _polynomial_trim(ctx, determinant)
 
 def _prepare_plane_curve(ctx, coefficients):
     """Return a validated sparse bivariate polynomial.
@@ -98,6 +269,58 @@ def _prepare_plane_curve(ctx, coefficients):
     if not y_degree:
         raise ValueError("the plane curve must depend on y")
     return _PlaneCurve(tuple(terms), x_degree, y_degree)
+
+
+def _plane_curve_resultant_y(ctx, curve):
+    """Return Res_y(F,F_y) as ascending coefficients in x."""
+    degree = curve.y_degree
+    coefficients = [[ctx.zero] * (curve.x_degree + 1)
+                    for unused in range(degree + 1)]
+    for x_power, y_power, coefficient in curve.terms:
+        coefficients[y_power][x_power] = coefficient
+    coefficients = [
+        _polynomial_trim(ctx, polynomial)
+        for polynomial in reversed(coefficients)
+    ]
+    derivative = [
+        tuple((degree - index) * value for value in polynomial)
+        for index, polynomial in enumerate(coefficients[:-1])
+    ]
+    derivative_degree = degree - 1
+    size = degree + derivative_degree
+    zero = (ctx.zero,)
+    matrix = []
+    for shift in range(derivative_degree):
+        row = [zero] * size
+        row[shift:shift + degree + 1] = coefficients
+        matrix.append(row)
+    for shift in range(degree):
+        row = [zero] * size
+        row[shift:shift + derivative_degree + 1] = derivative
+        matrix.append(row)
+    return _polynomial_determinant(ctx, matrix)
+
+
+def _plane_curve_critical_values(ctx, curve):
+    """Return distinct finite candidates from the y-resultant."""
+    resultant = _plane_curve_resultant_y(ctx, curve)
+    if len(resultant) <= 1:
+        raise ValueError("the projection has no finite critical polynomial")
+    squarefree = _polynomial_squarefree_part(ctx, resultant)
+    try:
+        roots = tuple(ctx.polyroots(
+            squarefree, maxsteps=1000, error=False))
+    except Exception as exc:
+        raise ValueError("failed to resolve finite critical values") from exc
+    scale = max([ctx.one] + [abs(root) for root in roots])
+    tolerance = ctx.sqrt(ctx.eps) * scale
+    distinct = []
+    for root in sorted(roots, key=lambda value: (
+            ctx.re(value), ctx.im(value))):
+        if not distinct or min(abs(root - value)
+                               for value in distinct) > tolerance:
+            distinct.append(root)
+    return tuple(distinct), resultant
 
 
 def _evaluate_plane_polynomial(ctx, curve, x, y):
@@ -315,6 +538,93 @@ def _real_branch_loop_path(ctx, base_point, branch_point, branch_points,
             ctx.j * (-ctx.pi / 2 + 2 * ctx.pi * step / circle_steps))
         for step in range(1, circle_steps + 1))
     return stem + circle + tuple(reversed(stem[:-1]))
+
+
+def _point_segment_distance(ctx, point, start, end):
+    """Return the Euclidean distance from a complex point to a segment."""
+    direction = end - start
+    if not direction:
+        return abs(point - start)
+    parameter = ctx.re(
+        (point - start) * ctx.conj(direction)) / abs(direction)**2
+    parameter = max(ctx.zero, min(ctx.one, parameter))
+    return abs(point - (start + parameter * direction))
+
+
+def _radial_branch_geometry(ctx, branch_points, base_point=None):
+    """Choose a guarded exterior base point and radial loop radii."""
+    points = tuple(ctx.convert(point) for point in branch_points)
+    if not points:
+        raise ValueError("at least one finite branch point is required")
+    if any(not ctx.isfinite(point) for point in points):
+        raise ValueError("branch points must be finite")
+    if len(set(points)) != len(points):
+        raise ValueError("branch points must be distinct")
+
+    center = ctx.fsum(points) / len(points)
+    spread = max(abs(point - center) for point in points)
+    if not spread:
+        spread = max(ctx.one, abs(center))
+
+    def clearance(candidate):
+        if candidate in points or abs(candidate - center) <= spread:
+            return ctx.zero
+        distances = [abs(candidate - point) for point in points]
+        for target_index, target in enumerate(points):
+            for other_index, other in enumerate(points):
+                if target_index == other_index:
+                    continue
+                distances.append(_point_segment_distance(
+                    ctx, other, candidate, target))
+        return min(distances)
+
+    if base_point is None:
+        outer_radius = 3 * spread
+        candidates = tuple(
+            center + outer_radius * ctx.exp(
+                2j * ctx.pi * (2 * index + 1) / 32)
+            for index in range(16)
+        )
+        base_point = max(candidates, key=clearance)
+    else:
+        base_point = ctx.convert(base_point)
+        if not ctx.isfinite(base_point):
+            raise ValueError("base point must be finite")
+    minimum_clearance = clearance(base_point)
+    scale = max(spread, abs(base_point - center))
+    if minimum_clearance <= ctx.sqrt(ctx.eps) * scale:
+        raise ValueError("radial branch paths have insufficient clearance")
+
+    radii = []
+    for index, point in enumerate(points):
+        distances = [abs(point - base_point)]
+        distances.extend(abs(point - other)
+                         for other in points if other != point)
+        distances.extend(
+            _point_segment_distance(ctx, point, base_point, other)
+            for other_index, other in enumerate(points)
+            if other_index != index)
+        radii.append(min(distances) / 5)
+    return base_point, center, tuple(radii), minimum_clearance
+
+
+def _radial_branch_loop_path(
+        ctx, base_point, branch_point, radius, circle_steps=24):
+    """Return a positive lollipop loop on one guarded radial spoke."""
+    if not isinstance(circle_steps, int) or circle_steps < 8:
+        raise ValueError("circle_steps must be an integer at least 8")
+    radius = ctx.convert(radius)
+    if not ctx.isfinite(radius) or radius <= 0:
+        raise ValueError("radius must be finite and positive")
+    direction = (base_point - branch_point) / abs(
+        base_point - branch_point)
+    approach = branch_point + radius * direction
+    angle = ctx.arg(direction)
+    circle = tuple(
+        branch_point + radius * ctx.exp(
+            ctx.j * (angle + 2 * ctx.pi * step / circle_steps))
+        for step in range(1, circle_steps + 1))
+    return (base_point, approach) + circle + (base_point,)
 
 
 # Sheet continuation
@@ -903,6 +1213,108 @@ def _integrate_plane_curve_path(
 
     return _PathIntegrals(
         values=tuple(values),
+        max_sheet_residual=max_sheet_residual,
+        segments=len(continuation.path) - 1,
+    )
+
+
+def _gauss_indefinite_matrix(ctx, parameters):
+    """Integrate the Lagrange basis from zero to each Gauss node."""
+    parameters = tuple(parameters)
+    result = []
+    for upper in parameters:
+        row = []
+        for index, node in enumerate(parameters):
+            polynomial = (ctx.one,)
+            denominator = ctx.one
+            for other_index, other in enumerate(parameters):
+                if other_index == index:
+                    continue
+                polynomial = _polynomial_multiply(
+                    ctx, polynomial, (-other, ctx.one))
+                denominator *= node - other
+            row.append(ctx.fsum(
+                coefficient * upper ** (degree + 1)
+                / ((degree + 1) * denominator)
+                for degree, coefficient in enumerate(polynomial)))
+        result.append(tuple(row))
+    return tuple(result)
+
+
+def _integrate_plane_curve_path_iterated(
+        ctx, curve, continuation, differentials, sheet=0,
+        quadrature_order=None):
+    """Integrate forms and their ordered pairwise iterated integrals."""
+    differentials = tuple(differentials)
+    if not differentials or any(not callable(value)
+                                for value in differentials):
+        raise ValueError("differentials must be a sequence of callables")
+    if not isinstance(sheet, int) or not 0 <= sheet < curve.y_degree:
+        raise ValueError("sheet must index the initial fibre")
+    if quadrature_order is None:
+        quadrature_order = max(12, ctx.dps // 2)
+    if not isinstance(quadrature_order, int) or quadrature_order < 2:
+        raise ValueError("quadrature_order must be an integer at least 2")
+
+    nodes, weights = ctx.gauss_quadrature(
+        quadrature_order, "legendre")
+    parameters = tuple((nodes[index] + 1) / 2
+                       for index in range(quadrature_order))
+    weights = tuple(weights[index] / 2
+                    for index in range(quadrature_order))
+    indefinite = _gauss_indefinite_matrix(ctx, parameters)
+    count = len(differentials)
+    values = [ctx.zero] * count
+    iterated = [[ctx.zero] * count for unused in range(count)]
+    max_sheet_residual = ctx.zero
+
+    for segment in range(len(continuation.path) - 1):
+        left_x = continuation.path[segment]
+        right_x = continuation.path[segment + 1]
+        delta_x = right_x - left_x
+        if not delta_x:
+            continue
+        left_fibre = continuation.fibres[segment]
+        right_fibre = continuation.fibres[segment + 1]
+        samples = []
+        for parameter in parameters:
+            x = left_x + parameter * delta_x
+            predictions = tuple(
+                left + parameter * (right - left)
+                for left, right in zip(left_fibre, right_fibre))
+            candidates = _plane_curve_sheets(
+                ctx, curve, x, roots_init=predictions)
+            assignment = _minimum_cost_assignment(
+                ctx, predictions, candidates)
+            y = candidates[assignment[sheet]]
+            max_sheet_residual = max(
+                max_sheet_residual,
+                abs(_evaluate_plane_polynomial(ctx, curve, x, y)))
+            samples.append(tuple(
+                differential(x, y) for differential in differentials))
+
+        local_primitives = tuple(tuple(
+            delta_x * ctx.fsum(
+                indefinite[node_index][sample_index]
+                * samples[sample_index][form_index]
+                for sample_index in range(quadrature_order))
+            for form_index in range(count))
+            for node_index in range(quadrature_order))
+        for outer in range(count):
+            for inner in range(count):
+                iterated[outer][inner] += delta_x * ctx.fsum(
+                    weights[node_index] * samples[node_index][outer]
+                    * (values[inner]
+                       + local_primitives[node_index][inner])
+                    for node_index in range(quadrature_order))
+        for form_index in range(count):
+            values[form_index] += delta_x * ctx.fsum(
+                weights[node_index] * samples[node_index][form_index]
+                for node_index in range(quadrature_order))
+
+    return _IteratedPathIntegrals(
+        values=tuple(values),
+        iterated=tuple(tuple(row) for row in iterated),
         max_sheet_residual=max_sheet_residual,
         segments=len(continuation.path) - 1,
     )
@@ -1556,12 +1968,13 @@ def _continue_graph_cycle_word(ctx, branch_continuations, word):
     return result
 
 
-def _numerical_graph_cycles(ctx, graph, monodromy):
-    """Lift every fundamental graph cycle to a numerical path chain."""
-    expected = _monodromy_graph_permutations(monodromy)
-    if graph.permutations != expected:
+def _numerical_graph_cycles_from_continuations(
+        ctx, graph, branch_continuations):
+    """Lift graph cycles using continuations in the graph's ribbon order."""
+    branch_continuations = tuple(branch_continuations)
+    if tuple(continuation.permutation
+             for continuation in branch_continuations) != graph.permutations:
         raise ValueError("graph and numerical monodromy systems differ")
-    branch_continuations = _monodromy_branch_continuations(ctx, monodromy)
     words = tuple(_graph_cycle_word(graph, cycle)
                   for cycle in graph.cycles)
     chains = []
@@ -1578,6 +1991,43 @@ def _numerical_graph_cycles(ctx, graph, monodromy):
         words=words,
         chains=tuple(chains),
     )
+
+
+def _numerical_graph_cycles(ctx, graph, monodromy):
+    """Lift cycles from a finite-then-infinity monodromy system."""
+    expected = _monodromy_graph_permutations(monodromy)
+    if graph.permutations != expected:
+        raise ValueError("graph and numerical monodromy systems differ")
+    branch_continuations = _monodromy_branch_continuations(ctx, monodromy)
+    if len(branch_continuations) != len(expected):
+        # The only omitted continuation is an unramified identity at infinity.
+        branch_continuations = branch_continuations[:-1]
+    return _numerical_graph_cycles_from_continuations(
+        ctx, graph, branch_continuations)
+
+
+def _ordered_monodromy_graph(monodromy):
+    """Construct a graph from explicitly ribbon-ordered generators."""
+    identity = tuple(range(len(monodromy.base_sheets)))
+    permutations = tuple(
+        generator.permutation for generator in monodromy.ribbon_generators
+        if generator.permutation != identity)
+    return _lifted_monodromy_graph(permutations)
+
+
+def _numerical_ordered_graph_cycles(ctx, graph, monodromy):
+    """Lift graph cycles using explicitly ribbon-ordered continuations."""
+    identity = tuple(range(len(monodromy.base_sheets)))
+    generators = tuple(
+        generator for generator in monodromy.ribbon_generators
+        if generator.permutation != identity)
+    expected = tuple(generator.permutation for generator in generators)
+    if graph.permutations != expected:
+        raise ValueError("graph and ordered monodromy systems differ")
+    continuations = tuple(
+        generator.continuation for generator in generators)
+    return _numerical_graph_cycles_from_continuations(
+        ctx, graph, continuations)
 
 
 def _transform_lifted_path_chains(chains, transformation):
@@ -1597,6 +2047,651 @@ def _transform_lifted_path_chains(chains, transformation):
                 for term in chain.terms)
         transformed.append(_prepare_lifted_path_chain(terms))
     return tuple(transformed)
+
+
+def _shortest_monodromy_word(permutations, start, target):
+    """Return generator indices carrying one sheet label to another."""
+    pending = [(start, ())]
+    visited = {start}
+    while pending:
+        sheet, word = pending.pop(0)
+        if sheet == target:
+            return word
+        for index, permutation in enumerate(permutations):
+            image = permutation[sheet]
+            if image not in visited:
+                visited.add(image)
+                pending.append((image, word + (index,)))
+    raise ValueError("monodromy does not connect the requested sheets")
+
+
+def _concatenate_continuation_sequence(ctx, continuations):
+    result = None
+    for continuation in continuations:
+        result = (continuation if result is None else
+                  _concatenate_plane_curve_continuations(
+                      ctx, result, continuation))
+    return result
+
+
+def _chain_as_common_base_loop(ctx, chain, monodromy):
+    """Realize an integral cycle chain as one loop based on sheet zero."""
+    generators = tuple(monodromy.ribbon_generators)
+    permutations = tuple(
+        generator.permutation for generator in generators)
+    loops = []
+    for term in chain.terms:
+        word = _shortest_monodromy_word(
+            permutations, 0, term.sheet)
+        connector = _concatenate_continuation_sequence(
+            ctx, tuple(generators[index].continuation for index in word))
+        pieces = []
+        if connector is not None:
+            pieces.append(connector)
+        pieces.append(term.continuation)
+        if connector is not None:
+            pieces.append(_reverse_plane_curve_continuation(ctx, connector))
+        loop = _concatenate_continuation_sequence(ctx, pieces)
+        if term.coefficient < 0:
+            loop = _reverse_plane_curve_continuation(ctx, loop)
+        loops.extend((loop,) * abs(term.coefficient))
+    if not loops:
+        raise ValueError("canonical cycle must not be empty")
+    result = _concatenate_continuation_sequence(ctx, loops)
+    start, end = _lifted_path_endpoints(_LiftedPathTerm(1, result, 0))
+    if not _same_numerical_place(ctx, start, end):
+        raise ValueError("canonical cycle did not close at the common base")
+    return result
+
+
+def _radial_plane_curve_monodromy(
+        ctx, curve, branch_points, base_point=None, circle_steps=24,
+        max_refinements=12):
+    """Compute an ordered monodromy system for complex branch values.
+
+    Finite positive loops use guarded radial spokes from an exterior base
+    point.  Their counter-clockwise product order and clockwise outward
+    ribbon order are retained separately.  A clockwise outer circle supplies
+    the positive generator at infinity geometrically.
+    """
+    points = tuple(ctx.convert(point) for point in branch_points)
+    base_point, center, radii, minimum_clearance = (
+        _radial_branch_geometry(ctx, points, base_point=base_point))
+    base_sheets = _ordered_plane_curve_sheets(ctx, curve, base_point)
+    geometry = tuple(zip(points, radii))
+    product_geometry = tuple(sorted(
+        geometry, key=lambda item: ctx.arg(item[0] - base_point)))
+    finite_generators = []
+    for point, radius in product_geometry:
+        path = _radial_branch_loop_path(
+            ctx, base_point, point, radius, circle_steps=circle_steps)
+        continuation = _continue_plane_curve_sheets_adaptive(
+            ctx, curve, path, initial_sheets=base_sheets,
+            max_refinements=max_refinements)
+        if continuation.permutation is None:
+            raise ValueError("radial monodromy paths must be closed")
+        if continuation.permutation == tuple(range(curve.y_degree)):
+            raise ValueError("finite branch loop has identity monodromy")
+        finite_generators.append(_BranchGenerator(
+            kind="finite",
+            value=point,
+            permutation=continuation.permutation,
+            continuation=continuation,
+            radius=radius,
+        ))
+
+    outer_steps = 4 * circle_steps
+    outer_vector = base_point - center
+    infinity_path = tuple(
+        center + outer_vector * ctx.exp(
+            -2 * ctx.j * ctx.pi * step / outer_steps)
+        for step in range(outer_steps + 1))
+    infinity_continuation = _continue_plane_curve_sheets_adaptive(
+        ctx, curve, infinity_path, initial_sheets=base_sheets,
+        max_refinements=max_refinements)
+    if infinity_continuation.permutation is None:
+        raise ValueError("infinity monodromy path must be closed")
+    infinity = _BranchGenerator(
+        kind="infinity",
+        value=ctx.inf,
+        permutation=infinity_continuation.permutation,
+        continuation=infinity_continuation,
+        radius=abs(outer_vector),
+    )
+    product_generators = tuple(finite_generators) + (infinity,)
+    product = tuple(range(curve.y_degree))
+    for generator in product_generators:
+        product = _compose_permutations(generator.permutation, product)
+    if product != tuple(range(curve.y_degree)):
+        raise ValueError("radial monodromy product is not the identity")
+
+    ribbon_generators = tuple(reversed(finite_generators)) + (infinity,)
+    permutations = tuple(
+        generator.permutation for generator in ribbon_generators)
+    if len(_monodromy_orbit(permutations)) != curve.y_degree:
+        raise ValueError("the monodromy action is not transitive")
+    genus, ramification = _riemann_hurwitz_genus(
+        curve.y_degree, permutations)
+    return _OrderedMonodromyData(
+        base_point=base_point,
+        base_sheets=base_sheets,
+        center=center,
+        branch_points=tuple(
+            generator.value for generator in finite_generators),
+        product_generators=product_generators,
+        ribbon_generators=ribbon_generators,
+        ramification=ramification,
+        genus=genus,
+        minimum_clearance=minimum_clearance,
+    )
+
+
+def _normalise_algebraic_curve_input(ctx, curve):
+    """Return ``(prepared_curve, hyperelliptic_coefficients_or_none)``."""
+    if hasattr(curve, "items"):
+        return _prepare_plane_curve(ctx, curve), None
+    try:
+        values = tuple(curve)
+    except TypeError:
+        raise ValueError("curve must be coefficients or sparse plane terms")
+    if not values:
+        raise ValueError("curve must not be empty")
+    if all(isinstance(term, (tuple, list)) and len(term) == 3
+           for term in values):
+        terms = {}
+        for x_power, y_power, coefficient in values:
+            try:
+                coefficient = ctx.convert(coefficient)
+            except (TypeError, ValueError):
+                raise ValueError("polynomial coefficients must be numbers")
+            key = (x_power, y_power)
+            terms[key] = terms.get(key, ctx.zero) + coefficient
+        return _prepare_plane_curve(ctx, terms), None
+    coefficients = tuple(ctx.convert(value) for value in values)
+    terms = {(0, 2): ctx.one}
+    terms.update({
+        (degree, 0): -coefficient
+        for degree, coefficient in enumerate(coefficients)
+        if coefficient
+    })
+    return _prepare_plane_curve(ctx, terms), coefficients
+
+
+def _period_matrix_from_columns(ctx, columns, start, count, genus):
+    return ctx.matrix([
+        [columns[column][start + row] for column in range(2 * genus)]
+        for row in range(count)
+    ])
+
+
+def _normalised_differentials(ctx, differentials, a_periods):
+    inverse = a_periods ** -1
+    result = []
+    for row in range(len(differentials)):
+        coefficients = tuple(
+            inverse[row, column]
+            for column in range(len(differentials)))
+
+        def differential(x, y, coefficients=coefficients):
+            return ctx.fsum(
+                coefficient * form(x, y)
+                for coefficient, form in zip(coefficients, differentials))
+
+        result.append(differential)
+    return tuple(result)
+
+
+def _riemann_constant_vector(
+        ctx, curve, monodromy, canonical_cycles, differentials,
+        a_periods, tau, quadrature_order):
+    """Evaluate the Riemann-constant contour formula at the cycle base."""
+    genus = len(differentials)
+    normalised = _normalised_differentials(
+        ctx, differentials, a_periods)
+    cycle_integrals = []
+    for cycle in canonical_cycles[:genus]:
+        loop = _chain_as_common_base_loop(ctx, cycle, monodromy)
+        cycle_integrals.append(_integrate_plane_curve_path_iterated(
+            ctx, curve, loop, normalised, sheet=0,
+            quadrature_order=quadrature_order))
+    value = ctx.matrix(genus, 1)
+    for row in range(genus):
+        correction = ctx.fsum(
+            cycle_integrals[cycle].iterated[row][cycle]
+            for cycle in range(genus) if cycle != row)
+        value[row] = (1 + tau[row, row]) / 2 - correction
+    return value, tuple(cycle_integrals), normalised
+
+
+def _jacobian_characteristic(ctx, value, tau):
+    """Express a Jacobian point as the literal pair ``(a, b)``."""
+    genus = tau.rows
+    lattice = ctx.matrix([
+        [ctx.re(1 if row == column else 0)
+         for column in range(genus)]
+        + [ctx.re(tau[row, column]) for column in range(genus)]
+        for row in range(genus)
+    ] + [
+        [ctx.im(1 if row == column else 0)
+         for column in range(genus)]
+        + [ctx.im(tau[row, column]) for column in range(genus)]
+        for row in range(genus)
+    ])
+    target = ctx.matrix(
+        [ctx.re(entry) for entry in value]
+        + [ctx.im(entry) for entry in value])
+    coordinates = lattice ** -1 * target
+    reduced = []
+    snap_tolerance = ctx.power(ctx.eps, ctx.mpf("0.25"))
+    for coordinate in coordinates:
+        coordinate -= ctx.floor(coordinate)
+        half = ctx.nint(2 * coordinate) / 2
+        if abs(coordinate - half) <= snap_tolerance:
+            coordinate = half % 1
+        reduced.append(+coordinate)
+    b = tuple(reduced[:genus])
+    a = tuple(reduced[genus:])
+    return a, b
+
+
+def _normalise_finite_base_place(ctx, curve, base_place):
+    try:
+        x, y = base_place
+    except (TypeError, ValueError):
+        raise ValueError("base_place must be a finite (x, y) pair")
+    x = ctx.convert(x)
+    y = ctx.convert(y)
+    if not ctx.isfinite(x) or not ctx.isfinite(y):
+        raise ValueError("base_place must be a finite (x, y) pair")
+    scale = max(ctx.one, ctx.fsum(
+        abs(coefficient * x ** x_power * y ** y_power)
+        for x_power, y_power, coefficient in curve.terms))
+    if abs(_evaluate_plane_polynomial(ctx, curve, x, y)) > (
+            100 * ctx.sqrt(ctx.eps) * scale):
+        raise ValueError("base_place must lie on the curve")
+    if abs(_evaluate_plane_derivative(ctx, curve, x, y, "y")) <= (
+            100 * ctx.sqrt(ctx.eps)):
+        raise ValueError("base_place must be regular for the x projection")
+    return _PlaneCurvePlace(x, y)
+
+
+def _guarded_open_path(ctx, start, end, branch_points):
+    """Choose a simple deterministic polyline avoiding critical values."""
+    scale = max(
+        [ctx.one, abs(start), abs(end)]
+        + [abs(point) for point in branch_points])
+    midpoint = (start + end) / 2
+    candidates = [(start, end)]
+    for direction in (ctx.one, -ctx.one, ctx.j, -ctx.j,
+                      1 + ctx.j, 1 - ctx.j, -1 + ctx.j, -1 - ctx.j):
+        candidates.append((start, midpoint + direction * scale, end))
+
+    def clearance(path):
+        return min(
+            _point_segment_distance(ctx, point, left, right)
+            for point in branch_points
+            for left, right in zip(path, path[1:]))
+
+    return max(candidates, key=clearance)
+
+
+def _finite_base_abel_value(
+        ctx, curve, monodromy, branch_points, base_place,
+        normalised_differentials, quadrature_order):
+    path = _guarded_open_path(
+        ctx, monodromy.base_point, base_place.x, branch_points)
+    continuation = _continue_plane_curve_sheets_adaptive(
+        ctx, curve, path, initial_sheets=monodromy.base_sheets,
+        max_refinements=20)
+    target_sheet = min(
+        range(curve.y_degree),
+        key=lambda index: abs(
+            continuation.fibres[-1][index] - base_place.y))
+    match_error = abs(
+        continuation.fibres[-1][target_sheet] - base_place.y)
+    scale = max(ctx.one, abs(base_place.y))
+    if match_error > 100 * ctx.sqrt(ctx.eps) * scale:
+        raise ValueError("base_place could not be matched to a sheet")
+    generators = tuple(monodromy.ribbon_generators)
+    word = _shortest_monodromy_word(
+        tuple(generator.permutation for generator in generators),
+        0, target_sheet)
+    connector = _concatenate_continuation_sequence(
+        ctx, tuple(generators[index].continuation for index in word))
+    if connector is not None:
+        continuation = _concatenate_plane_curve_continuations(
+            ctx, connector, continuation)
+    integral = _integrate_plane_curve_path(
+        ctx, curve, continuation, normalised_differentials, sheet=0,
+        quadrature_order=quadrature_order)
+    return ctx.matrix(integral.values)
+
+
+def _jacobian_lattice_matrix(ctx, tau):
+    genus = tau.rows
+    return ctx.matrix([
+        [ctx.re(1 if row == column else 0)
+         for column in range(genus)]
+        + [ctx.re(tau[row, column]) for column in range(genus)]
+        for row in range(genus)
+    ] + [
+        [ctx.im(1 if row == column else 0)
+         for column in range(genus)]
+        + [ctx.im(tau[row, column]) for column in range(genus)]
+        for row in range(genus)
+    ])
+
+
+def _reduce_jacobian_point(ctx, value, tau, lattice_inverse):
+    genus = tau.rows
+    coordinates = lattice_inverse * ctx.matrix(
+        [ctx.re(entry) for entry in value]
+        + [ctx.im(entry) for entry in value])
+    shift = tuple(ctx.nint(entry) for entry in coordinates)
+    return value - ctx.matrix([
+        shift[row] + ctx.fsum(
+            tau[row, column] * shift[genus + column]
+            for column in range(genus))
+        for row in range(genus)
+    ])
+
+
+def _theta_divisor_samples(
+        ctx, curve, monodromy, branch_points, normalised_differentials,
+        genus, quadrature_order):
+    """Construct deterministic degree ``g-1`` Abel images."""
+    if genus == 1:
+        return (ctx.matrix([ctx.zero]),)
+    count = 2 * genus + 1
+    center = monodromy.center
+    radius = max(abs(point - center) for point in branch_points)
+    point_values = []
+    for index in range(count):
+        angle = 2 * ctx.pi * (index + ctx.mpf("0.173")) / count
+        x = center + ctx.mpf("0.35") * radius * ctx.exp(ctx.j * angle)
+        sheets = _ordered_plane_curve_sheets(ctx, curve, x)
+        place = _PlaneCurvePlace(x, sheets[index % curve.y_degree])
+        point_values.append(_finite_base_abel_value(
+            ctx, curve, monodromy, branch_points, place,
+            normalised_differentials, quadrature_order))
+    samples = []
+    for index in range(2 * genus):
+        value = ctx.matrix(genus, 1)
+        for offset in range(genus - 1):
+            value += point_values[(index + offset) % count]
+        samples.append(value)
+    return tuple(samples)
+
+
+def _theta_divisor_riemann_constant(
+        ctx, tau, samples, initial_value):
+    """Determine the common theta-divisor shift from marked Abel images."""
+    genus = tau.rows
+    if genus == 1:
+        return ctx.matrix([(1 + tau[0, 0]) / 2])
+    lattice = _jacobian_lattice_matrix(ctx, tau)
+    lattice_inverse = lattice ** -1
+    zero_index = (0,) * genus
+    unit_indices = tuple(
+        tuple(1 if row == column else 0 for row in range(genus))
+        for column in range(genus))
+    fit_samples = samples[:genus]
+    tolerance = 100 * ctx.power(ctx.eps, ctx.mpf("0.35"))
+
+    def reduced(value):
+        return _reduce_jacobian_point(
+            ctx, value, tau, lattice_inverse)
+
+    def residual(value, selected):
+        result = []
+        for sample in selected:
+            theta = ctx.rtheta(reduced(sample + value), tau)
+            result.extend((ctx.re(theta), ctx.im(theta)))
+        return ctx.matrix(result)
+
+    def residual_jacobian(value):
+        result = []
+        jacobian = ctx.matrix(2 * genus, 2 * genus)
+        for sample_index, sample in enumerate(fit_samples):
+            jet = ctx.rtheta_jet(reduced(sample + value), tau, 1)
+            theta = jet[zero_index]
+            result.extend((ctx.re(theta), ctx.im(theta)))
+            for column, unit_index in enumerate(unit_indices):
+                derivative = jet[unit_index]
+                jacobian[2 * sample_index, column] = ctx.re(derivative)
+                jacobian[2 * sample_index, genus + column] = -ctx.im(
+                    derivative)
+                jacobian[2 * sample_index + 1, column] = ctx.im(
+                    derivative)
+                jacobian[2 * sample_index + 1, genus + column] = ctx.re(
+                    derivative)
+        return ctx.matrix(result), jacobian
+
+    def solve(start):
+        value = +start
+        for unused in range(20):
+            current, jacobian = residual_jacobian(value)
+            current_norm = ctx.norm(current)
+            if current_norm <= tolerance:
+                return value
+            try:
+                correction = ctx.lu_solve(jacobian, -current)
+            except (ZeroDivisionError, ValueError):
+                return None
+            step = ctx.one
+            while step >= ctx.mpf("0.001"):
+                candidate = value + ctx.matrix([
+                    correction[index]
+                    + ctx.j * correction[genus + index]
+                    for index in range(genus)
+                ]) * step
+                if ctx.norm(residual(candidate, fit_samples)) < current_norm:
+                    value = candidate
+                    break
+                step /= 2
+            else:
+                return None
+        return None
+
+    best_residual = ctx.inf
+    best_value = None
+    for mask in range(1 << (2 * genus)):
+        half_shift = tuple(
+            ctx.mpf("0.5") if mask & (1 << index) else ctx.zero
+            for index in range(2 * genus))
+        start = initial_value + ctx.matrix([
+            half_shift[row] + ctx.fsum(
+                tau[row, column] * half_shift[genus + column]
+                for column in range(genus))
+            for row in range(genus)
+        ])
+        candidate = solve(start)
+        if candidate is None:
+            continue
+        check = residual(candidate, samples)
+        check_residual = max(abs(entry) for entry in check)
+        if check_residual < best_residual:
+            best_residual = check_residual
+            best_value = candidate
+        if check_residual <= tolerance:
+            return reduced(candidate)
+    raise ctx.NoConvergence(
+        "failed to determine the Riemann constant from theta-divisor samples")
+
+
+@defun
+def algebraic_curve_data(
+        ctx, curve, differentials_kind_1=None, *,
+        differentials_kind_2=None, base_place=None):
+    r"""Construct numerical period data for an algebraic curve.
+
+    ``curve`` may be an ascending coefficient sequence defining
+    ``y**2 = P(x)``, a sparse mapping from ``(x_power, y_power)`` to a
+    coefficient, or a sequence of ``(x_power, y_power, coefficient)`` terms.
+
+    Recognized hyperelliptic input uses the established specialized engine.
+    A general plane curve requires a supplied basis ``differentials_kind_1``
+    of holomorphic differential callables.  Optional
+    ``differentials_kind_2`` are integrated on the same cycles, with the
+    classical mpmath convention ``2*eta = -integral_a(dr)``.
+
+    Finite critical values, complex branch loops, infinity monodromy, a
+    primitive canonical homology basis and the period matrices are computed
+    internally.  The returned :class:`AlgebraicCurveData` contains half
+    periods ``omega`` and ``omega_prime``, ``tau``, optional second-kind data,
+    the Abel base place, its corresponding Riemann-constant characteristic,
+    and numerical diagnostics.  ``base_place`` may be a regular finite pair
+    ``(x, y)``.  General input otherwise uses sheet zero over the internally
+    selected computational base point.  Points at infinity require an
+    explicit local-chart representation and are not yet accepted here.
+    """
+    prepared, hyperelliptic_coefficients = _normalise_algebraic_curve_input(
+        ctx, curve)
+    if hyperelliptic_coefficients is not None and differentials_kind_1 is None:
+        if differentials_kind_2 is not None:
+            raise ValueError(
+                "custom second-kind differentials require first-kind input")
+        result = ctx.hyperelliptic_periods(
+            hyperelliptic_coefficients, second_kind=True)
+        omega, omega_prime, eta, eta_prime, tau, kappa = result
+        genus = omega.rows
+        characteristic = ctx.hyperelliptic_data(
+            hyperelliptic_coefficients)[3]
+        resolved_base_place = None
+        if base_place is not None:
+            resolved_base_place = _normalise_finite_base_place(
+                ctx, prepared, base_place)
+            raw_abel = ctx.hyperelliptic_abel_map(
+                hyperelliptic_coefficients,
+                (resolved_base_place.x, resolved_base_place.y))
+            normalised_abel = (2 * omega) ** -1 * raw_abel
+            a, b = characteristic
+            riemann_constant = ctx.matrix([
+                b[row] + ctx.fsum(
+                    tau[row, column] * a[column]
+                    for column in range(genus))
+                for row in range(genus)
+            ])
+            riemann_constant += (genus - 1) * normalised_abel
+            characteristic = _jacobian_characteristic(
+                ctx, riemann_constant, tau)
+        return AlgebraicCurveData(
+            genus, omega, omega_prime, tau, eta, eta_prime, kappa,
+            resolved_base_place, characteristic, None)
+
+    try:
+        first_kind = tuple(differentials_kind_1)
+    except TypeError:
+        raise ValueError(
+            "general plane curves require differentials_kind_1")
+    if not first_kind or any(not callable(value) for value in first_kind):
+        raise ValueError(
+            "differentials_kind_1 must be a sequence of callables")
+    if differentials_kind_2 is None:
+        second_kind = ()
+    else:
+        try:
+            second_kind = tuple(differentials_kind_2)
+        except TypeError:
+            raise ValueError(
+                "differentials_kind_2 must be a sequence of callables")
+        if any(not callable(value) for value in second_kind):
+            raise ValueError(
+                "differentials_kind_2 must be a sequence of callables")
+
+    branch_points, resultant = _plane_curve_critical_values(ctx, prepared)
+    monodromy = _radial_plane_curve_monodromy(
+        ctx, prepared, branch_points, circle_steps=12,
+        max_refinements=20)
+    genus = monodromy.genus
+    if len(first_kind) != genus:
+        raise ValueError(
+            "differentials_kind_1 must contain one form per genus")
+    if second_kind and len(second_kind) != genus:
+        raise ValueError(
+            "differentials_kind_2 must contain one form per genus")
+    graph = _ordered_monodromy_graph(monodromy)
+    reduction = _symplectic_reduce_intersection(graph.intersection)
+    numerical = _numerical_ordered_graph_cycles(ctx, graph, monodromy)
+    canonical_cycles = _transform_lifted_path_chains(
+        numerical.chains, reduction.transformation)
+    forms = first_kind + second_kind
+    columns = []
+    max_sheet_residual = ctx.zero
+    for chain in canonical_cycles[:2 * genus]:
+        integral = _integrate_lifted_path_chain(
+            ctx, prepared, chain, forms,
+            quadrature_order=max(12, ctx.dps // 2))
+        columns.append(integral.values)
+        max_sheet_residual = max(
+            max_sheet_residual, integral.max_sheet_residual)
+
+    periods = _period_matrix_from_columns(
+        ctx, columns, 0, genus, genus)
+    omega = periods[:, :genus] / 2
+    omega_prime = periods[:, genus:] / 2
+    raw_tau = omega**-1 * omega_prime
+    symmetry_residual = ctx.norm(raw_tau - raw_tau.T)
+    tau = (raw_tau + raw_tau.T) / 2
+    imaginary_tau = ctx.matrix([
+        [ctx.im(tau[row, column]) for column in range(genus)]
+        for row in range(genus)
+    ])
+    imaginary_eigenvalues = tuple(ctx.eigsy(
+        imaginary_tau, eigvals_only=True))
+    if min(imaginary_eigenvalues) <= 0:
+        raise ValueError("normalized period matrix is not positive definite")
+
+    quadrature_order = max(12, ctx.dps // 2)
+    riemann_constant, unused_iterated, normalised = (
+        _riemann_constant_vector(
+            ctx, prepared, monodromy, canonical_cycles, first_kind,
+            periods[:, :genus], tau, quadrature_order))
+    theta_samples = _theta_divisor_samples(
+        ctx, prepared, monodromy, branch_points, normalised, genus,
+        quadrature_order)
+    riemann_constant = _theta_divisor_riemann_constant(
+        ctx, tau, theta_samples, riemann_constant)
+    resolved_base_place = _PlaneCurvePlace(
+        monodromy.base_point, monodromy.base_sheets[0])
+    if base_place is not None:
+        resolved_base_place = _normalise_finite_base_place(
+            ctx, prepared, base_place)
+        base_abel = _finite_base_abel_value(
+            ctx, prepared, monodromy, branch_points,
+            resolved_base_place, normalised, quadrature_order)
+        riemann_constant += (genus - 1) * base_abel
+    characteristic = _jacobian_characteristic(
+        ctx, riemann_constant, tau)
+
+    eta = eta_prime = kappa = second_periods = None
+    kappa_symmetry_residual = None
+    if second_kind:
+        second_periods = _period_matrix_from_columns(
+            ctx, columns, genus, genus, genus)
+        eta = -second_periods[:, :genus] / 2
+        eta_prime = -second_periods[:, genus:] / 2
+        raw_kappa = eta * omega**-1
+        kappa_symmetry_residual = ctx.norm(raw_kappa - raw_kappa.T)
+        kappa = (raw_kappa + raw_kappa.T) / 2
+
+    diagnostics = _AlgebraicCurveDiagnostics(
+        curve=prepared,
+        branch_points=branch_points,
+        resultant=resultant,
+        monodromy=monodromy,
+        graph=graph,
+        canonical_cycles=canonical_cycles,
+        periods=periods,
+        second_periods=second_periods,
+        symmetry_residual=symmetry_residual,
+        kappa_symmetry_residual=kappa_symmetry_residual,
+        imaginary_eigenvalues=imaginary_eigenvalues,
+        max_sheet_residual=max_sheet_residual,
+    )
+    return AlgebraicCurveData(
+        genus, omega, omega_prime, tau, eta, eta_prime, kappa,
+        resolved_base_place, characteristic, diagnostics)
 
 
 def _real_plane_curve_monodromy(

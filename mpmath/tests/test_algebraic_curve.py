@@ -1,6 +1,9 @@
 import pytest
 
-from mpmath import hyperelliptic_periods, mp
+from mpmath import (
+    algebraic_curve_data, hyperelliptic_abel_map,
+    hyperelliptic_periods, mp,
+)
 from mpmath.functions.algebraic_curve import (
     _assemble_plane_curve_periods,
     _blow_up_plane_curve_y,
@@ -18,15 +21,19 @@ from mpmath.functions.algebraic_curve import (
     _lifted_monodromy_graph,
     _lifted_path_chain_boundary,
     _numerical_graph_cycles,
+    _numerical_ordered_graph_cycles,
     _ordered_plane_curve_sheets,
+    _ordered_monodromy_graph,
     _monomial_plane_curve_chart,
     _monodromy_graph_permutations,
     _plane_polynomial_y_coefficients,
+    _plane_curve_critical_values,
     _permutation_cycles,
     _prepare_plane_curve,
     _prepare_lifted_path_chain,
     _real_branch_loop_path,
     _real_plane_curve_monodromy,
+    _radial_plane_curve_monodromy,
     _reciprocal_y_plane_curve,
     _pullback_plane_curve_differentials,
     _reverse_plane_curve_branch,
@@ -263,6 +270,141 @@ def test_even_degree_hyperelliptic_graph_has_primitive_periods():
     assert max(abs(value) for value in
                numerical_change - integer_change) < mp.mpf("1e-22")
     assert abs(mp.det(integer_change)) == 1
+
+
+def test_complex_radial_monodromy_and_periods():
+    # A generic complex elliptic curve exercises automatic exterior-base
+    # selection, distinct continuation and ribbon orders, and the geometric
+    # clockwise generator at infinity.
+    mp.dps = 30
+    branch_points = (0, 1 + 1j, 2 - 1j)
+    curve = _prepare_plane_curve(mp, {
+        (0, 2): 1,
+        (3, 0): -1,
+        (2, 0): 3,
+        (1, 0): -3 - 1j,
+    })
+    monodromy = _radial_plane_curve_monodromy(
+        mp, curve, branch_points, circle_steps=12)
+    identity = (0, 1)
+    product = identity
+    for generator in monodromy.product_generators:
+        product = tuple(
+            generator.permutation[product[index]] for index in range(2))
+    assert product == identity
+    assert monodromy.product_generators[-1].kind == "infinity"
+    assert monodromy.product_generators[-1].permutation == (1, 0)
+    assert monodromy.minimum_clearance > 0
+    assert monodromy.genus == 1
+
+    graph = _ordered_monodromy_graph(monodromy)
+    assert graph.genus == 1
+    assert graph.intersection_rank == 2
+    reduction = _symplectic_reduce_intersection(graph.intersection)
+    numerical = _numerical_ordered_graph_cycles(mp, graph, monodromy)
+    canonical_chains = _transform_lifted_path_chains(
+        numerical.chains, reduction.transformation)
+    periods = _assemble_plane_curve_periods(
+        mp, curve, canonical_chains, (lambda x, y: 1 / y,), 1,
+        quadrature_order=16)
+    assert periods.symmetry_residual == 0
+    assert periods.imaginary_eigenvalues[0] > 0
+    assert periods.max_sheet_residual < mp.mpf("1e-25")
+
+
+def test_algebraic_curve_data_general_plane_curve():
+    mp.dps = 25
+    curve = {
+        (0, 2): 1,
+        (3, 0): -1,
+        (2, 0): 3,
+        (1, 0): -3 - 1j,
+    }
+    data = algebraic_curve_data(
+        curve=curve,
+        differentials_kind_1=(lambda x, y: 1 / y,),
+    )
+    assert data.genus == 1
+    assert data.characteristic == ((mp.mpf("0.5"),), (mp.mpf("0.5"),))
+    assert data.base_place is not None
+    assert len(data.diagnostics.branch_points) == 3
+    assert data.diagnostics.graph.intersection_rank == 2
+    assert data.diagnostics.symmetry_residual == 0
+    assert data.diagnostics.imaginary_eigenvalues[0] > 0
+
+
+def test_algebraic_curve_data_hyperelliptic_dispatch():
+    mp.dps = 25
+    data = algebraic_curve_data(curve=(0, -1, 0, 1))
+    expected = hyperelliptic_periods((0, -1, 0, 1), second_kind=True)
+    assert data.genus == 1
+    assert data.diagnostics is None
+    assert data.base_place is None
+    assert data.characteristic == ((mp.mpf("0.5"),), (mp.mpf("0.5"),))
+    for actual, reference in zip(
+            (data.omega, data.omega_prime, data.eta, data.eta_prime,
+             data.tau, data.kappa), expected):
+        assert mp.norm(actual - reference) < mp.mpf("1e-22")
+
+
+def test_algebraic_curve_data_finite_base_place_shift():
+    mp.dps = 20
+    coefficients = (1, -1, 0, 0, 0, 1)
+    natural = algebraic_curve_data(curve=coefficients)
+    shifted = algebraic_curve_data(
+        curve=coefficients, base_place=(0, 1))
+    abel = hyperelliptic_abel_map(coefficients, (0, 1))
+    normalised_abel = (2 * natural.omega) ** -1 * abel
+
+    def characteristic_point(data):
+        a, b = data.characteristic
+        return mp.matrix([
+            b[row] + sum(data.tau[row, column] * a[column]
+                         for column in range(data.genus))
+            for row in range(data.genus)
+        ])
+
+    difference = (
+        characteristic_point(shifted)
+        - characteristic_point(natural) - normalised_abel)
+    lattice = mp.matrix([
+        [mp.re(1 if row == column else 0)
+         for column in range(2)]
+        + [mp.re(natural.tau[row, column]) for column in range(2)]
+        for row in range(2)
+    ] + [
+        [mp.im(1 if row == column else 0)
+         for column in range(2)]
+        + [mp.im(natural.tau[row, column]) for column in range(2)]
+        for row in range(2)
+    ])
+    coordinates = lattice ** -1 * mp.matrix(
+        [mp.re(value) for value in difference]
+        + [mp.im(value) for value in difference])
+    assert max(abs(value - mp.nint(value))
+               for value in coordinates) < mp.mpf("1e-17")
+    assert shifted.base_place == (0, 1)
+
+
+def test_critical_values_remove_repeated_resultant_factors():
+    mp.dps = 30
+    curve = _prepare_plane_curve(mp, {
+        (2, 4): 1,
+        (3, 2): -4,
+        (2, 2): 6,
+        (1, 2): -2,
+        (2, 0): mp.mpf(27) / 5,
+        (1, 0): -mp.mpf(26) / 5,
+        (0, 0): 1,
+    })
+    points, resultant = _plane_curve_critical_values(mp, curve)
+    expected = tuple([mp.zero]
+                     + mp.polyroots([5, -26, 27])
+                     + mp.polyroots([-2, 19, -30, 10]))
+    assert len(resultant) - 1 == 18
+    assert len(points) == 6
+    assert max(min(abs(point - reference) for point in points)
+               for reference in expected) < mp.mpf("1e-18")
 
 
 def test_real_trigonal_monodromy_graph_and_periods():
