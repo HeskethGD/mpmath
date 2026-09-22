@@ -17,6 +17,7 @@ from functools import lru_cache, wraps
 from math import comb
 
 from .functions import defun
+from .hyperelliptic import _normalise_abel_targets
 
 
 _PlaneCurve = namedtuple(
@@ -95,7 +96,7 @@ CurveValidation = namedtuple(
     "CurveValidation", "kind passed maximum_residual checks")
 CurvePlace = namedtuple("CurvePlace", "x y")
 CurvePath = namedtuple(
-    "CurvePath", "start end sheet continuation")
+    "CurvePath", "curve_key start end sheet continuation")
 CurveIntegral = namedtuple(
     "CurveIntegral", "values max_sheet_residual segments")
 CurveLatticeReduction = namedtuple(
@@ -2564,10 +2565,10 @@ def _curve_cache_state(ctx):
 def _curve_stage_cache(maxsize):
     """Cache a curve stage by its key and the context's numerical state.
 
-    Stage keys are prepared curves or tuples containing them, so the cache
-    never sees unhashable user input.  Cached values are immutable records;
-    public functions assemble matrices from them, so a cached result can
-    never be mutated through the public API.
+    Stage keys normally contain prepared curves and, for period integration,
+    differential callables.  An unhashable callable bypasses this cache.
+    Cached values are private immutable records; public functions assemble
+    matrices from them, so a cached result cannot be mutated publicly.
     """
     def decorator(f):
         @lru_cache(maxsize=maxsize)
@@ -2576,6 +2577,13 @@ def _curve_stage_cache(maxsize):
 
         @wraps(f)
         def wrapper(ctx, key):
+            try:
+                hash(key)
+            except TypeError:
+                # Callable differential objects are valid public inputs even
+                # when they deliberately opt out of hashing.  They cannot be
+                # LRU keys, but the numerical stage remains usable.
+                return f(ctx, key)
             return cached(_curve_cache_state(ctx), ctx, key)
 
         wrapper.cache_info = cached.cache_info
@@ -2936,7 +2944,7 @@ def curve_validate(ctx, result):
     r"""Validate a result record returned by the curve functions.
 
     ``result`` is one of ``CurveBranchLocus``, ``CurveMonodromy``,
-    ``CurveHomology`` or ``CurvePeriods``.  The returned
+    ``CurveGenus``, ``CurveHomology`` or ``CurvePeriods``.  The returned
     ``CurveValidation`` record contains one named ``CurveCheck`` per
     invariant, the largest
     numerical residual among them, and whether every check passed.  The
@@ -2960,12 +2968,17 @@ def curve_validate(ctx, result):
             (abs(left - right)
              for index, left in enumerate(values)
              for right in values[index + 1:]),
-            default=ctx.zero)
+            default=ctx.inf)
         checks.append(CurveCheck(
             "branch_values_distinct", separation, separation > tolerance))
         checks.append(CurveCheck(
             "resultant_nonconstant", len(result.resultant),
             len(result.resultant) > 1))
+    elif isinstance(result, CurveGenus):
+        balanced = (2 * result.genus - 2
+                    == -2 * result.degree + result.ramification)
+        checks.append(CurveCheck(
+            "riemann_hurwitz_balance", balanced, balanced))
     elif isinstance(result, CurveMonodromy):
         degree = len(result.base_sheets)
         all_permutations = result.permutations + (
@@ -3015,7 +3028,7 @@ def curve_validate(ctx, result):
             abs(tau[row, column]) for row in range(tau.rows)
             for column in range(tau.cols)])
         tolerance = 100 * ctx.sqrt(ctx.eps) * scale
-        symmetry_residual = ctx.norm(tau - tau.T)
+        symmetry_residual = result.symmetry_residual
         residuals.append(symmetry_residual)
         checks.append(CurveCheck(
             "tau_symmetry_residual", symmetry_residual,
@@ -3029,7 +3042,7 @@ def curve_validate(ctx, result):
             kappa_scale = max([ctx.one] + [
                 abs(kappa[row, column]) for row in range(kappa.rows)
                 for column in range(kappa.cols)])
-            kappa_residual = ctx.norm(kappa - kappa.T)
+            kappa_residual = result.kappa_symmetry_residual
             residuals.append(kappa_residual)
             checks.append(CurveCheck(
                 "kappa_symmetry_residual", kappa_residual,
@@ -3072,9 +3085,10 @@ def curve_fibre(ctx, curve, x):
     sheets = _ordered_plane_curve_sheets(ctx, prepared, x)
     scale = max([ctx.one] + [abs(value) for value in sheets])
     separation = min(
-        abs(left - right)
-        for index, left in enumerate(sheets)
-        for right in sheets[index + 1:])
+        (abs(left - right)
+         for index, left in enumerate(sheets)
+         for right in sheets[index + 1:]),
+        default=ctx.inf)
     if separation <= 100 * ctx.sqrt(ctx.eps) * scale:
         raise ValueError("x must not be a finite branch value")
     return tuple(CurvePlace(x, value) for value in sheets)
@@ -3088,9 +3102,10 @@ def curve_path(ctx, curve, start, end):
     ``(x, y)`` pair or a ``CurvePlace`` from :func:`~mpmath.curve_fibre`.
     A guarded polyline in the x-plane avoids the branch values, and the
     path is lifted by numerical continuation from ``start``.  The returned
-    ``CurvePath`` record contains the endpoint places, the sheet index
-    reached, and the continuation record carrying the numerical routing
-    data used by :func:`~mpmath.curve_integral`.
+    ``CurvePath`` record contains an opaque curve and numerical-context
+    identity, the endpoint places, the sheet index reached, and the
+    continuation record carrying the numerical routing data used by
+    :func:`~mpmath.curve_integral`.
 
     Both places must have distinct ``x`` values, and ``end`` must lie on
     the sheet reached by continuation; otherwise ``ValueError`` is raised.
@@ -3118,6 +3133,7 @@ def curve_path(ctx, curve, start, end):
             "the lifted path from start does not reach end; the two "
             "places lie on different sheets along the guarded path")
     return CurvePath(
+        curve_key=(prepared, _curve_cache_state(ctx)),
         start=lifted.start,
         end=lifted.end,
         sheet=lifted.sheet,
@@ -3134,7 +3150,9 @@ def curve_integral(ctx, curve, differentials, path):
     gives a scalar ``values`` entry, a sequence gives one entry per form.
     The returned ``CurveIntegral`` record also carries the maximum
     curve-equation residual encountered on the integration nodes and the
-    number of path segments.
+    number of path segments.  A path is bound to the curve and working
+    precision at which it was constructed and cannot be reused with a
+    different curve or precision.
 
     >>> from mpmath import curve_integral, curve_path, mp
     >>> mp.dps = 15
@@ -3155,6 +3173,9 @@ def curve_integral(ctx, curve, differentials, path):
             differentials, "differentials")
     if not isinstance(path, CurvePath):
         raise ValueError("path must be a CurvePath from curve_path")
+    if path.curve_key != (prepared, _curve_cache_state(ctx)):
+        raise ValueError(
+            "path was constructed for a different curve or precision")
     integral = _integrate_plane_curve_path(
         ctx, prepared, path.continuation, forms, sheet=path.sheet)
     values = integral.values[0] if single else integral.values
@@ -3196,8 +3217,9 @@ def curve_abel_map(ctx, curve, target, differentials=None,
 
     ``base_place`` selects a regular finite base place; the default is
     sheet zero over the internally selected computational base point.
-    With ``reduce=True`` the result is reduced modulo the period lattice
-    of the supplied basis, equivalent to applying
+    With ``reduce=True`` the unnormalized result is reduced modulo the full
+    period lattice ``[2*omega, 2*omega_prime]`` of the supplied basis,
+    equivalent to applying
     :func:`~mpmath.curve_lattice_reduce`.
 
     >>> from mpmath import curve_abel_map, mp
@@ -3212,18 +3234,17 @@ def curve_abel_map(ctx, curve, target, differentials=None,
     prepared, hyperelliptic_coefficients = _normalise_algebraic_curve_input(
         ctx, curve)
     if hyperelliptic_coefficients is not None and differentials is None:
+        targets = _normalise_abel_targets(ctx, target)
         if base_place is None:
             return ctx.hyperelliptic_abel_map(
-                hyperelliptic_coefficients, target, reduce=reduce)
+                hyperelliptic_coefficients, targets, reduce=reduce)
         result = (ctx.hyperelliptic_abel_map(
-                      hyperelliptic_coefficients, target)
-                  - ctx.hyperelliptic_abel_map(
+                      hyperelliptic_coefficients, targets)
+                  - len(targets) * ctx.hyperelliptic_abel_map(
                       hyperelliptic_coefficients, base_place))
         if reduce:
-            tau = curve_periods(ctx, curve).tau
-            lattice = _jacobian_lattice_matrix(ctx, tau)
-            result = _reduce_jacobian_point(
-                ctx, result, tau, lattice ** -1)
+            result = curve_lattice_reduce(
+                ctx, result, curve_periods(ctx, curve)).value
         return result
 
     forms = _curve_differential_sequence(
@@ -3257,9 +3278,8 @@ def curve_abel_map(ctx, curve, target, differentials=None,
         result += place_value(place)
     result -= len(places) * place_value(base)
     if reduce:
-        tau = curve_periods(ctx, curve, differentials).tau
-        lattice = _jacobian_lattice_matrix(ctx, tau)
-        result = _reduce_jacobian_point(ctx, result, tau, lattice ** -1)
+        result = curve_lattice_reduce(
+            ctx, result, curve_periods(ctx, curve, differentials)).value
     return result
 
 
@@ -3267,11 +3287,13 @@ def curve_abel_map(ctx, curve, target, differentials=None,
 def curve_lattice_reduce(ctx, value, periods):
     r"""Reduce a Jacobian vector modulo the period lattice.
 
-    ``value`` is a genus-length column vector of Abelian coordinates, and
-    ``periods`` is either a ``CurvePeriods`` record or a normalized
-    Riemann matrix ``tau``.  The returned ``CurveLatticeReduction`` record
-    contains the equivalent reduced vector and the integer lattice shift
-    ``(m, n)`` with ``value - (m + tau*n)`` equal to the reduced vector.
+    ``value`` is a genus-length column vector of Abelian coordinates.  If
+    ``periods`` is a ``CurvePeriods`` record, ``value`` is in the original
+    differential basis and is reduced by the full lattice
+    ``[2*omega, 2*omega_prime]``.  If ``periods`` is a normalized Riemann
+    matrix ``tau``, ``value`` is in normalized coordinates and is reduced
+    by ``[I, tau]``.  The returned ``CurveLatticeReduction`` record contains
+    the equivalent vector and the integer lattice shift ``(m, n)``.
 
     >>> from mpmath import curve_lattice_reduce, curve_riemann_matrix, mp
     >>> mp.dps = 15
@@ -3283,28 +3305,43 @@ def curve_lattice_reduce(ctx, value, periods):
     '0.0'
     """
     if isinstance(periods, CurvePeriods):
-        tau = periods.tau
+        genus = periods.genus
+        period_matrix = ctx.matrix(genus, 2 * genus)
+        period_matrix[:, :genus] = 2 * periods.omega
+        period_matrix[:, genus:] = 2 * periods.omega_prime
     else:
-        tau = periods
-    if tau.rows != tau.cols:
-        raise ValueError("periods must be square or a CurvePeriods record")
-    genus = tau.rows
+        try:
+            tau = ctx.matrix(periods)
+        except (TypeError, ValueError):
+            raise ValueError(
+                "periods must be square or a CurvePeriods record")
+        if tau.rows != tau.cols:
+            raise ValueError(
+                "periods must be square or a CurvePeriods record")
+        genus = tau.rows
+        period_matrix = ctx.matrix(genus, 2 * genus)
+        period_matrix[:, :genus] = ctx.eye(genus)
+        period_matrix[:, genus:] = tau
     try:
         value = ctx.matrix(value)
     except (TypeError, ValueError):
         raise ValueError("value must be a genus-length column vector")
     if value.rows != genus or value.cols != 1:
         raise ValueError("value must be a genus-length column vector")
-    lattice = _jacobian_lattice_matrix(ctx, tau)
+    lattice = ctx.matrix([
+        [ctx.re(period_matrix[row, column])
+         for column in range(2 * genus)]
+        for row in range(genus)
+    ] + [
+        [ctx.im(period_matrix[row, column])
+         for column in range(2 * genus)]
+        for row in range(genus)
+    ])
     coordinates = lattice ** -1 * ctx.matrix(
         [ctx.re(entry) for entry in value]
         + [ctx.im(entry) for entry in value])
     shift = tuple(int(ctx.nint(entry)) for entry in coordinates)
-    reduced = value - ctx.matrix([
-        shift[row] + ctx.fsum(
-            tau[row, column] * shift[genus + column]
-            for column in range(genus))
-        for row in range(genus)])
+    reduced = value - period_matrix * ctx.matrix(shift)
     return CurveLatticeReduction(reduced, shift)
 
 

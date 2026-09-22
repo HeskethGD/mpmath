@@ -2,13 +2,15 @@ import pytest
 
 import mpmath
 from mpmath import (
+    CurveBranchLocus, CurveCheck, CurveGenus, CurveHomology, CurveIntegral,
+    CurveLatticeReduction, CurveMonodromy, CurvePath, CurvePeriods,
+    CurvePlace, CurveValidation,
     curve_abel_map, curve_branch_locus, curve_fibre, curve_genus,
     curve_homology, curve_integral, curve_lattice_reduce, curve_monodromy,
     curve_path, curve_periods, curve_riemann_matrix, curve_validate,
     hyperelliptic_abel_map, hyperelliptic_periods, mp,
 )
 from mpmath.functions.algebraic_curve import (
-    CurvePlace,
     _assemble_plane_curve_periods,
     _blow_up_plane_curve_y,
     _close_monodromy_lift,
@@ -326,6 +328,9 @@ def test_curve_branch_locus_and_validate():
     validation = curve_validate(locus)
     assert validation.kind == "CurveBranchLocus"
     assert validation.passed
+    # A single finite branch value is distinct vacuously; the other
+    # ramification of y**2=x lies above infinity.
+    assert curve_validate(curve_branch_locus((0, 1))).passed
 
 
 def test_curve_monodromy_and_genus():
@@ -340,6 +345,7 @@ def test_curve_monodromy_and_genus():
     assert monodromy.infinity_permutation == (1, 0)
     assert len(monodromy.base_sheets) == 2
     assert curve_genus((0, -1, 0, 1)) == (1, 2, 4)
+    assert curve_validate(curve_genus((0, -1, 0, 1))).passed
     validation = curve_validate(monodromy)
     assert validation.kind == "CurveMonodromy"
     assert validation.passed
@@ -397,6 +403,8 @@ def test_curve_periods_general_plane_curve():
     assert validation.kind == "CurvePeriods"
     assert validation.passed
     assert validation.maximum_residual < mp.mpf("1e-23")
+    assert not curve_validate(data._replace(
+        symmetry_residual=mp.one)).passed
     with pytest.raises(ValueError, match="one form per genus"):
         curve_periods(curve, (lambda x, y: 1 / y,) * 2)
     with pytest.raises(ValueError, match="sequence of callables"):
@@ -419,6 +427,8 @@ def test_curve_periods_second_kind_general_plane_curve():
     assert data.kappa is not None
     assert data.kappa_symmetry_residual < mp.mpf("1e-18")
     assert curve_validate(data).passed
+    assert not curve_validate(data._replace(
+        kappa_symmetry_residual=mp.one)).passed
 
 
 def test_curve_stage_caching_and_input_forms():
@@ -440,6 +450,17 @@ def test_curve_stage_caching_and_input_forms():
     curve_periods((0, -1, 0, 1), (lambda x, y: 1 / y,))
     assert stages._stage_monodromy.cache_info().misses == misses + 1
 
+    class UnhashableDifferential:
+        __hash__ = None
+
+        def __call__(self, x, y):
+            return 1 / y
+
+    data = curve_periods(
+        {(0, 2): 1, (1, 0): 1, (3, 0): -1},
+        (UnhashableDifferential(),))
+    assert data.genus == 1
+
 
 def test_curve_fibre():
     mp.dps = 25
@@ -453,6 +474,8 @@ def test_curve_fibre():
         curve_fibre((0, -1, 0, 1), 0)
     with pytest.raises(ValueError, match="must be finite"):
         curve_fibre((0, -1, 0, 1), mp.inf)
+    assert curve_fibre({(0, 1): 1, (1, 0): -1}, 2) == (
+        CurvePlace(mp.mpf(2), mp.mpf(2)),)
 
 
 def test_curve_path_and_curve_integral():
@@ -479,6 +502,12 @@ def test_curve_path_and_curve_integral():
         curve_path(curve, (1, 1), (1, -1))
     with pytest.raises(ValueError, match="lie on the curve"):
         curve_path(curve, (1, 1), (4, 3))
+    with pytest.raises(ValueError, match="different curve or precision"):
+        curve_integral(
+            {(0, 2): 1, (1, 0): -4}, lambda x, y: 1 / y, path)
+    with mp.workdps(30):
+        with pytest.raises(ValueError, match="different curve or precision"):
+            curve_integral(curve, lambda x, y: 1 / y, path)
 
 
 def test_curve_abel_map_hyperelliptic_dispatch():
@@ -490,8 +519,24 @@ def test_curve_abel_map_hyperelliptic_dispatch():
     periods = curve_periods((0, -1, 0, 1))
     normalized = (2 * periods.omega) ** -1 * raw
     difference = normalized - (2 * periods.omega) ** -1 * reduced
-    assert mp.norm(curve_lattice_reduce(difference, periods).value) < (
+    assert mp.norm(curve_lattice_reduce(difference, periods.tau).value) < (
         mp.mpf("1e-20"))
+
+    base = (mp.mpf("-0.5"), mp.sqrt(mp.mpf(3) / 8))
+    divisor = curve_abel_map(
+        (0, -1, 0, 1), [point, point], base_place=base)
+    assert mp.norm(
+        divisor
+        - 2 * curve_abel_map(
+            (0, -1, 0, 1), point, base_place=base)) < mp.mpf("1e-20")
+    assert mp.norm(curve_abel_map(
+        (0, -1, 0, 1), [], base_place=base)) == 0
+    shifted = curve_abel_map((0, -1, 0, 1), point, base_place=base)
+    shifted_reduced = curve_abel_map(
+        (0, -1, 0, 1), point, base_place=base, reduce=True)
+    assert mp.norm(
+        shifted_reduced
+        - curve_lattice_reduce(shifted, periods).value) < mp.mpf("1e-20")
 
 
 def test_curve_abel_map_general_plane_curve():
@@ -530,11 +575,16 @@ def test_curve_abel_map_reduce_and_lattice():
     reduction = curve_lattice_reduce(value, periods)
     shift_m, shift_n = reduction.shift
     assert isinstance(shift_m, int) and isinstance(shift_n, int)
-    lattice_vector = shift_m + periods.tau[0, 0] * shift_n
+    lattice_vector = (2 * periods.omega[0, 0] * shift_m
+                      + 2 * periods.omega_prime[0, 0] * shift_n)
     assert mp.norm(value - lattice_vector - reduction.value) == 0
     assert mp.norm(value - reduced - lattice_vector) < mp.mpf("1e-18")
-    assert curve_lattice_reduce(
-        value, periods.tau).shift == reduction.shift
+    normalized = (2 * periods.omega) ** -1 * value
+    normalized_reduction = curve_lattice_reduce(normalized, periods.tau)
+    assert normalized_reduction.shift == reduction.shift
+    assert mp.norm(
+        2 * periods.omega * normalized_reduction.value
+        - reduction.value) < mp.mpf("1e-18")
 
 
 def test_curve_lattice_reduce_exact_lattice():
@@ -550,6 +600,15 @@ def test_curve_lattice_reduce_exact_lattice():
         value - (shift_m + tau[0, 0] * shift_n) - reduction.value) == 0
     with pytest.raises(ValueError, match="column vector"):
         curve_lattice_reduce(mp.matrix([[1, 2]]), tau)
+
+
+def test_curve_result_records_are_public():
+    assert all(record.__module__ == "mpmath.functions.algebraic_curve"
+               for record in (
+                   CurveBranchLocus, CurveGenus, CurveHomology,
+                   CurveCheck, CurveIntegral, CurveLatticeReduction,
+                   CurveMonodromy,
+                   CurvePath, CurvePeriods, CurvePlace, CurveValidation))
 
 
 def test_critical_values_remove_repeated_resultant_factors():

@@ -69,6 +69,11 @@ curve_path = mp.curve_path
 curve_integral = mp.curve_integral
 curve_abel_map = mp.curve_abel_map
 curve_lattice_reduce = mp.curve_lattice_reduce
+from .functions.algebraic_curve import (
+    CurveBranchLocus, CurveCheck, CurveGenus, CurveHomology, CurveIntegral,
+    CurveLatticeReduction, CurveMonodromy, CurvePath, CurvePeriods,
+    CurvePlace, CurveValidation,
+)
 kleinj = mp.kleinj
 kleinjinv = mp.kleinjinv
 eta = mp.eta

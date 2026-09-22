@@ -9,11 +9,11 @@ calculations are purely numerical: arbitrary-precision continuation of the
 curve sheets supplies the monodromy, a lifted ribbon graph supplies the
 homology, and validated quadrature supplies the periods.
 
-Each stage is a separate function returning a small immutable record, and
+Each stage is a separate function returning a small fixed-field record, and
 expensive earlier stages are cached: a user requesting the periods of a
 curve whose monodromy has already been computed pays only for the new
-quadrature.  Any result record can be checked independently with
-:func:`~mpmath.curve_validate`.
+quadrature.  Topology and period result records can be checked independently
+with :func:`~mpmath.curve_validate`.
 
 Curves are supplied as an ascending coefficient sequence defining
 :math:`y^2 = P(x)`, as accepted by :func:`~mpmath.hyperelliptic_periods`, as
@@ -23,6 +23,8 @@ input is dispatched to the specialized engine when no differential basis
 is supplied; a general plane curve requires a user-supplied holomorphic
 basis of one differential callable per genus.  Singular curves and
 projections with repeated critical values are not supported.
+The current API always uses projection onto the ``x`` coordinate; selecting
+an alternative linear projection is future work.
 
 Places over a finite regular value are labelled by
 :func:`~mpmath.curve_fibre`, connected by lifted paths and integrated
@@ -30,6 +32,12 @@ along by :func:`~mpmath.curve_path` and :func:`~mpmath.curve_integral`,
 and mapped into the Jacobian by :func:`~mpmath.curve_abel_map`, with
 :func:`~mpmath.curve_lattice_reduce` reducing the result modulo the
 period lattice.
+
+The record classes ``CurveBranchLocus``, ``CurveMonodromy``, ``CurveGenus``,
+``CurveHomology``, ``CurvePeriods``, ``CurvePlace``, ``CurvePath``,
+``CurveIntegral``, ``CurveLatticeReduction``, ``CurveCheck`` and
+``CurveValidation`` are importable from :mod:`mpmath`.  They contain results
+rather than additional methods; ordinary use starts with the functions below.
 
 These functions complement the hyperelliptic period and Kleinian function
 machinery described in :doc:`abelian`: the hyperelliptic engine covers
@@ -63,6 +71,10 @@ Periods
 .. autofunction:: mpmath.curve_periods
 
 .. autofunction:: mpmath.curve_riemann_matrix
+
+``curve_periods`` already accepts a caller-supplied second-kind basis and
+returns ``eta``, ``eta_prime`` and ``kappa``.  No separate
+``curve_second_kind_periods`` step is required.
 
 
 Places, paths and integrals
