@@ -31,6 +31,7 @@ from mpmath.functions.algebraic_curve import (
     _integrate_plane_curve_path_iterated,
     _integrate_plane_curve_branch,
     _integrate_lifted_path_chain,
+    _jacobian_lattice_matrix,
     _lift_plane_curve_path,
     _lifted_monodromy_graph,
     _lifted_path_chain_boundary,
@@ -51,12 +52,14 @@ from mpmath.functions.algebraic_curve import (
     _real_plane_curve_monodromy,
     _radial_plane_curve_monodromy,
     _reciprocal_y_plane_curve,
+    _reduce_jacobian_point,
     _ribbon_tree_cotree_cut_system,
     _pullback_plane_curve_differentials,
     _reverse_plane_curve_branch,
     _reverse_plane_curve_continuation,
     _reverse_iterated_path_integrals,
     _symplectic_reduce_intersection,
+    _theta_divisor_samples,
     _transform_lifted_path_chains,
 )
 
@@ -448,6 +451,97 @@ def test_trigonal_infinity_uses_positive_local_orientation():
     assert monodromy.genus == graph.genus == 3
     assert graph.boundary_components == curve.y_degree == 3
     assert graph.intersection_rank == 2 * graph.genus
+
+
+def test_alternative_tree_cotree_preserves_genus_two_data():
+    # Different admissible tree-cotree choices give different canonical
+    # polygons, but must describe the same period lattice and theta divisor.
+    mp.dps = 20
+    curve = _prepare_plane_curve(mp, {
+        (0, 2): 1,
+        (5, 0): -1,
+        (3, 0): 5,
+        (1, 0): -4,
+    })
+    forms = (lambda x, y: 1 / y, lambda x, y: x / y)
+    branch_points, unused_resultant = _plane_curve_critical_values(
+        mp, curve)
+    monodromy = _radial_plane_curve_monodromy(
+        mp, curve, branch_points, circle_steps=12, max_refinements=20)
+    graph = _ordered_monodromy_graph(monodromy)
+
+    parent = {vertex: vertex for vertex in graph.vertices}
+
+    def find(vertex):
+        while parent[vertex] != vertex:
+            parent[vertex] = parent[parent[vertex]]
+            vertex = parent[vertex]
+        return vertex
+
+    alternative_tree = []
+    for edge_index in reversed(range(len(graph.edges))):
+        edge = graph.edges[edge_index]
+        left = find(edge.tail)
+        right = find(edge.head)
+        if left != right:
+            parent[left] = right
+            alternative_tree.append(edge_index)
+    alternative_tree = tuple(alternative_tree)
+    alternative_complement = tuple(
+        edge_index for edge_index in range(len(graph.edges))
+        if edge_index not in set(alternative_tree))
+
+    default_cut = _ribbon_tree_cotree_cut_system(graph)
+    alternative_cut = _ribbon_tree_cotree_cut_system(
+        graph, tree_edges=alternative_tree,
+        cotree_edge_order=tuple(reversed(alternative_complement)))
+    assert alternative_cut.tree_edges != default_cut.tree_edges
+    assert alternative_cut.generator_edges != default_cut.generator_edges
+    with pytest.raises(ValueError, match="spanning tree"):
+        _ribbon_tree_cotree_cut_system(
+            graph, tree_edges=alternative_tree[:-1])
+    with pytest.raises(ValueError, match="base-sheet vertex"):
+        _ribbon_tree_cotree_cut_system(
+            graph, root=("branch", 0, 0))
+
+    results = []
+    for cut_system in (default_cut, alternative_cut):
+        polygon = _numerical_ordered_canonical_polygon(
+            mp, graph, monodromy, cut_system=cut_system)
+        periods = _assemble_plane_curve_periods(
+            mp, curve, polygon.chains, forms, 2, quadrature_order=12)
+        tau = (periods.tau + periods.tau.T) / 2
+        constant, unused_integrals, normalised = (
+            _canonical_polygon_riemann_constant(
+                mp, curve, polygon, forms, periods.a_periods, tau, 12))
+        samples = _theta_divisor_samples(
+            mp, curve, monodromy, branch_points, normalised, 2, 12)
+        lattice_inverse = _jacobian_lattice_matrix(mp, tau) ** -1
+        residuals = tuple(abs(mp.rtheta(_reduce_jacobian_point(
+            mp, sample + constant, tau, lattice_inverse), tau))
+            for sample in samples)
+        assert periods.symmetry_residual < mp.mpf("1e-18")
+        assert min(periods.imaginary_eigenvalues) > 0
+        assert max(residuals) < mp.mpf("1e-12")
+        results.append((polygon, periods))
+
+    default_polygon, default_periods = results[0]
+    alternative_polygon, alternative_periods = results[1]
+    change = (mp.matrix(alternative_polygon.transformation)
+              * mp.matrix(default_polygon.transformation) ** -1)
+    integer_change = mp.matrix([
+        [int(mp.nint(change[row, column]))
+         for column in range(change.cols)]
+        for row in range(change.rows)])
+    assert mp.norm(change - integer_change) < mp.mpf("1e-18")
+    compact_change = integer_change[:4, :4]
+    standard_form = mp.matrix(_canonical_intersection_form(2, 0))
+    assert mp.norm(
+        compact_change * standard_form * compact_change.T
+        - standard_form) == 0
+    assert mp.norm(
+        alternative_periods.periods
+        - default_periods.periods * compact_change.T) < mp.mpf("1e-17")
 
 
 def test_curve_branch_locus_and_validate():

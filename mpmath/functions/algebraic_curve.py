@@ -1872,7 +1872,8 @@ def _ribbon_boundary_count(edges, rotation):
     return len(_ribbon_boundary_orbits(edges, rotation))
 
 
-def _ribbon_tree_cotree_cut_system(graph):
+def _ribbon_tree_cotree_cut_system(
+        graph, tree_edges=None, cotree_edge_order=None, root=None):
     """Construct a certified one-face cut system of a ribbon graph.
 
     This is the tree--cotree construction of Eppstein, *Dynamic generators
@@ -1881,9 +1882,41 @@ def _ribbon_tree_cotree_cut_system(graph):
     SODA 2005.  The returned loops retain oriented graph-edge paths; unlike a
     homology matrix alone, that data can later support a canonical polygon
     and iterated path integrals.
+
+    ``tree_edges``, ``cotree_edge_order`` and ``root`` are private robustness
+    hooks: they allow independently admissible choices to be compared without
+    changing the deterministic production choice.  Every supplied choice is
+    certified below before it is used.
     """
     edges = graph.edges
-    tree_edges = tuple(graph.tree_edges)
+    if tree_edges is None:
+        tree_edges = tuple(graph.tree_edges)
+    else:
+        tree_edges = tuple(tree_edges)
+    if (len(tree_edges) != len(graph.vertices) - 1
+            or len(set(tree_edges)) != len(tree_edges)
+            or any(not isinstance(edge, int) or edge < 0
+                   or edge >= len(edges) for edge in tree_edges)):
+        raise ValueError("tree edges do not form a spanning tree")
+
+    tree_parent = {vertex: vertex for vertex in graph.vertices}
+
+    def tree_find(vertex):
+        while tree_parent[vertex] != vertex:
+            tree_parent[vertex] = tree_parent[tree_parent[vertex]]
+            vertex = tree_parent[vertex]
+        return vertex
+
+    for edge_index in tree_edges:
+        edge = edges[edge_index]
+        left = tree_find(edge.tail)
+        right = tree_find(edge.head)
+        if left == right:
+            raise ValueError("tree edges do not form a spanning tree")
+        tree_parent[left] = right
+    if len({tree_find(vertex) for vertex in graph.vertices}) != 1:
+        raise ValueError("tree edges do not form a spanning tree")
+
     tree_set = set(tree_edges)
     faces = _ribbon_boundary_orbits(edges, graph.rotation)
     half_edge_face = {
@@ -1900,10 +1933,20 @@ def _ribbon_tree_cotree_cut_system(graph):
             index = parent[index]
         return index
 
+    complement = tuple(
+        edge_index for edge_index in range(len(edges))
+        if edge_index not in tree_set)
+    if cotree_edge_order is None:
+        cotree_edge_order = complement
+    else:
+        cotree_edge_order = tuple(cotree_edge_order)
+        if (len(cotree_edge_order) != len(complement)
+                or set(cotree_edge_order) != set(complement)):
+            raise ValueError(
+                "cotree edge order must permute the tree complement")
+
     cotree_edges = []
-    for edge_index in range(len(edges)):
-        if edge_index in tree_set:
-            continue
+    for edge_index in cotree_edge_order:
         left = find(half_edge_face[(edge_index, 0)])
         right = find(half_edge_face[(edge_index, 1)])
         if left != right:
@@ -1942,7 +1985,10 @@ def _ribbon_tree_cotree_cut_system(graph):
         edge = edges[edge_index]
         adjacency[edge.tail].append((edge.head, edge_index, 1))
         adjacency[edge.head].append((edge.tail, edge_index, -1))
-    root = min(graph.vertices)
+    if root is None:
+        root = min(graph.vertices)
+    elif root not in set(graph.vertices) or root[0] != "base":
+        raise ValueError("cut-system root must be a base-sheet vertex")
     loops = []
     cycles = []
     for edge_index in generator_edges:
@@ -2615,7 +2661,7 @@ def _oriented_word_exponents(word, size):
 
 
 def _numerical_canonical_polygon_from_continuations(
-        ctx, graph, branch_continuations):
+        ctx, graph, branch_continuations, cut_system=None):
     """Lift the homology chains induced by a canonical ribbon polygon.
 
     The polygon retains full based free words separately.  Ordinary period
@@ -2626,7 +2672,8 @@ def _numerical_canonical_polygon_from_continuations(
     if tuple(continuation.permutation
              for continuation in branch_continuations) != graph.permutations:
         raise ValueError("graph and numerical monodromy systems differ")
-    cut_system = _ribbon_tree_cotree_cut_system(graph)
+    if cut_system is None:
+        cut_system = _ribbon_tree_cotree_cut_system(graph)
     polygon = _canonical_ribbon_polygon(graph, cut_system)
     numerical = _numerical_graph_cycles_from_continuations(
         ctx, graph, branch_continuations)
@@ -2694,7 +2741,8 @@ def _numerical_canonical_polygon_from_continuations(
     )
 
 
-def _numerical_ordered_canonical_polygon(ctx, graph, monodromy):
+def _numerical_ordered_canonical_polygon(
+        ctx, graph, monodromy, cut_system=None):
     """Lift canonical loops using ribbon-ordered numerical generators."""
     identity = tuple(range(len(monodromy.base_sheets)))
     generators = tuple(
@@ -2705,10 +2753,12 @@ def _numerical_ordered_canonical_polygon(ctx, graph, monodromy):
         raise ValueError("graph and ordered monodromy systems differ")
     return _numerical_canonical_polygon_from_continuations(
         ctx, graph,
-        tuple(generator.continuation for generator in generators))
+        tuple(generator.continuation for generator in generators),
+        cut_system=cut_system)
 
 
-def _numerical_canonical_polygon(ctx, graph, monodromy):
+def _numerical_canonical_polygon(
+        ctx, graph, monodromy, cut_system=None):
     """Lift canonical loops from a finite-then-infinity monodromy system."""
     expected = _monodromy_graph_permutations(monodromy)
     if graph.permutations != expected:
@@ -2717,7 +2767,7 @@ def _numerical_canonical_polygon(ctx, graph, monodromy):
     if len(continuations) != len(expected):
         continuations = continuations[:-1]
     return _numerical_canonical_polygon_from_continuations(
-        ctx, graph, continuations)
+        ctx, graph, continuations, cut_system=cut_system)
 
 
 def _transform_lifted_path_chains(chains, transformation):
