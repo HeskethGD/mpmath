@@ -57,9 +57,17 @@ _LiftedGraphEdge = namedtuple(
     "_LiftedGraphEdge", "tail head branch_index sheet")
 _LiftedMonodromyGraph = namedtuple(
     "_LiftedMonodromyGraph",
-    "degree genus permutations branch_cycles vertices edges rotation "
+    "degree genus permutations branch_orientations branch_cycles "
+    "vertices edges rotation "
     "tree_edges chord_edges cycles intersection boundary_components "
     "intersection_rank")
+_RibbonCutSystem = namedtuple(
+    "_RibbonCutSystem",
+    "root tree_edges cotree_edges generator_edges loops boundary_word "
+    "intersection")
+_CanonicalPolygon = namedtuple(
+    "_CanonicalPolygon",
+    "root a_words b_words a_loops b_loops relator intersection")
 _SymplecticReduction = namedtuple(
     "_SymplecticReduction",
     "transformation form genus radical_rank")
@@ -70,6 +78,11 @@ _GraphCycleWord = namedtuple(
 _NumericalGraphCycles = namedtuple(
     "_NumericalGraphCycles",
     "branch_continuations words chains")
+_NumericalCanonicalPolygon = namedtuple(
+    "_NumericalCanonicalPolygon",
+    "polygon generator_chains a_chains b_chains chains "
+    "generator_continuations a_continuations b_continuations "
+    "transformation intersection_form")
 _PlaneCurvePeriods = namedtuple(
     "_PlaneCurvePeriods",
     "periods a_periods b_periods tau symmetry_residual "
@@ -91,12 +104,22 @@ CurvePeriods = namedtuple(
     "genus differentials omega omega_prime tau eta eta_prime kappa "
     "symmetry_residual kappa_symmetry_residual imaginary_eigenvalues "
     "max_sheet_residual")
+CurveRiemannConstant = namedtuple(
+    "CurveRiemannConstant",
+    "value characteristic base_place max_sheet_residual")
 CurveCheck = namedtuple("CurveCheck", "name value passed")
 CurveValidation = namedtuple(
     "CurveValidation", "kind passed maximum_residual checks")
-CurvePlace = namedtuple("CurvePlace", "x y")
+CurvePlace = namedtuple(
+    "CurvePlace", "x y chart", defaults=(None,))
+CurveChart = namedtuple(
+    "CurveChart", "curve_key curve coordinate_map")
+_CurveChartTail = namedtuple(
+    "_CurveChartTail", "chart branch")
 CurvePath = namedtuple(
-    "CurvePath", "curve_key start end sheet continuation")
+    "CurvePath",
+    "curve_key start end sheet continuation start_tail end_tail",
+    defaults=(None, None))
 CurveIntegral = namedtuple(
     "CurveIntegral", "values max_sheet_residual segments")
 CurveLatticeReduction = namedtuple(
@@ -329,24 +352,36 @@ def _plane_curve_resultant_y(ctx, curve):
 
 def _plane_curve_critical_values(ctx, curve):
     """Return distinct finite candidates from the y-resultant."""
-    resultant = _plane_curve_resultant_y(ctx, curve)
-    if len(resultant) <= 1:
-        raise ValueError("the projection has no finite critical polynomial")
-    squarefree = _polynomial_squarefree_part(ctx, resultant)
-    try:
-        roots = tuple(ctx.polyroots(
-            squarefree, maxsteps=1000, error=False))
-    except Exception as exc:
-        raise ValueError("failed to resolve finite critical values") from exc
-    scale = max([ctx.one] + [abs(root) for root in roots])
-    tolerance = ctx.sqrt(ctx.eps) * scale
-    distinct = []
-    for root in sorted(roots, key=lambda value: (
-            ctx.re(value), ctx.im(value))):
-        if not distinct or min(abs(root - value)
-                               for value in distinct) > tolerance:
-            distinct.append(root)
-    return tuple(distinct), resultant
+    failure = None
+    for extra_precision in (30, 60, 120):
+        no_finite_polynomial = False
+        try:
+            with ctx.extraprec(extra_precision):
+                resultant = _plane_curve_resultant_y(ctx, curve)
+                if len(resultant) <= 1:
+                    no_finite_polynomial = True
+                else:
+                    squarefree = _polynomial_squarefree_part(ctx, resultant)
+                    roots = tuple(ctx.polyroots(
+                        squarefree, maxsteps=1000, error=False))
+                    scale = max([ctx.one] + [abs(root) for root in roots])
+                    tolerance = ctx.sqrt(ctx.eps) * scale
+                    distinct = []
+                    for root in sorted(roots, key=lambda value: (
+                            ctx.re(value), ctx.im(value))):
+                        if not distinct or min(
+                                abs(root - value) for value in distinct
+                                ) > tolerance:
+                            distinct.append(root)
+        except (ValueError, ZeroDivisionError, ctx.NoConvergence) as exc:
+            failure = exc
+            continue
+        if no_finite_polynomial:
+            raise ValueError(
+                "the projection has no finite critical polynomial")
+        return (tuple(+value for value in distinct),
+                tuple(+value for value in resultant))
+    raise ValueError("failed to resolve finite critical values") from failure
 
 
 def _evaluate_plane_polynomial(ctx, curve, x, y):
@@ -997,6 +1032,33 @@ def _reverse_plane_curve_continuation(ctx, continuation):
     )
 
 
+def _align_closed_continuation_base_fibre(ctx, continuation, base_fibre):
+    """Relabel a closed continuation to a specified common base fibre."""
+    scale = max(ctx.one, abs(continuation.path[0]),
+                abs(continuation.path[-1]))
+    if abs(continuation.path[-1] - continuation.path[0]) > (
+            ctx.sqrt(ctx.eps) * scale):
+        raise ValueError("base-fibre alignment requires a closed path")
+    assignment = _minimum_cost_assignment(
+        ctx, tuple(base_fibre), continuation.fibres[0])
+    fibres = tuple(tuple(fibre[index] for index in assignment)
+                   for fibre in continuation.fibres)
+    permutation = _closed_path_permutation(
+        ctx, continuation.path, fibres[-1], fibres[0])
+    return _SheetContinuation(
+        sheets=fibres[-1],
+        permutation=permutation,
+        max_residual=continuation.max_residual,
+        min_separation=continuation.min_separation,
+        max_prediction_correction=(
+            continuation.max_prediction_correction),
+        steps=continuation.steps,
+        path=continuation.path,
+        fibres=fibres,
+        refinements=continuation.refinements,
+    )
+
+
 def _concatenate_plane_curve_continuations(ctx, left, right):
     """Join continued paths, relabeling the right fibre at the common point."""
     left_degree = len(left.fibres[0])
@@ -1343,6 +1405,53 @@ def _integrate_plane_curve_path_iterated(
         iterated=tuple(tuple(row) for row in iterated),
         max_sheet_residual=max_sheet_residual,
         segments=len(continuation.path) - 1,
+    )
+
+
+def _concatenate_iterated_path_integrals(ctx, left, right):
+    """Compose level-two path integrals using Chen concatenation.
+
+    See K.-T. Chen, *Iterated path integrals*, Bull. Amer. Math. Soc. 83
+    (1977), 831--879, doi:10.1090/S0002-9904-1977-14320-6.  Our matrix
+    entry ``[outer][inner]`` integrates ``inner`` before ``outer``.
+    """
+    count = len(left.values)
+    if (len(right.values) != count
+            or len(left.iterated) != count
+            or len(right.iterated) != count
+            or any(len(row) != count
+                   for row in left.iterated + right.iterated)):
+        raise ValueError("iterated path integrals have incompatible sizes")
+    values = tuple(
+        left.values[index] + right.values[index]
+        for index in range(count))
+    iterated = tuple(tuple(
+        left.iterated[outer][inner]
+        + right.iterated[outer][inner]
+        + right.values[outer] * left.values[inner]
+        for inner in range(count)) for outer in range(count))
+    return _IteratedPathIntegrals(
+        values=values,
+        iterated=iterated,
+        max_sheet_residual=max(
+            left.max_sheet_residual, right.max_sheet_residual),
+        segments=left.segments + right.segments,
+    )
+
+
+def _reverse_iterated_path_integrals(ctx, integral):
+    """Reverse level-two path integrals by Chen's reversal identity."""
+    count = len(integral.values)
+    if (len(integral.iterated) != count
+            or any(len(row) != count for row in integral.iterated)):
+        raise ValueError("iterated path integral has an incompatible size")
+    return _IteratedPathIntegrals(
+        values=tuple(-value for value in integral.values),
+        iterated=tuple(tuple(
+            integral.iterated[inner][outer]
+            for inner in range(count)) for outer in range(count)),
+        max_sheet_residual=integral.max_sheet_residual,
+        segments=integral.segments,
     )
 
 
@@ -1722,10 +1831,19 @@ def _tree_path(adjacency, start, end):
     raise ValueError("lifted graph is disconnected")
 
 
-def _ribbon_boundary_count(edges, rotation):
-    """Count boundary components of the oriented thickened graph."""
+def _ribbon_boundary_orbits(edges, rotation, included_edges=None):
+    """Return oriented boundary orbits of a thickened ribbon subgraph."""
+    if included_edges is None:
+        included_edges = set(range(len(edges)))
+    else:
+        included_edges = set(included_edges)
     successor = {}
     for half_edges in rotation.values():
+        half_edges = tuple(
+            half_edge for half_edge in half_edges
+            if half_edge[0] in included_edges)
+        if not half_edges:
+            continue
         for index, half_edge in enumerate(half_edges):
             successor[half_edge] = half_edges[(index + 1) % len(half_edges)]
 
@@ -1734,15 +1852,291 @@ def _ribbon_boundary_count(edges, rotation):
         return successor[(edge, 1 - endpoint)]
 
     unvisited = set(successor)
-    count = 0
+    orbits = []
     while unvisited:
-        count += 1
         start = next(iter(unvisited))
         current = start
+        orbit = []
         while current in unvisited:
             unvisited.remove(current)
+            orbit.append(current)
             current = boundary_step(current)
-    return count
+        if current != start:
+            raise ValueError("ribbon boundary orbit does not close")
+        orbits.append(tuple(orbit))
+    return tuple(orbits)
+
+
+def _ribbon_boundary_count(edges, rotation):
+    """Count boundary components of the oriented thickened graph."""
+    return len(_ribbon_boundary_orbits(edges, rotation))
+
+
+def _ribbon_tree_cotree_cut_system(graph):
+    """Construct a certified one-face cut system of a ribbon graph.
+
+    This is the tree--cotree construction of Eppstein, *Dynamic generators
+    of topologically embedded graphs*, SODA 2003, arXiv:cs/0207082, and
+    Erickson--Whittlesey, *Greedy optimal homotopy and homology generators*,
+    SODA 2005.  The returned loops retain oriented graph-edge paths; unlike a
+    homology matrix alone, that data can later support a canonical polygon
+    and iterated path integrals.
+    """
+    edges = graph.edges
+    tree_edges = tuple(graph.tree_edges)
+    tree_set = set(tree_edges)
+    faces = _ribbon_boundary_orbits(edges, graph.rotation)
+    half_edge_face = {
+        half_edge: face_index
+        for face_index, face in enumerate(faces)
+        for half_edge in face
+    }
+
+    parent = list(range(len(faces)))
+
+    def find(index):
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
+
+    cotree_edges = []
+    for edge_index in range(len(edges)):
+        if edge_index in tree_set:
+            continue
+        left = find(half_edge_face[(edge_index, 0)])
+        right = find(half_edge_face[(edge_index, 1)])
+        if left != right:
+            parent[left] = right
+            cotree_edges.append(edge_index)
+    if len(cotree_edges) != len(faces) - 1:
+        raise ValueError("dual complement of ribbon tree is disconnected")
+
+    cotree_set = set(cotree_edges)
+    generator_edges = tuple(
+        edge_index for edge_index in range(len(edges))
+        if edge_index not in tree_set and edge_index not in cotree_set)
+    if len(generator_edges) != 2 * graph.genus:
+        raise ValueError("tree-cotree complement does not have 2*g edges")
+
+    cut_edges = tree_set | set(generator_edges)
+    cut_boundaries = _ribbon_boundary_orbits(
+        edges, graph.rotation, cut_edges)
+    if len(cut_boundaries) != 1:
+        raise ValueError("tree-cotree cut system does not have one face")
+    boundary_word = tuple(
+        (edge_index, 1 if endpoint == 0 else -1)
+        for edge_index, endpoint in cut_boundaries[0]
+        if edge_index in generator_edges)
+    if len(boundary_word) != 4 * graph.genus:
+        raise ValueError("cut-system polygon has the wrong side count")
+    for edge_index in generator_edges:
+        occurrences = tuple(
+            orientation for edge, orientation in boundary_word
+            if edge == edge_index)
+        if sorted(occurrences) != [-1, 1]:
+            raise ValueError("cut-system side pairing is inconsistent")
+
+    adjacency = {vertex: [] for vertex in graph.vertices}
+    for edge_index in tree_edges:
+        edge = edges[edge_index]
+        adjacency[edge.tail].append((edge.head, edge_index, 1))
+        adjacency[edge.head].append((edge.tail, edge_index, -1))
+    root = min(graph.vertices)
+    loops = []
+    cycles = []
+    for edge_index in generator_edges:
+        edge = edges[edge_index]
+        loop = (_tree_path(adjacency, root, edge.tail)
+                + ((edge_index, 1),)
+                + _tree_path(adjacency, edge.head, root))
+        coefficients = [0] * len(edges)
+        for loop_edge, orientation in loop:
+            coefficients[loop_edge] += orientation
+        if any(coefficient not in (-1, 0, 1)
+               for coefficient in coefficients):
+            raise ValueError("cut-system loop repeats an oriented edge")
+        loops.append(loop)
+        cycles.append(tuple(coefficients))
+    intersection = tuple(
+        tuple(_ribbon_cycle_intersection(
+            edges, graph.rotation, left, right) for right in cycles)
+        for left in cycles)
+    if _integer_matrix_rank(intersection) != 2 * graph.genus:
+        raise ValueError("cut-system loops have degenerate intersection")
+    return _RibbonCutSystem(
+        root=root,
+        tree_edges=tree_edges,
+        cotree_edges=tuple(cotree_edges),
+        generator_edges=generator_edges,
+        loops=tuple(loops),
+        boundary_word=boundary_word,
+        intersection=intersection,
+    )
+
+
+def _inverse_oriented_word(word):
+    """Return the inverse of a word of ``(symbol, orientation)`` pairs."""
+    return tuple((symbol, -orientation)
+                 for symbol, orientation in reversed(word))
+
+
+def _free_reduce_oriented_word(word):
+    """Cancel adjacent inverse pairs in an oriented word."""
+    reduced = []
+    for symbol, orientation in word:
+        token = (symbol, orientation)
+        if reduced and reduced[-1] == (symbol, -orientation):
+            reduced.pop()
+        else:
+            reduced.append(token)
+    return tuple(reduced)
+
+
+def _brahana_canonical_words(boundary_word):
+    """Rewrite an orientable polygon word as canonical commutators.
+
+    This implements Step 2 of the Brahana transformation as stated in
+    Lazarus--Pocchiola--Vegter--Verroust, *Computing a Canonical Polygonal
+    Schema of an Orientable Triangulated Surface*, SoCG 2001, Section 5.
+    Every returned generator remains an explicit free-group word in the
+    input sides; no abelianization or homology-only substitution is used.
+    """
+    remaining = tuple(boundary_word)
+    if len(remaining) % 4:
+        raise ValueError("orientable polygon must have 4*g sides")
+    symbols = {symbol for symbol, unused in remaining}
+    for symbol in symbols:
+        occurrences = tuple(
+            orientation for candidate, orientation in remaining
+            if candidate == symbol)
+        if sorted(occurrences) != [-1, 1]:
+            raise ValueError(
+                "orientable polygon sides must occur with opposite signs")
+
+    pairs = []
+    while remaining:
+        a = remaining[0]
+        a_inverse = (a[0], -a[1])
+        try:
+            a_inverse_index = remaining.index(a_inverse, 1)
+        except ValueError:
+            raise ValueError("polygon side has no inverse partner")
+
+        crossing = None
+        for b_index in range(1, a_inverse_index):
+            b = remaining[b_index]
+            b_inverse = (b[0], -b[1])
+            try:
+                b_inverse_index = remaining.index(
+                    b_inverse, a_inverse_index + 1)
+            except ValueError:
+                continue
+            crossing = b_index, b_inverse_index
+            break
+        if crossing is None:
+            raise ValueError(
+                "polygon word has no interlaced orientable handle")
+        b_index, b_inverse_index = crossing
+        b = remaining[b_index]
+        x1 = remaining[1:b_index]
+        x2 = remaining[b_index + 1:a_inverse_index]
+        x3 = remaining[a_inverse_index + 1:b_inverse_index]
+        x4 = remaining[b_inverse_index + 1:]
+
+        # With M = a X1 b X2 a^-1 X3 b^-1 X4, Brahana's
+        # x = a X1 b X2 a^-1 and y = X3 X2 a^-1 give the exact free-word
+        # identity M = [x,y] X3 X2 X1 X4.
+        x = _free_reduce_oriented_word(
+            (a,) + x1 + (b,) + x2 + (a_inverse,))
+        y = _free_reduce_oriented_word(x3 + x2 + (a_inverse,))
+        pairs.append((x, y))
+        remaining = x3 + x2 + x1 + x4
+
+    relator = ()
+    for a, b in pairs:
+        relator = _free_reduce_oriented_word(
+            relator + a + b
+            + _inverse_oriented_word(a)
+            + _inverse_oriented_word(b))
+    if relator != tuple(boundary_word):
+        raise ValueError(
+            "canonical commutators do not reproduce the polygon relator")
+    return tuple(pairs)
+
+
+def _expand_cut_system_word(word, generator_loops):
+    """Expand a free word in cut generators to oriented ribbon edges."""
+    result = ()
+    for generator, orientation in word:
+        try:
+            loop = generator_loops[generator]
+        except IndexError:
+            raise ValueError("canonical word has an invalid generator")
+        if orientation == -1:
+            loop = _inverse_oriented_word(loop)
+        elif orientation != 1:
+            raise ValueError("word orientations must be +1 or -1")
+        result = _free_reduce_oriented_word(result + loop)
+    return result
+
+
+def _canonical_ribbon_polygon(graph, cut_system=None):
+    """Return canonical based loops with their exact polygon relator.
+
+    The word conversion is Brahana's algorithm in Section 5 of
+    Lazarus--Pocchiola--Vegter--Verroust (SoCG 2001).  Keeping the free words
+    and expanded edge paths is essential for the canonical-dissection formula
+    for Riemann constants; a symplectic homology matrix is not sufficient.
+    """
+    if cut_system is None:
+        cut_system = _ribbon_tree_cotree_cut_system(graph)
+    generator_index = {
+        edge: index for index, edge in enumerate(
+            cut_system.generator_edges)
+    }
+    boundary_word = tuple(
+        (generator_index[edge], orientation)
+        for edge, orientation in cut_system.boundary_word)
+    pairs = _brahana_canonical_words(boundary_word)
+    a_words = tuple(pair[0] for pair in pairs)
+    b_words = tuple(pair[1] for pair in pairs)
+    a_loops = tuple(_expand_cut_system_word(
+        word, cut_system.loops) for word in a_words)
+    b_loops = tuple(_expand_cut_system_word(
+        word, cut_system.loops) for word in b_words)
+
+    loops = a_loops + b_loops
+    cycles = []
+    for loop in loops:
+        coefficients = [0] * len(graph.edges)
+        for edge, orientation in loop:
+            coefficients[edge] += orientation
+        cycles.append(tuple(coefficients))
+    intersection = tuple(
+        tuple(_ribbon_cycle_intersection(
+            graph.edges, graph.rotation, left, right)
+            for right in cycles)
+        for left in cycles)
+    genus = graph.genus
+    expected = tuple(tuple(
+        1 if row < genus and column == genus + row
+        else -1 if column < genus and row == genus + column
+        else 0
+        for column in range(2 * genus))
+        for row in range(2 * genus))
+    if intersection != expected:
+        raise ValueError(
+            "canonical polygon loops have the wrong intersection form")
+    return _CanonicalPolygon(
+        root=cut_system.root,
+        a_words=a_words,
+        b_words=b_words,
+        a_loops=a_loops,
+        b_loops=b_loops,
+        relator=boundary_word,
+        intersection=intersection,
+    )
 
 
 def _ribbon_cycle_intersection(edges, rotation, left, right):
@@ -1768,7 +2162,7 @@ def _ribbon_cycle_intersection(edges, rotation, left, right):
     return -numerator // 2
 
 
-def _lifted_monodromy_graph(permutations):
+def _lifted_monodromy_graph(permutations, branch_orientations=None):
     """Construct the lifted ribbon graph of a Hurwitz monodromy system."""
     permutations = tuple(tuple(permutation)
                          for permutation in permutations)
@@ -1780,6 +2174,14 @@ def _lifted_monodromy_graph(permutations):
         raise ValueError("monodromy permutations must have one common degree")
     for permutation in permutations:
         _permutation_cycles(permutation, include_fixed=True)
+    if branch_orientations is None:
+        branch_orientations = (1,) * len(permutations)
+    else:
+        branch_orientations = tuple(branch_orientations)
+    if (len(branch_orientations) != len(permutations)
+            or any(value not in (-1, 1)
+                   for value in branch_orientations)):
+        raise ValueError("branch orientations must be +1 or -1")
     if len(_monodromy_orbit(permutations)) != degree:
         raise ValueError("the monodromy action is not transitive")
 
@@ -1799,12 +2201,16 @@ def _lifted_monodromy_graph(permutations):
     for branch_index, cycles in enumerate(branch_cycles):
         for cycle_index, cycle in enumerate(cycles):
             branch_vertex = ("branch", branch_index, cycle_index)
-            # A positive base loop advances sheets in ``cycle`` order.  The
-            # lifted radial half-edges point out of the ramification place,
-            # so their positive surface rotation is the inverse cyclic order.
-            # Transpositions conceal this distinction; higher ramification
-            # makes it essential for the intersection orientation.
-            for sheet in reversed(cycle):
+            # A positively oriented generator induces the inverse cyclic
+            # order on the lifted radial half-edges.  A negative orientation
+            # reverses both this rotation and the later numerical word
+            # realization.  Notice that the clockwise outer circle used for
+            # infinity is positive here: in the local coordinate z=1/x it is
+            # counter-clockwise around z=0.
+            ordered_cycle = (tuple(reversed(cycle))
+                             if branch_orientations[branch_index] == 1
+                             else cycle)
+            for sheet in ordered_cycle:
                 edge_index = len(edges)
                 base_vertex = ("base", sheet)
                 edges.append(_LiftedGraphEdge(
@@ -1871,6 +2277,7 @@ def _lifted_monodromy_graph(permutations):
         degree=degree,
         genus=genus,
         permutations=permutations,
+        branch_orientations=branch_orientations,
         branch_cycles=branch_cycles,
         vertices=vertices,
         edges=tuple(edges),
@@ -1956,6 +2363,8 @@ def _monodromy_branch_continuations(ctx, monodromy):
         finite_product = _concatenate_plane_curve_continuations(
             ctx, finite_product, continuation)
     infinity = _reverse_plane_curve_continuation(ctx, finite_product)
+    infinity = _align_closed_continuation_base_fibre(
+        ctx, infinity, finite[0].fibres[0])
     if infinity.permutation != monodromy.infinity_permutation:
         raise ValueError("numerical infinity monodromy is inconsistent")
     return finite + (infinity,)
@@ -1975,20 +2384,48 @@ def _monodromy_graph_permutations(monodromy):
     return permutations
 
 
-def _continue_graph_cycle_word(ctx, branch_continuations, word):
+def _continue_graph_cycle_word(
+        ctx, branch_continuations, word, branch_orientations=None):
     """Return the numerical continuation represented by a branch-loop word."""
+    if branch_orientations is None:
+        branch_orientations = (1,) * len(branch_continuations)
+    if len(branch_orientations) != len(branch_continuations):
+        raise ValueError("branch orientations and continuations differ")
     result = None
+    sheet = word.start_sheet
     for step in word.steps:
         try:
             continuation = branch_continuations[step.branch_index]
+            orientation = branch_orientations[step.branch_index]
         except IndexError:
             raise ValueError("branch-loop word has an invalid branch index")
-        for unused in range(step.turns):
+        repeats = step.turns
+        if orientation == -1:
+            permutation = continuation.permutation
+            cycle_length = 1
+            image = permutation[sheet]
+            while image != sheet:
+                image = permutation[image]
+                cycle_length += 1
+                if cycle_length > len(permutation):
+                    raise ValueError("invalid branch permutation cycle")
+            repeats = cycle_length - step.turns
+            continuation = _reverse_plane_curve_continuation(
+                ctx, continuation)
+            continuation = _align_closed_continuation_base_fibre(
+                ctx, continuation,
+                branch_continuations[step.branch_index].fibres[0])
+        elif orientation != 1:
+            raise ValueError("branch orientations must be +1 or -1")
+        for unused in range(repeats):
             if result is None:
                 result = continuation
             else:
                 result = _concatenate_plane_curve_continuations(
                     ctx, result, continuation)
+        for unused in range(step.turns):
+            sheet = branch_continuations[
+                step.branch_index].permutation[sheet]
     if result is None:
         raise ValueError("branch-loop word must not be empty")
     return result
@@ -2006,7 +2443,7 @@ def _numerical_graph_cycles_from_continuations(
     chains = []
     for word in words:
         continuation = _continue_graph_cycle_word(
-            ctx, branch_continuations, word)
+            ctx, branch_continuations, word, graph.branch_orientations)
         chain = _prepare_lifted_path_chain((
             (1, continuation, word.start_sheet),))
         if _lifted_path_chain_boundary(ctx, chain):
@@ -2035,10 +2472,16 @@ def _numerical_graph_cycles(ctx, graph, monodromy):
 def _ordered_monodromy_graph(monodromy):
     """Construct a graph from explicitly ribbon-ordered generators."""
     identity = tuple(range(len(monodromy.base_sheets)))
-    permutations = tuple(
-        generator.permutation for generator in monodromy.ribbon_generators
+    generators = tuple(
+        generator for generator in monodromy.ribbon_generators
         if generator.permutation != identity)
-    return _lifted_monodromy_graph(permutations)
+    permutations = tuple(
+        generator.permutation for generator in generators)
+    # Finite loops are counter-clockwise in x.  The clockwise outer circle is
+    # likewise positive at infinity because z=1/x reverses its apparent
+    # affine orientation.
+    orientations = (1,) * len(generators)
+    return _lifted_monodromy_graph(permutations, orientations)
 
 
 def _numerical_ordered_graph_cycles(ctx, graph, monodromy):
@@ -2053,6 +2496,227 @@ def _numerical_ordered_graph_cycles(ctx, graph, monodromy):
     continuations = tuple(
         generator.continuation for generator in generators)
     return _numerical_graph_cycles_from_continuations(
+        ctx, graph, continuations)
+
+
+def _graph_loop_coefficients(graph, loop):
+    """Return an edge-chain vector for an oriented graph-edge loop."""
+    coefficients = [0] * len(graph.edges)
+    for edge, orientation in loop:
+        coefficients[edge] += orientation
+    return tuple(coefficients)
+
+
+def _graph_path_branch_word(graph, path, start_vertex):
+    """Convert an oriented base-to-base graph path to branch-loop steps."""
+    current = start_vertex
+    vertices = [current]
+    for edge_index, orientation in path:
+        edge = graph.edges[edge_index]
+        source, target = ((edge.tail, edge.head) if orientation == 1
+                          else (edge.head, edge.tail))
+        if source != current:
+            raise ValueError("oriented graph path is not continuous")
+        current = target
+        vertices.append(current)
+    if (vertices[0][0] != "base" or vertices[-1][0] != "base"
+            or len(path) % 2):
+        raise ValueError("graph connector must run between base vertices")
+
+    steps = []
+    for index in range(0, len(path), 2):
+        left = vertices[index]
+        branch = vertices[index + 1]
+        right = vertices[index + 2]
+        if (left[0] != "base" or branch[0] != "branch"
+                or right[0] != "base"):
+            raise ValueError("graph connector does not alternate vertices")
+        branch_index = branch[1]
+        permutation = graph.permutations[branch_index]
+        image = left[1]
+        turns = 0
+        while image != right[1] and turns < graph.degree:
+            image = permutation[image]
+            turns += 1
+        if image != right[1]:
+            raise ValueError("graph connector disagrees with monodromy")
+        if turns:
+            steps.append(_BranchLoopStep(branch_index, turns))
+    return _GraphCycleWord(vertices[0][1], tuple(steps))
+
+
+def _concatenate_generator_continuations(ctx, word, continuations):
+    """Realize a free word in closed, commonly based continuations."""
+    result = None
+    for generator, orientation in word:
+        try:
+            continuation = continuations[generator]
+        except IndexError:
+            raise ValueError("canonical word has an invalid generator")
+        if orientation == -1:
+            continuation = _reverse_plane_curve_continuation(
+                ctx, continuation)
+        elif orientation != 1:
+            raise ValueError("word orientations must be +1 or -1")
+        result = (continuation if result is None else
+                  _concatenate_plane_curve_continuations(
+                      ctx, result, continuation))
+    if result is None:
+        raise ValueError("canonical generator word must not be empty")
+    return result
+
+
+def _based_cut_generator_continuations(
+        ctx, graph, cut_system, branch_continuations):
+    """Realize cut generators as connector-cycle-connector inverse loops."""
+    adjacency = {vertex: [] for vertex in graph.vertices}
+    for edge_index in cut_system.tree_edges:
+        edge = graph.edges[edge_index]
+        adjacency[edge.tail].append((edge.head, edge_index, 1))
+        adjacency[edge.head].append((edge.tail, edge_index, -1))
+    result = []
+    for loop in cut_system.loops:
+        simple_word = _graph_cycle_word(
+            graph, _graph_loop_coefficients(graph, loop))
+        simple = _continue_graph_cycle_word(
+            ctx, branch_continuations, simple_word,
+            graph.branch_orientations)
+        cycle_base = ("base", simple_word.start_sheet)
+        connector_path = _tree_path(
+            adjacency, cut_system.root, cycle_base)
+        connector_word = _graph_path_branch_word(
+            graph, connector_path, cut_system.root)
+        if connector_word.steps:
+            connector = _continue_graph_cycle_word(
+                ctx, branch_continuations, connector_word,
+                graph.branch_orientations)
+            based = _concatenate_plane_curve_continuations(
+                ctx, connector, simple)
+            based = _concatenate_plane_curve_continuations(
+                ctx, based,
+                _reverse_plane_curve_continuation(ctx, connector))
+        else:
+            based = simple
+        if based.permutation[cut_system.root[1]] != cut_system.root[1]:
+            raise ValueError("based cut generator does not close")
+        result.append(based)
+    return tuple(result)
+
+
+def _oriented_word_exponents(word, size):
+    """Return the abelianized coefficient row of an oriented word."""
+    result = [0] * size
+    for symbol, orientation in word:
+        if (not isinstance(symbol, int) or symbol < 0 or symbol >= size
+                or orientation not in (-1, 1)):
+            raise ValueError("word has an invalid generator")
+        result[symbol] += orientation
+    return tuple(result)
+
+
+def _numerical_canonical_polygon_from_continuations(
+        ctx, graph, branch_continuations):
+    """Lift the homology chains induced by a canonical ribbon polygon.
+
+    The polygon retains full based free words separately.  Ordinary period
+    integration depends only on their abelianized chains; iterated integrals
+    must later realize the based words without dropping tree conjugations.
+    """
+    branch_continuations = tuple(branch_continuations)
+    if tuple(continuation.permutation
+             for continuation in branch_continuations) != graph.permutations:
+        raise ValueError("graph and numerical monodromy systems differ")
+    cut_system = _ribbon_tree_cotree_cut_system(graph)
+    polygon = _canonical_ribbon_polygon(graph, cut_system)
+    numerical = _numerical_graph_cycles_from_continuations(
+        ctx, graph, branch_continuations)
+    generator_transformation = tuple(tuple(
+        _graph_loop_coefficients(graph, loop)[chord]
+        for chord in graph.chord_edges)
+        for loop in cut_system.loops)
+    generator_chains = _transform_lifted_path_chains(
+        numerical.chains, generator_transformation)
+    words = polygon.a_words + polygon.b_words
+    canonical_transformation = tuple(
+        _oriented_word_exponents(word, len(generator_chains))
+        for word in words)
+    compact_transformation = tuple(tuple(sum(
+        canonical_transformation[row][middle]
+        * generator_transformation[middle][column]
+        for middle in range(len(generator_transformation)))
+        for column in range(len(graph.cycles)))
+        for row in range(2 * graph.genus))
+    reduction = _symplectic_reduce_intersection(graph.intersection)
+    transformation = (compact_transformation
+                      + reduction.transformation[2 * graph.genus:])
+    if abs(_integer_determinant(transformation)) != 1:
+        raise ValueError("canonical polygon transformation is not primitive")
+    intersection_form = tuple(tuple(sum(
+        transformation[row][left] * graph.intersection[left][right]
+        * transformation[column][right]
+        for left in range(len(graph.cycles))
+        for right in range(len(graph.cycles)))
+        for column in range(len(graph.cycles)))
+        for row in range(len(graph.cycles)))
+    if intersection_form != reduction.form:
+        raise ValueError(
+            "canonical polygon transformation has the wrong intersection")
+    chains = _transform_lifted_path_chains(
+        numerical.chains, compact_transformation)
+    if any(_lifted_path_chain_boundary(ctx, chain) for chain in chains):
+        raise ValueError("canonical polygon chain has nonzero boundary")
+    genus = graph.genus
+    generator_continuations = _based_cut_generator_continuations(
+        ctx, graph, cut_system, branch_continuations)
+    a_continuations = tuple(
+        _concatenate_generator_continuations(
+            ctx, word, generator_continuations)
+        for word in polygon.a_words)
+    b_continuations = tuple(
+        _concatenate_generator_continuations(
+            ctx, word, generator_continuations)
+        for word in polygon.b_words)
+    if any(continuation.permutation[cut_system.root[1]]
+           != cut_system.root[1]
+           for continuation in a_continuations + b_continuations):
+        raise ValueError("canonical based generator does not close")
+    return _NumericalCanonicalPolygon(
+        polygon=polygon,
+        generator_chains=generator_chains,
+        a_chains=chains[:genus],
+        b_chains=chains[genus:],
+        chains=chains,
+        generator_continuations=generator_continuations,
+        a_continuations=a_continuations,
+        b_continuations=b_continuations,
+        transformation=transformation,
+        intersection_form=intersection_form,
+    )
+
+
+def _numerical_ordered_canonical_polygon(ctx, graph, monodromy):
+    """Lift canonical loops using ribbon-ordered numerical generators."""
+    identity = tuple(range(len(monodromy.base_sheets)))
+    generators = tuple(
+        generator for generator in monodromy.ribbon_generators
+        if generator.permutation != identity)
+    expected = tuple(generator.permutation for generator in generators)
+    if graph.permutations != expected:
+        raise ValueError("graph and ordered monodromy systems differ")
+    return _numerical_canonical_polygon_from_continuations(
+        ctx, graph,
+        tuple(generator.continuation for generator in generators))
+
+
+def _numerical_canonical_polygon(ctx, graph, monodromy):
+    """Lift canonical loops from a finite-then-infinity monodromy system."""
+    expected = _monodromy_graph_permutations(monodromy)
+    if graph.permutations != expected:
+        raise ValueError("graph and numerical monodromy systems differ")
+    continuations = _monodromy_branch_continuations(ctx, monodromy)
+    if len(continuations) != len(expected):
+        continuations = continuations[:-1]
+    return _numerical_canonical_polygon_from_continuations(
         ctx, graph, continuations)
 
 
@@ -2191,7 +2855,24 @@ def _radial_plane_curve_monodromy(
     if product != tuple(range(curve.y_degree)):
         raise ValueError("radial monodromy product is not the identity")
 
-    ribbon_generators = tuple(reversed(finite_generators)) + (infinity,)
+    # The cyclic order at the common base point is geometric, not in
+    # general the reverse of the continuation-product order.  In particular,
+    # the outgoing tangent of the outer infinity circle can lie between two
+    # finite spokes.  Sorting all generators by that tangent gives the ribbon
+    # rotation used by the lifted graph (up to an irrelevant cyclic shift).
+    # Using a guessed order can leave a nominal radical cycle with a nonzero
+    # holomorphic period.
+    def outgoing_angle(generator):
+        path = generator.continuation.path
+        for left, right in zip(path, path[1:]):
+            if right != left:
+                return ctx.arg(right - left)
+        raise ValueError("monodromy generator has no outgoing tangent")
+
+    # ``rotation`` is stored clockwise by the ribbon-graph conventions used
+    # below, hence the descending angular order.
+    ribbon_generators = tuple(sorted(
+        product_generators, key=outgoing_angle, reverse=True))
     permutations = tuple(
         generator.permutation for generator in ribbon_generators)
     if len(_monodromy_orbit(permutations)) != curve.y_degree:
@@ -2267,26 +2948,42 @@ def _normalised_differentials(ctx, differentials, a_periods):
     return tuple(result)
 
 
-def _riemann_constant_vector(
-        ctx, curve, monodromy, canonical_cycles, differentials,
+def _canonical_polygon_riemann_constant(
+        ctx, curve, numerical_polygon, differentials,
         a_periods, tau, quadrature_order):
-    """Evaluate the Riemann-constant contour formula at the cycle base."""
+    """Evaluate the vector of Riemann constants from a canonical polygon.
+
+    This is equation (81) in Deconinck--Patterson, *Computing with plane
+    algebraic curves and Riemann surfaces: the algorithms of the Maple
+    package "Algcurves"*, Lecture Notes in Mathematics 2013 (2011), and
+    equation (6.1) in Patterson, *Algebraic Solitons* (2007).  Their contour
+    orientation is converted to the ribbon-boundary orientation retained by
+    this module.  The resulting value is mpmath's additive theta shift,
+    characterized by ``theta(A(D) + K) = 0``.  The input continuations are
+    certified based ``a``-loops of a canonical polygon; theta functions are
+    not used to construct or select the result.
+    """
+    differentials = tuple(differentials)
     genus = len(differentials)
+    if (len(numerical_polygon.a_continuations) != genus
+            or tau.rows != genus or tau.cols != genus):
+        raise ValueError(
+            "canonical polygon, differentials and periods disagree")
     normalised = _normalised_differentials(
         ctx, differentials, a_periods)
-    cycle_integrals = []
-    for cycle in canonical_cycles[:genus]:
-        loop = _chain_as_common_base_loop(ctx, cycle, monodromy)
-        cycle_integrals.append(_integrate_plane_curve_path_iterated(
-            ctx, curve, loop, normalised, sheet=0,
-            quadrature_order=quadrature_order))
+    cycle_integrals = tuple(
+        _integrate_plane_curve_path_iterated(
+            ctx, curve, continuation, normalised,
+            sheet=numerical_polygon.polygon.root[1],
+            quadrature_order=quadrature_order)
+        for continuation in numerical_polygon.a_continuations)
     value = ctx.matrix(genus, 1)
     for row in range(genus):
         correction = ctx.fsum(
             cycle_integrals[cycle].iterated[row][cycle]
             for cycle in range(genus) if cycle != row)
-        value[row] = (1 + tau[row, row]) / 2 - correction
-    return value, tuple(cycle_integrals), normalised
+        value[row] = (1 + tau[row, row]) / 2 + correction
+    return value, cycle_integrals, normalised
 
 
 def _jacobian_characteristic(ctx, value, tau):
@@ -2342,6 +3039,27 @@ def _normalise_curve_place(ctx, curve, place, name="place"):
             100 * ctx.sqrt(ctx.eps)):
         raise ValueError(name + " must be regular for the x projection")
     return _PlaneCurvePlace(x, y)
+
+
+def _normalise_curve_endpoint(ctx, curve, place, name):
+    """Return ``(junction, tail, public_place)`` for any place input.
+
+    A chart-backed place is checked for curve and numerical-context
+    ownership and reduced to its affine junction point together with the
+    local chart tail reaching the place itself.
+    """
+    if isinstance(place, CurvePlace) and place.chart is not None:
+        tail = place.chart
+        if not isinstance(tail, _CurveChartTail):
+            raise ValueError(name + " carries an invalid chart description")
+        if tail.chart.curve_key != (curve, _curve_cache_state(ctx)):
+            raise ValueError(
+                name + " was constructed for a different curve or precision")
+        junction = _normalise_curve_place(
+            ctx, curve, (place.x, place.y), name)
+        return junction, tail, CurvePlace(junction.x, junction.y, tail)
+    junction = _normalise_curve_place(ctx, curve, place, name)
+    return junction, None, CurvePlace(junction.x, junction.y)
 
 
 def _guarded_open_path(ctx, start, end, branch_points):
@@ -2452,102 +3170,6 @@ def _theta_divisor_samples(
     return tuple(samples)
 
 
-def _theta_divisor_riemann_constant(
-        ctx, tau, samples, initial_value):
-    """Determine the common theta-divisor shift from marked Abel images."""
-    genus = tau.rows
-    if genus == 1:
-        return ctx.matrix([(1 + tau[0, 0]) / 2])
-    lattice = _jacobian_lattice_matrix(ctx, tau)
-    lattice_inverse = lattice ** -1
-    zero_index = (0,) * genus
-    unit_indices = tuple(
-        tuple(1 if row == column else 0 for row in range(genus))
-        for column in range(genus))
-    fit_samples = samples[:genus]
-    tolerance = 100 * ctx.power(ctx.eps, ctx.mpf("0.35"))
-
-    def reduced(value):
-        return _reduce_jacobian_point(
-            ctx, value, tau, lattice_inverse)
-
-    def residual(value, selected):
-        result = []
-        for sample in selected:
-            theta = ctx.rtheta(reduced(sample + value), tau)
-            result.extend((ctx.re(theta), ctx.im(theta)))
-        return ctx.matrix(result)
-
-    def residual_jacobian(value):
-        result = []
-        jacobian = ctx.matrix(2 * genus, 2 * genus)
-        for sample_index, sample in enumerate(fit_samples):
-            jet = ctx.rtheta_jet(reduced(sample + value), tau, 1)
-            theta = jet[zero_index]
-            result.extend((ctx.re(theta), ctx.im(theta)))
-            for column, unit_index in enumerate(unit_indices):
-                derivative = jet[unit_index]
-                jacobian[2 * sample_index, column] = ctx.re(derivative)
-                jacobian[2 * sample_index, genus + column] = -ctx.im(
-                    derivative)
-                jacobian[2 * sample_index + 1, column] = ctx.im(
-                    derivative)
-                jacobian[2 * sample_index + 1, genus + column] = ctx.re(
-                    derivative)
-        return ctx.matrix(result), jacobian
-
-    def solve(start):
-        value = +start
-        for unused in range(20):
-            current, jacobian = residual_jacobian(value)
-            current_norm = ctx.norm(current)
-            if current_norm <= tolerance:
-                return value
-            try:
-                correction = ctx.lu_solve(jacobian, -current)
-            except (ZeroDivisionError, ValueError):
-                return None
-            step = ctx.one
-            while step >= ctx.mpf("0.001"):
-                candidate = value + ctx.matrix([
-                    correction[index]
-                    + ctx.j * correction[genus + index]
-                    for index in range(genus)
-                ]) * step
-                if ctx.norm(residual(candidate, fit_samples)) < current_norm:
-                    value = candidate
-                    break
-                step /= 2
-            else:
-                return None
-        return None
-
-    best_residual = ctx.inf
-    best_value = None
-    for mask in range(1 << (2 * genus)):
-        half_shift = tuple(
-            ctx.mpf("0.5") if mask & (1 << index) else ctx.zero
-            for index in range(2 * genus))
-        start = initial_value + ctx.matrix([
-            half_shift[row] + ctx.fsum(
-                tau[row, column] * half_shift[genus + column]
-                for column in range(genus))
-            for row in range(genus)
-        ])
-        candidate = solve(start)
-        if candidate is None:
-            continue
-        check = residual(candidate, samples)
-        check_residual = max(abs(entry) for entry in check)
-        if check_residual < best_residual:
-            best_residual = check_residual
-            best_value = candidate
-        if check_residual <= tolerance:
-            return reduced(candidate)
-    raise ctx.NoConvergence(
-        "failed to determine the Riemann constant from theta-divisor samples")
-
-
 # Cached computational stages
 # ---------------------------
 
@@ -2618,13 +3240,17 @@ def _stage_monodromy_graph(ctx, curve):
 
 
 @_curve_stage_cache(8)
-def _stage_canonical_cycles(ctx, curve):
-    """Return lifted-path chains realizing a canonical homology basis."""
-    graph, reduction = _stage_monodromy_graph(ctx, curve)
-    numerical = _numerical_ordered_graph_cycles(
+def _stage_canonical_polygon(ctx, curve):
+    """Return the certified numerical canonical polygon for a curve."""
+    graph, unused_reduction = _stage_monodromy_graph(ctx, curve)
+    return _numerical_ordered_canonical_polygon(
         ctx, graph, _stage_monodromy(ctx, curve))
-    return _transform_lifted_path_chains(
-        numerical.chains, reduction.transformation)
+
+
+@_curve_stage_cache(8)
+def _stage_canonical_cycles(ctx, curve):
+    """Return polygon sides realizing the canonical compact homology basis."""
+    return _stage_canonical_polygon(ctx, curve).chains
 
 
 @_curve_stage_cache(16)
@@ -2648,6 +3274,27 @@ def _stage_cycle_integrals(ctx, key):
         max_sheet_residual = max(
             max_sheet_residual, integral.max_sheet_residual)
     return tuple(columns), max_sheet_residual
+
+
+@_curve_stage_cache(8)
+def _stage_riemann_constant(ctx, key):
+    """Return the direct additive Riemann constant at the polygon base."""
+    curve, forms, quadrature_order = key
+    forms = tuple(forms)
+    genus = _stage_monodromy(ctx, curve).genus
+    if len(forms) != genus:
+        raise ValueError("one holomorphic differential is required per genus")
+    columns, unused_residual = _stage_cycle_integrals(
+        ctx, (curve, forms, quadrature_order))
+    periods = ctx.matrix([
+        [columns[column][row] for column in range(2 * genus)]
+        for row in range(genus)])
+    a_periods = periods[:, :genus]
+    raw_tau = a_periods ** -1 * periods[:, genus:]
+    tau = (raw_tau + raw_tau.T) / 2
+    polygon = _stage_canonical_polygon(ctx, curve)
+    return _canonical_polygon_riemann_constant(
+        ctx, curve, polygon, forms, a_periods, tau, quadrature_order)
 
 
 def _curve_differential_sequence(differentials, name):
@@ -2808,14 +3455,15 @@ def curve_homology(ctx, curve):
     prepared, unused_hyperelliptic = _normalise_algebraic_curve_input(
         ctx, curve)
     graph, reduction = _stage_monodromy_graph(ctx, prepared)
+    polygon = _stage_canonical_polygon(ctx, prepared)
     return CurveHomology(
         genus=reduction.genus,
         cycle_count=len(graph.cycles),
         boundary_components=graph.boundary_components,
         intersection_rank=graph.intersection_rank,
         radical_rank=reduction.radical_rank,
-        intersection_form=reduction.form,
-        transformation=reduction.transformation)
+        intersection_form=polygon.intersection_form,
+        transformation=polygon.transformation)
 
 
 @defun
@@ -2940,11 +3588,90 @@ def curve_riemann_matrix(ctx, curve, differentials=None):
 
 
 @defun
+def curve_riemann_constant(ctx, curve, differentials=None, *,
+                           base_place=None):
+    r"""Return the vector of Riemann constants for a plane curve.
+
+    The returned ``CurveRiemannConstant`` contains a direct representative of
+    the normalized Jacobian vector ``value`` in mpmath's additive convention
+    ``theta(A(D) + value, tau) = 0``, its literal ``(a, b)`` coordinates
+    ``value = tau*a + b`` modulo the period lattice, the requested
+    ``base_place`` (``None`` denotes the engine's natural base), and the
+    maximum sheet residual of the direct contour integrations.
+
+    For a general plane curve, ``differentials`` supplies one holomorphic
+    differential per genus, in exactly the basis accepted by
+    :func:`~mpmath.curve_periods`.  The value is computed directly from the
+    certified canonical polygon and level-two contour integrals; theta
+    functions and characteristic searches are not used.  ``base_place`` may
+    be a regular finite place or a chart-backed place.  Changing the base
+    uses ``K_Q = K_P + (g-1) A_P(Q)`` in normalized coordinates.
+
+    Hyperelliptic coefficient input without supplied differentials dispatches
+    to the established hyperelliptic periods and characteristic convention.
+
+    In genus one the answer is the odd half-period ``(1+tau)/2``::
+
+        >>> from mpmath import curve_periods, curve_riemann_constant, mp
+        >>> mp.dps = 15
+        >>> curve = {(0, 2): 1, (1, 0): 1, (3, 0): -1}
+        >>> forms = (lambda x, y: 1 / y,)
+        >>> constant = curve_riemann_constant(curve, forms)
+        >>> periods = curve_periods(curve, forms)
+        >>> mp.almosteq(constant.value[0], (1 + periods.tau[0, 0]) / 2)
+        True
+
+    The direct level-two integrations are substantially more expensive than
+    ordinary periods, although their cost does not include an exponential
+    characteristic enumeration.
+    """
+    prepared, hyperelliptic_coefficients = _normalise_algebraic_curve_input(
+        ctx, curve)
+    if hyperelliptic_coefficients is not None and differentials is None:
+        omega, tau, unused_kappa, characteristic = ctx.hyperelliptic_data(
+            hyperelliptic_coefficients)
+        a, b = characteristic
+        genus = tau.rows
+        value = ctx.matrix([
+            ctx.fsum(tau[row, column] * a[column]
+                     for column in range(genus)) + b[row]
+            for row in range(genus)])
+        if base_place is not None:
+            displacement = curve_abel_map(
+                ctx, curve, base_place, differentials=None)
+            value += (genus - 1) * ((2 * omega) ** -1 * displacement)
+        characteristic = _jacobian_characteristic(ctx, value, tau)
+        return CurveRiemannConstant(
+            value, characteristic, base_place, None)
+
+    forms = _curve_differential_sequence(
+        differentials, "differentials")
+    periods = curve_periods(ctx, curve, forms)
+    genus = periods.genus
+    quadrature_order = max(12, ctx.dps // 2)
+    value, cycle_integrals, unused_normalised = _stage_riemann_constant(
+        ctx, (prepared, forms, quadrature_order))
+    if base_place is not None:
+        displacement = curve_abel_map(
+            ctx, curve, base_place, forms)
+        value += (genus - 1) * (
+            (2 * periods.omega) ** -1 * displacement)
+    characteristic = _jacobian_characteristic(
+        ctx, value, periods.tau)
+    max_sheet_residual = max(
+        (integral.max_sheet_residual for integral in cycle_integrals),
+        default=ctx.zero)
+    return CurveRiemannConstant(
+        value, characteristic, base_place, max_sheet_residual)
+
+
+@defun
 def curve_validate(ctx, result):
     r"""Validate a result record returned by the curve functions.
 
     ``result`` is one of ``CurveBranchLocus``, ``CurveMonodromy``,
-    ``CurveGenus``, ``CurveHomology`` or ``CurvePeriods``.  The returned
+    ``CurveGenus``, ``CurveHomology``, ``CurvePeriods`` or
+    ``CurveRiemannConstant``.  The returned
     ``CurveValidation`` record contains one named ``CurveCheck`` per
     invariant, the largest
     numerical residual among them, and whether every check passed.  The
@@ -3052,6 +3779,33 @@ def curve_validate(ctx, result):
             checks.append(CurveCheck(
                 "max_sheet_residual", result.max_sheet_residual,
                 result.max_sheet_residual <= tolerance))
+    elif isinstance(result, CurveRiemannConstant):
+        value = result.value
+        column_vector = value.cols == 1 and value.rows > 0
+        checks.append(CurveCheck(
+            "jacobian_column_vector", column_vector, column_vector))
+        finite = column_vector and all(ctx.isfinite(entry) for entry in value)
+        checks.append(CurveCheck("jacobian_finite", finite, finite))
+        try:
+            a, b = result.characteristic
+            characteristic_shape = (
+                len(a) == value.rows and len(b) == value.rows)
+            characteristic_finite = characteristic_shape and all(
+                ctx.isfinite(entry) for entry in a + b)
+        except (TypeError, ValueError):
+            characteristic_shape = characteristic_finite = False
+        checks.append(CurveCheck(
+            "characteristic_shape", characteristic_shape,
+            characteristic_shape))
+        checks.append(CurveCheck(
+            "characteristic_finite", characteristic_finite,
+            characteristic_finite))
+        if result.max_sheet_residual is not None:
+            residuals.append(result.max_sheet_residual)
+            tolerance = 100 * ctx.sqrt(ctx.eps)
+            checks.append(CurveCheck(
+                "max_sheet_residual", result.max_sheet_residual,
+                result.max_sheet_residual <= tolerance))
     else:
         raise ValueError("curve_validate requires a curve result record")
     maximum_residual = max(residuals) if residuals else None
@@ -3099,16 +3853,19 @@ def curve_path(ctx, curve, start, end):
     r"""Return a lifted path between two regular finite places.
 
     ``start`` and ``end`` are regular finite places, each given as a
-    ``(x, y)`` pair or a ``CurvePlace`` from :func:`~mpmath.curve_fibre`.
-    A guarded polyline in the x-plane avoids the branch values, and the
-    path is lifted by numerical continuation from ``start``.  The returned
-    ``CurvePath`` record contains an opaque curve and numerical-context
-    identity, the endpoint places, the sheet index reached, and the
-    continuation record carrying the numerical routing data used by
-    :func:`~mpmath.curve_integral`.
+    ``(x, y)`` pair, a ``CurvePlace`` from :func:`~mpmath.curve_fibre`, or
+    a chart-backed place from :func:`~mpmath.curve_chart_place`.  A guarded
+    polyline in the x-plane avoids the branch values and is lifted by
+    numerical continuation between the places' affine junction points;
+    chart tails are joined at those junctions.  The returned ``CurvePath``
+    record contains an opaque curve and numerical-context identity, the
+    endpoint places, the sheet index reached, the continuation record
+    carrying the numerical routing data used by
+    :func:`~mpmath.curve_integral`, and any joined chart tails.
 
-    Both places must have distinct ``x`` values, and ``end`` must lie on
-    the sheet reached by continuation; otherwise ``ValueError`` is raised.
+    Both junction points must have distinct ``x`` values, and ``end`` must
+    lie on the sheet reached by continuation; otherwise ``ValueError`` is
+    raised.
 
     >>> from mpmath import curve_path, mp
     >>> mp.dps = 15
@@ -3119,25 +3876,32 @@ def curve_path(ctx, curve, start, end):
     """
     prepared, unused_hyperelliptic = _normalise_algebraic_curve_input(
         ctx, curve)
-    start = _normalise_curve_place(ctx, prepared, start, "start")
-    end = _normalise_curve_place(ctx, prepared, end, "end")
-    if start.x == end.x:
+    start_junction, start_tail, start_place = _normalise_curve_endpoint(
+        ctx, prepared, start, "start")
+    end_junction, end_tail, end_place = _normalise_curve_endpoint(
+        ctx, prepared, end, "end")
+    if start_junction.x == end_junction.x:
         raise ValueError(
             "path endpoints must have distinct x values")
     branch_values, unused_resultant = _stage_branch_locus(ctx, prepared)
-    path = _guarded_open_path(ctx, start.x, end.x, branch_values)
-    lifted = _lift_plane_curve_path(ctx, prepared, path, start.y)
-    scale = max(ctx.one, abs(end.x), abs(end.y), abs(lifted.end.y))
-    if abs(lifted.end.y - end.y) > 100 * ctx.sqrt(ctx.eps) * scale:
+    path = _guarded_open_path(
+        ctx, start_junction.x, end_junction.x, branch_values)
+    lifted = _lift_plane_curve_path(
+        ctx, prepared, path, start_junction.y)
+    scale = max(ctx.one, abs(end_junction.x), abs(end_junction.y),
+                abs(lifted.end.y))
+    if abs(lifted.end.y - end_junction.y) > 100 * ctx.sqrt(ctx.eps) * scale:
         raise ValueError(
             "the lifted path from start does not reach end; the two "
             "places lie on different sheets along the guarded path")
     return CurvePath(
         curve_key=(prepared, _curve_cache_state(ctx)),
-        start=lifted.start,
-        end=lifted.end,
+        start=start_place,
+        end=end_place,
         sheet=lifted.sheet,
-        continuation=lifted.continuation)
+        continuation=lifted.continuation,
+        start_tail=start_tail,
+        end_tail=end_tail)
 
 
 @defun
@@ -3148,11 +3912,12 @@ def curve_integral(ctx, curve, differentials, path):
     coefficient of ``dx``, or a sequence of such callables; ``path`` is a
     ``CurvePath`` from :func:`~mpmath.curve_path`.  A single differential
     gives a scalar ``values`` entry, a sequence gives one entry per form.
-    The returned ``CurveIntegral`` record also carries the maximum
-    curve-equation residual encountered on the integration nodes and the
-    number of path segments.  A path is bound to the curve and working
-    precision at which it was constructed and cannot be reused with a
-    different curve or precision.
+    Chart tails joined to the path are integrated through their coordinate
+    maps with the same differentials.  The returned ``CurveIntegral`` record
+    also carries the maximum curve-equation residual encountered on the
+    integration nodes and the number of path segments.  A path is bound to
+    the curve and working precision at which it was constructed and cannot
+    be reused with a different curve or precision.
 
     >>> from mpmath import curve_integral, curve_path, mp
     >>> mp.dps = 15
@@ -3178,28 +3943,54 @@ def curve_integral(ctx, curve, differentials, path):
             "path was constructed for a different curve or precision")
     integral = _integrate_plane_curve_path(
         ctx, prepared, path.continuation, forms, sheet=path.sheet)
-    values = integral.values[0] if single else integral.values
-    return CurveIntegral(
-        values, integral.max_sheet_residual, integral.segments)
+    totals = list(integral.values)
+    max_residual = integral.max_sheet_residual
+    segments = integral.segments
+    for tail, sign in ((path.start_tail, 1), (path.end_tail, -1)):
+        if tail is None:
+            continue
+        pullbacks = _pullback_plane_curve_differentials(
+            forms, _validated_chart_coordinate_map(ctx, tail.chart))
+        local = _integrate_plane_curve_branch(
+            ctx, tail.chart.curve, tail.branch, pullbacks)
+        totals = [total + sign * value
+                  for total, value in zip(totals, local.values)]
+        max_residual = max(max_residual, local.max_sheet_residual)
+        segments += local.segments
+    values = totals[0] if single else tuple(totals)
+    return CurveIntegral(values, max_residual, segments)
 
 
 def _normalise_curve_places(ctx, curve, target):
-    """Return normalised places from a single place or a divisor."""
+    """Return ``(junction, tail, place)`` triples from a place or divisor."""
     if isinstance(target, CurvePlace):
-        return (_normalise_curve_place(ctx, curve, target),)
+        candidates = [target]
+    else:
+        try:
+            left, right = target
+            pair = True
+        except (TypeError, ValueError):
+            pair = False
+        if pair and not any(
+                isinstance(value, (list, tuple, CurvePlace))
+                for value in (left, right)):
+            candidates = [target]
+        else:
+            candidates = list(target)
+    return tuple(
+        _normalise_curve_endpoint(ctx, curve, place, "target")
+        for place in candidates)
+
+
+def _curve_contains_chart_place(value):
+    """Return whether a target or base place input is chart-backed."""
+    if isinstance(value, CurvePlace):
+        return value.chart is not None
     try:
-        left, right = target
-        pair = True
-    except (TypeError, ValueError):
-        pair = False
-    if pair and not any(
-            isinstance(value, (list, tuple, CurvePlace))
-            for value in (left, right)):
-        return (_normalise_curve_place(ctx, curve, target),)
-    places = []
-    for place in target:
-        places.append(_normalise_curve_place(ctx, curve, place))
-    return tuple(places)
+        return any(isinstance(place, CurvePlace) and place.chart is not None
+                   for place in value)
+    except TypeError:
+        return False
 
 
 @defun
@@ -3208,12 +3999,14 @@ def curve_abel_map(ctx, curve, target, differentials=None,
     r"""Evaluate the Abel map of a place or divisor on a plane curve.
 
     ``target`` is one regular finite place, given as a ``(x, y)`` pair or
-    ``CurvePlace``, or a sequence of places representing an effective
-    divisor; an empty sequence returns the zero vector.  A hyperelliptic
-    coefficient sequence without supplied differentials is dispatched to
-    :func:`~mpmath.hyperelliptic_abel_map`; a general plane curve requires
-    ``differentials``, one first-kind callable per genus, and returns the
-    unnormalized Abelian coordinates they integrate to.
+    ``CurvePlace``, a chart-backed place from
+    :func:`~mpmath.curve_chart_place`, or a sequence of places representing
+    an effective divisor; an empty sequence returns the zero vector.  A
+    hyperelliptic coefficient sequence without supplied differentials is
+    dispatched to :func:`~mpmath.hyperelliptic_abel_map`; a general plane
+    curve requires ``differentials``, one first-kind callable per genus,
+    and returns the unnormalized Abelian coordinates they integrate to.
+    Chart-backed places require the general pipeline.
 
     ``base_place`` selects a regular finite base place; the default is
     sheet zero over the internally selected computational base point.
@@ -3234,6 +4027,12 @@ def curve_abel_map(ctx, curve, target, differentials=None,
     prepared, hyperelliptic_coefficients = _normalise_algebraic_curve_input(
         ctx, curve)
     if hyperelliptic_coefficients is not None and differentials is None:
+        if (_curve_contains_chart_place(target)
+                or (base_place is not None
+                    and _curve_contains_chart_place(base_place))):
+            raise ValueError(
+                "chart-backed places require the general pipeline with "
+                "supplied differentials")
         targets = _normalise_abel_targets(ctx, target)
         if base_place is None:
             return ctx.hyperelliptic_abel_map(
@@ -3255,28 +4054,38 @@ def curve_abel_map(ctx, curve, target, differentials=None,
         raise ValueError(
             "differentials must contain one form per genus")
     if base_place is None:
-        base = _PlaneCurvePlace(
+        base_junction = _PlaneCurvePlace(
             monodromy.base_point, monodromy.base_sheets[0])
+        base_tail = None
     else:
-        base = _normalise_curve_place(
-            ctx, prepared, base_place, "base_place")
+        base_junction, base_tail, unused_base = (
+            _normalise_curve_endpoint(
+                ctx, prepared, base_place, "base_place"))
     branch_values, unused_resultant = _stage_branch_locus(ctx, prepared)
     quadrature_order = max(12, ctx.dps // 2)
 
-    def place_value(place):
+    def place_value(junction, tail):
         if _same_numerical_place(
-                ctx, (place.x, place.y),
+                ctx, (junction.x, junction.y),
                 (monodromy.base_point, monodromy.base_sheets[0])):
-            return ctx.zeros(genus, 1)
-        return _finite_base_abel_value(
-            ctx, prepared, monodromy, branch_values, place, forms,
-            quadrature_order)
+            affine_value = ctx.zeros(genus, 1)
+        else:
+            affine_value = _finite_base_abel_value(
+                ctx, prepared, monodromy, branch_values, junction, forms,
+                quadrature_order)
+        if tail is None:
+            return affine_value
+        pullbacks = _pullback_plane_curve_differentials(
+            forms, _validated_chart_coordinate_map(ctx, tail.chart))
+        local = _integrate_plane_curve_branch(
+            ctx, tail.chart.curve, tail.branch, pullbacks)
+        return affine_value - ctx.matrix(local.values)
 
     places = _normalise_curve_places(ctx, prepared, target)
     result = ctx.zeros(genus, 1)
-    for place in places:
-        result += place_value(place)
-    result -= len(places) * place_value(base)
+    for junction, tail, unused_place in places:
+        result += place_value(junction, tail)
+    result -= len(places) * place_value(base_junction, base_tail)
     if reduce:
         result = curve_lattice_reduce(
             ctx, result, curve_periods(ctx, curve, differentials)).value
@@ -3343,6 +4152,289 @@ def curve_lattice_reduce(ctx, value, periods):
     shift = tuple(int(ctx.nint(entry)) for entry in coordinates)
     reduced = value - period_matrix * ctx.matrix(shift)
     return CurveLatticeReduction(reduced, shift)
+
+
+def _identity_chart_coordinates(t, w):
+    """Return the identity coordinate map of an affine curve."""
+    return t, w, 1
+
+
+def _prepare_chart_curve(ctx, curve):
+    """Prepare a general ``(t, w)`` curve from sparse input or terms.
+
+    Ascending coefficient sequences are deliberately rejected: unlike the
+    public curve input they cannot express a general chart curve.
+    """
+    if hasattr(curve, "items"):
+        return _prepare_plane_curve(ctx, curve)
+    try:
+        values = tuple(curve)
+    except TypeError:
+        raise ValueError("chart curves must be sparse plane terms")
+    if not values:
+        raise ValueError("chart curves must not be empty")
+    if all(isinstance(term, (tuple, list)) and len(term) == 3
+           for term in values):
+        terms = {}
+        for x_power, y_power, coefficient in values:
+            try:
+                coefficient = ctx.convert(coefficient)
+            except (TypeError, ValueError):
+                raise ValueError("polynomial coefficients must be numbers")
+            key = (x_power, y_power)
+            terms[key] = terms.get(key, ctx.zero) + coefficient
+        return _prepare_plane_curve(ctx, terms)
+    raise ValueError("chart curves must be sparse plane terms")
+
+
+def _curve_chart_source(ctx, source):
+    """Return the chart of a raw curve input or an existing chart."""
+    if isinstance(source, CurveChart):
+        return _validate_chart(ctx, source)
+    prepared, unused_hyperelliptic = _normalise_algebraic_curve_input(
+        ctx, source)
+    return CurveChart(
+        (prepared, _curve_cache_state(ctx)), prepared,
+        _identity_chart_coordinates)
+
+
+def _validate_chart(ctx, chart, ambient_curve=None):
+    """Return a validated chart record."""
+    if not isinstance(chart, CurveChart):
+        raise ValueError("chart must be a CurveChart")
+    if (not isinstance(chart.curve_key, tuple)
+            or len(chart.curve_key) != 2
+            or not isinstance(chart.curve, _PlaneCurve)):
+        raise ValueError("chart carries invalid ownership data")
+    if not callable(chart.coordinate_map):
+        raise ValueError("chart coordinate_map must be callable")
+    expected_state = _curve_cache_state(ctx)
+    if chart.curve_key[1] != expected_state:
+        raise ValueError(
+            "chart was constructed for a different working precision")
+    if (ambient_curve is not None
+            and chart.curve_key != (ambient_curve, expected_state)):
+        raise ValueError("chart was constructed for a different curve")
+    return chart
+
+
+def _validated_chart_coordinate_map(ctx, chart):
+    """Return a coordinate map checking the ambient curve equation."""
+    ambient_curve = chart.curve_key[0]
+    coordinate_map = chart.coordinate_map
+
+    def validated(t, w):
+        x, y, dx_dt = coordinate_map(t, w)
+        x = ctx.convert(x)
+        y = ctx.convert(y)
+        dx_dt = ctx.convert(dx_dt)
+        if not all(ctx.isfinite(value) for value in (x, y, dx_dt)):
+            raise ValueError(
+                "chart coordinate map must be finite away from the place")
+        scale = max(ctx.one, ctx.fsum(
+            abs(coefficient * x ** x_power * y ** y_power)
+            for x_power, y_power, coefficient in ambient_curve.terms))
+        if abs(_evaluate_plane_polynomial(
+                ctx, ambient_curve, x, y)) > (
+                100 * ctx.sqrt(ctx.eps) * scale):
+            raise ValueError("chart does not parametrize its ambient curve")
+        return x, y, dx_dt
+
+    return validated
+
+
+# Public chart functions
+# ---------------------
+
+
+@defun
+def curve_chart(ctx, curve, chart_curve, coordinate_map):
+    r"""Return a user-supplied local chart of a plane algebraic curve.
+
+    ``curve`` is the ambient curve in any representation accepted by
+    :func:`~mpmath.curve_branch_locus`.  ``chart_curve`` gives the local
+    curve as a sparse mapping from
+    ``(t_power, w_power)`` pairs to coefficients, or a sequence of
+    ``(t_power, w_power, coefficient)`` terms.  ``coordinate_map(t, w)``
+    must return the ambient triple ``(x, y, dx/dt)``, where ``x`` depends
+    on ``t`` alone.  The returned ``CurveChart`` is bound to the ambient
+    curve and working precision, and is accepted by the other chart
+    functions and by :func:`~mpmath.curve_chart_place`.
+    """
+    ambient, unused_hyperelliptic = _normalise_algebraic_curve_input(
+        ctx, curve)
+    prepared = _prepare_chart_curve(ctx, chart_curve)
+    if not callable(coordinate_map):
+        raise ValueError("coordinate_map must be callable")
+    return CurveChart(
+        (ambient, _curve_cache_state(ctx)), prepared, coordinate_map)
+
+
+@defun
+def curve_chart_monomial(ctx, source, x_power, y_power):
+    r"""Return the monomial chart ``x = t**x_power, y = t**y_power*w``.
+
+    ``source`` is the curve itself, or another ``CurveChart`` to compose
+    with.  Negative powers describe places above infinity.  Repeated
+    factors are cleared so the chart curve is a polynomial in ``t`` and
+    ``w``; the chart does not claim to normalize a singular chart.
+    """
+    base = _curve_chart_source(ctx, source)
+    curve = _monomial_plane_curve_chart(
+        ctx, base.curve, x_power, y_power)
+    base_map = base.coordinate_map
+
+    def coordinate_map(t, w, base_map=base_map, x_power=x_power,
+                       y_power=y_power):
+        x, y, dx_dt = base_map(t ** x_power, t ** y_power * w)
+        return x, y, dx_dt * x_power * t ** (x_power - 1)
+
+    return CurveChart(base.curve_key, curve, coordinate_map)
+
+
+def _curve_chart_reciprocal_y(ctx, source):
+    """Return the private reciprocal ``v = 1/w`` chart transform.
+
+    The reciprocal chart reparametrizes the base ``w`` coordinate as
+    ``v = 1/w``, so its ambient point at ``(t, v)`` is the base chart's
+    point at ``(t, 1/v)``.  For an affine base curve this is the usual
+    ``y = 1/v`` chart.
+    """
+    base = _curve_chart_source(ctx, source)
+    curve = _reciprocal_y_plane_curve(ctx, base.curve)
+    base_map = base.coordinate_map
+
+    def coordinate_map(t, v, base_map=base_map):
+        return base_map(t, 1 / v)
+
+    return CurveChart(base.curve_key, curve, coordinate_map)
+
+
+def _curve_chart_blow_up(ctx, source, center, power=1):
+    """Return the private blow-up chart ``w = center + t**power*u``.
+
+    The substitution separates branches of ``source`` meeting above a
+    common ``w`` value at ``t = 0``.  ``source`` may be a curve or another
+    chart, and the returned chart composes the coordinate maps.
+    """
+    base = _curve_chart_source(ctx, source)
+    curve = _blow_up_plane_curve_y(
+        ctx, base.curve, center, y_power=power)
+    center = ctx.convert(center)
+    base_map = base.coordinate_map
+
+    def coordinate_map(t, u, base_map=base_map, center=center,
+                        power=power):
+        return base_map(t, center + t ** power * u)
+
+    return CurveChart(base.curve_key, curve, coordinate_map)
+
+
+@defun
+def curve_chart_fibre(ctx, chart, t):
+    r"""Return the ordered fibre of chart ``w`` values over ``t``.
+
+    The values are ordered by real and imaginary part, like
+    :func:`~mpmath.curve_fibre`.  A fibre whose values do not separate
+    indicates that the chart does not resolve the requested place and is
+    rejected.
+    """
+    chart = _validate_chart(ctx, chart)
+    t = ctx.convert(t)
+    if not ctx.isfinite(t):
+        raise ValueError("t must be finite")
+    values = _finite_plane_curve_sheets(ctx, chart.curve, t)
+    values = tuple(sorted(
+        values, key=lambda value: (ctx.re(value), ctx.im(value))))
+    scale = max([ctx.one] + [abs(value) for value in values])
+    separation = min(
+        (abs(left - right)
+         for index, left in enumerate(values)
+         for right in values[index + 1:]),
+        default=ctx.inf)
+    if separation <= 100 * ctx.sqrt(ctx.eps) * scale:
+        raise ValueError(
+            "the chart fibre is not simple over t; the chart does not "
+            "separate the requested place")
+    return values
+
+
+@defun
+def curve_chart_place(ctx, curve, chart, seed, cutoff):
+    r"""Return the chart-backed place reached by a local branch.
+
+    ``seed`` is the branch value of ``w`` at ``t = 0``, for example from
+    :func:`~mpmath.curve_chart_fibre`; the branch is continued along the
+    straight chart path from ``t = 0`` to ``t = cutoff``.  The returned
+    place is represented by its finite affine cutoff point together with a
+    chart tail describing the local branch, and is bound to ``curve`` and
+    the working precision.  The chart must parametrize ``curve``: the
+    cutoff point is checked to lie on the curve.
+
+    >>> from mpmath import curve_chart_fibre, curve_chart_monomial, curve_chart_place, mp
+    >>> mp.dps = 15
+    >>> curve = {(0, 2): 1, (1, 0): 1, (3, 0): -1}
+    >>> chart = curve_chart_monomial(curve, -2, -3)
+    >>> [mp.nstr(value, 3) for value in curve_chart_fibre(chart, 0)]
+    ['(-1.0 + 0.0j)', '(1.0 + 0.0j)']
+    >>> place = curve_chart_place(curve, chart, 1, mp.mpf("0.05"))
+    >>> mp.nstr(place.x, 6)
+    '400.0'
+    """
+    prepared, unused_hyperelliptic = _normalise_algebraic_curve_input(
+        ctx, curve)
+    chart = _validate_chart(ctx, chart, prepared)
+    cutoff = ctx.convert(cutoff)
+    if not ctx.isfinite(cutoff) or not cutoff:
+        raise ValueError("cutoff must be finite and nonzero")
+    branch = _continue_plane_curve_branch(
+        ctx, chart.curve, (0, cutoff), seed)
+    coordinate_map = _validated_chart_coordinate_map(ctx, chart)
+    x, y, unused_dx_dt = coordinate_map(
+        branch.path[-1], branch.values[-1])
+    for t, w in zip(branch.path[1:], branch.values[1:]):
+        coordinate_map(t, w)
+    tail = _CurveChartTail(chart, branch)
+    return CurvePlace(x, y, tail)
+
+
+@defun
+def curve_chart_integral(ctx, chart, differentials, t_path, seed):
+    r"""Integrate ambient differentials along a local chart branch.
+
+    ``differentials`` are ambient ``f(x, y)`` callables returning the
+    coefficient of ``dx``; they are pulled back through the chart's
+    coordinate map, so a single callable gives a scalar and a sequence
+    gives one entry per form.  ``t_path`` is a sequence of finite ``t``
+    values along which the branch is continued from ``seed`` at
+    ``t_path[0]``.  Closed chart loops therefore compute residues of
+    pulled-back forms at the place.
+    """
+    chart = _validate_chart(ctx, chart)
+    if callable(differentials):
+        single = True
+        forms = (differentials,)
+    else:
+        single = False
+        forms = _curve_differential_sequence(
+            differentials, "differentials")
+    try:
+        t_path = tuple(ctx.convert(value) for value in t_path)
+    except TypeError:
+        raise ValueError("t_path must be a sequence of chart values")
+    if not t_path:
+        raise ValueError("t_path must contain at least one point")
+    if any(not ctx.isfinite(value) for value in t_path):
+        raise ValueError("t_path values must be finite")
+    branch = _continue_plane_curve_branch(
+        ctx, chart.curve, t_path, seed)
+    pullbacks = _pullback_plane_curve_differentials(
+        forms, _validated_chart_coordinate_map(ctx, chart))
+    integral = _integrate_plane_curve_branch(
+        ctx, chart.curve, branch, pullbacks)
+    values = integral.values[0] if single else integral.values
+    return CurveIntegral(
+        values, integral.max_sheet_residual, integral.segments)
 
 
 def _real_plane_curve_monodromy(

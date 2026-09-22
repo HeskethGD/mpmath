@@ -31,13 +31,17 @@ Places over a finite regular value are labelled by
 along by :func:`~mpmath.curve_path` and :func:`~mpmath.curve_integral`,
 and mapped into the Jacobian by :func:`~mpmath.curve_abel_map`, with
 :func:`~mpmath.curve_lattice_reduce` reducing the result modulo the
-period lattice.
+period lattice.  Explicit numerical charts extend the same operations to
+ramification points and places over infinity.  Charts are bound to their
+ambient curve and working precision; discovering charts automatically is
+outside the present numerical API.
 
 The record classes ``CurveBranchLocus``, ``CurveMonodromy``, ``CurveGenus``,
-``CurveHomology``, ``CurvePeriods``, ``CurvePlace``, ``CurvePath``,
-``CurveIntegral``, ``CurveLatticeReduction``, ``CurveCheck`` and
-``CurveValidation`` are importable from :mod:`mpmath`.  They contain results
-rather than additional methods; ordinary use starts with the functions below.
+``CurveHomology``, ``CurvePeriods``, ``CurveRiemannConstant``, ``CurveChart``,
+``CurvePlace``, ``CurvePath``, ``CurveIntegral``, ``CurveLatticeReduction``,
+``CurveCheck`` and ``CurveValidation`` are importable from the top-level
+``mpmath`` namespace.  They contain results rather than additional methods;
+ordinary use starts with the functions below.
 
 These functions complement the hyperelliptic period and Kleinian function
 machinery described in :doc:`abelian`: the hyperelliptic engine covers
@@ -72,6 +76,8 @@ Periods
 
 .. autofunction:: mpmath.curve_riemann_matrix
 
+.. autofunction:: mpmath.curve_riemann_constant
+
 ``curve_periods`` already accepts a caller-supplied second-kind basis and
 returns ``eta``, ``eta_prime`` and ``kappa``.  No separate
 ``curve_second_kind_periods`` step is required.
@@ -85,6 +91,20 @@ Places, paths and integrals
 .. autofunction:: mpmath.curve_path
 
 .. autofunction:: mpmath.curve_integral
+
+
+Explicit local charts
+.....................
+
+.. autofunction:: mpmath.curve_chart
+
+.. autofunction:: mpmath.curve_chart_monomial
+
+.. autofunction:: mpmath.curve_chart_fibre
+
+.. autofunction:: mpmath.curve_chart_place
+
+.. autofunction:: mpmath.curve_chart_integral
 
 
 Abel map and lattice reduction

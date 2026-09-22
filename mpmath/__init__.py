@@ -63,16 +63,22 @@ curve_genus = mp.curve_genus
 curve_homology = mp.curve_homology
 curve_periods = mp.curve_periods
 curve_riemann_matrix = mp.curve_riemann_matrix
+curve_riemann_constant = mp.curve_riemann_constant
 curve_validate = mp.curve_validate
 curve_fibre = mp.curve_fibre
 curve_path = mp.curve_path
 curve_integral = mp.curve_integral
 curve_abel_map = mp.curve_abel_map
 curve_lattice_reduce = mp.curve_lattice_reduce
+curve_chart = mp.curve_chart
+curve_chart_monomial = mp.curve_chart_monomial
+curve_chart_fibre = mp.curve_chart_fibre
+curve_chart_place = mp.curve_chart_place
+curve_chart_integral = mp.curve_chart_integral
 from .functions.algebraic_curve import (
-    CurveBranchLocus, CurveCheck, CurveGenus, CurveHomology, CurveIntegral,
-    CurveLatticeReduction, CurveMonodromy, CurvePath, CurvePeriods,
-    CurvePlace, CurveValidation,
+    CurveBranchLocus, CurveChart, CurveCheck, CurveGenus, CurveHomology,
+    CurveIntegral, CurveLatticeReduction, CurveMonodromy, CurvePath,
+    CurvePeriods, CurvePlace, CurveRiemannConstant, CurveValidation,
 )
 kleinj = mp.kleinj
 kleinjinv = mp.kleinjinv
