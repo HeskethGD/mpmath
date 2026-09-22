@@ -1,12 +1,19 @@
-"""Experimental numerical building blocks for plane algebraic curves.
+"""Numerical building blocks for plane algebraic curves.
 
-This module is private while the representation and numerical contracts are
-validated.  Its separate conceptual sections cover projection, continuation,
-lifted paths, monodromy, homology and numerical period assembly.
+The public ``curve_`` functions expose the computational pipeline for a
+smooth plane algebraic curve in separate stages: branch locus, monodromy,
+genus, homology and period matrices.  Each stage validates its own input,
+returns a small immutable result record and reuses cached earlier stages,
+so a user requesting one stage never pays for a later one.
+
+The remaining sections cover projection, continuation, lifted paths,
+monodromy, homology and numerical period assembly.  They are private while
+their numerical contracts are validated.
 """
 
 from collections import namedtuple
 from fractions import Fraction
+from functools import lru_cache, wraps
 from math import comb
 
 from .functions import defun
@@ -37,8 +44,6 @@ _PathIntegrals = namedtuple(
 _IteratedPathIntegrals = namedtuple(
     "_IteratedPathIntegrals",
     "values iterated max_sheet_residual segments")
-_PlaneCurvePlace = namedtuple(
-    "_PlaneCurvePlace", "x y")
 _LiftedPlaneCurvePath = namedtuple(
     "_LiftedPlaneCurvePath", "continuation sheet start end")
 _LiftedPathTerm = namedtuple(
@@ -68,15 +73,35 @@ _PlaneCurvePeriods = namedtuple(
     "_PlaneCurvePeriods",
     "periods a_periods b_periods tau symmetry_residual "
     "imaginary_eigenvalues max_sheet_residual")
-AlgebraicCurveData = namedtuple(
-    "AlgebraicCurveData",
-    "genus omega omega_prime tau eta eta_prime kappa base_place "
-    "characteristic diagnostics")
-_AlgebraicCurveDiagnostics = namedtuple(
-    "_AlgebraicCurveDiagnostics",
-    "curve branch_points resultant monodromy graph canonical_cycles "
-    "periods second_periods symmetry_residual kappa_symmetry_residual "
-    "imaginary_eigenvalues max_sheet_residual")
+CurveBranchLocus = namedtuple(
+    "CurveBranchLocus", "degree branch_values resultant")
+CurveMonodromy = namedtuple(
+    "CurveMonodromy",
+    "base_point base_sheets branch_values permutations "
+    "infinity_permutation ramification genus transitive product_identity "
+    "minimum_clearance")
+CurveGenus = namedtuple("CurveGenus", "genus degree ramification")
+CurveHomology = namedtuple(
+    "CurveHomology",
+    "genus cycle_count boundary_components intersection_rank radical_rank "
+    "intersection_form transformation")
+CurvePeriods = namedtuple(
+    "CurvePeriods",
+    "genus differentials omega omega_prime tau eta eta_prime kappa "
+    "symmetry_residual kappa_symmetry_residual imaginary_eigenvalues "
+    "max_sheet_residual")
+CurveCheck = namedtuple("CurveCheck", "name value passed")
+CurveValidation = namedtuple(
+    "CurveValidation", "kind passed maximum_residual checks")
+CurvePlace = namedtuple("CurvePlace", "x y")
+CurvePath = namedtuple(
+    "CurvePath", "start end sheet continuation")
+CurveIntegral = namedtuple(
+    "CurveIntegral", "values max_sheet_residual segments")
+CurveLatticeReduction = namedtuple(
+    "CurveLatticeReduction", "value shift")
+# Internal place records use the public CurvePlace representation.
+_PlaneCurvePlace = CurvePlace
 
 
 # Curve representation and evaluation
@@ -2294,24 +2319,27 @@ def _jacobian_characteristic(ctx, value, tau):
     return a, b
 
 
-def _normalise_finite_base_place(ctx, curve, base_place):
+def _normalise_curve_place(ctx, curve, place, name="place"):
+    """Return a validated regular finite place on a prepared curve."""
+    if isinstance(place, CurvePlace):
+        place = (place.x, place.y)
     try:
-        x, y = base_place
+        x, y = place
     except (TypeError, ValueError):
-        raise ValueError("base_place must be a finite (x, y) pair")
+        raise ValueError(name + " must be a finite (x, y) pair")
     x = ctx.convert(x)
     y = ctx.convert(y)
     if not ctx.isfinite(x) or not ctx.isfinite(y):
-        raise ValueError("base_place must be a finite (x, y) pair")
+        raise ValueError(name + " must be a finite (x, y) pair")
     scale = max(ctx.one, ctx.fsum(
         abs(coefficient * x ** x_power * y ** y_power)
         for x_power, y_power, coefficient in curve.terms))
     if abs(_evaluate_plane_polynomial(ctx, curve, x, y)) > (
             100 * ctx.sqrt(ctx.eps) * scale):
-        raise ValueError("base_place must lie on the curve")
+        raise ValueError(name + " must lie on the curve")
     if abs(_evaluate_plane_derivative(ctx, curve, x, y, "y")) <= (
             100 * ctx.sqrt(ctx.eps)):
-        raise ValueError("base_place must be regular for the x projection")
+        raise ValueError(name + " must be regular for the x projection")
     return _PlaneCurvePlace(x, y)
 
 
@@ -2519,112 +2547,345 @@ def _theta_divisor_riemann_constant(
         "failed to determine the Riemann constant from theta-divisor samples")
 
 
-@defun
-def algebraic_curve_data(
-        ctx, curve, differentials_kind_1=None, *,
-        differentials_kind_2=None, base_place=None):
-    r"""Construct numerical period data for an algebraic curve.
+# Cached computational stages
+# ---------------------------
 
-    ``curve`` may be an ascending coefficient sequence defining
-    ``y**2 = P(x)``, a sparse mapping from ``(x_power, y_power)`` to a
-    coefficient, or a sequence of ``(x_power, y_power, coefficient)`` terms.
+_MONODROMY_CIRCLE_STEPS = 12
+_MONODROMY_MAX_REFINEMENTS = 20
 
-    Recognized hyperelliptic input uses the established specialized engine.
-    A general plane curve requires a supplied basis ``differentials_kind_1``
-    of holomorphic differential callables.  Optional
-    ``differentials_kind_2`` are integrated on the same cycles, with the
-    classical mpmath convention ``2*eta = -integral_a(dr)``.
 
-    Finite critical values, complex branch loops, infinity monodromy, a
-    primitive canonical homology basis and the period matrices are computed
-    internally.  The returned :class:`AlgebraicCurveData` contains half
-    periods ``omega`` and ``omega_prime``, ``tau``, optional second-kind data,
-    the Abel base place, its corresponding Riemann-constant characteristic,
-    and numerical diagnostics.  ``base_place`` may be a regular finite pair
-    ``(x, y)``.  General input otherwise uses sheet zero over the internally
-    selected computational base point.  Points at infinity require an
-    explicit local-chart representation and are not yet accepted here.
+def _curve_cache_state(ctx):
+    """Return the numerical state that keys the curve stage caches."""
+    rounding = getattr(ctx, "rounding", None)
+    trap_complex = getattr(ctx, "trap_complex", None)
+    return ctx.prec, rounding, trap_complex
+
+
+def _curve_stage_cache(maxsize):
+    """Cache a curve stage by its key and the context's numerical state.
+
+    Stage keys are prepared curves or tuples containing them, so the cache
+    never sees unhashable user input.  Cached values are immutable records;
+    public functions assemble matrices from them, so a cached result can
+    never be mutated through the public API.
     """
-    prepared, hyperelliptic_coefficients = _normalise_algebraic_curve_input(
-        ctx, curve)
-    if hyperelliptic_coefficients is not None and differentials_kind_1 is None:
-        if differentials_kind_2 is not None:
-            raise ValueError(
-                "custom second-kind differentials require first-kind input")
-        result = ctx.hyperelliptic_periods(
-            hyperelliptic_coefficients, second_kind=True)
-        omega, omega_prime, eta, eta_prime, tau, kappa = result
-        genus = omega.rows
-        characteristic = ctx.hyperelliptic_data(
-            hyperelliptic_coefficients)[3]
-        resolved_base_place = None
-        if base_place is not None:
-            resolved_base_place = _normalise_finite_base_place(
-                ctx, prepared, base_place)
-            raw_abel = ctx.hyperelliptic_abel_map(
-                hyperelliptic_coefficients,
-                (resolved_base_place.x, resolved_base_place.y))
-            normalised_abel = (2 * omega) ** -1 * raw_abel
-            a, b = characteristic
-            riemann_constant = ctx.matrix([
-                b[row] + ctx.fsum(
-                    tau[row, column] * a[column]
-                    for column in range(genus))
-                for row in range(genus)
-            ])
-            riemann_constant += (genus - 1) * normalised_abel
-            characteristic = _jacobian_characteristic(
-                ctx, riemann_constant, tau)
-        return AlgebraicCurveData(
-            genus, omega, omega_prime, tau, eta, eta_prime, kappa,
-            resolved_base_place, characteristic, None)
+    def decorator(f):
+        @lru_cache(maxsize=maxsize)
+        def cached(unused_state, ctx, key):
+            return f(ctx, key)
 
-    try:
-        first_kind = tuple(differentials_kind_1)
-    except TypeError:
-        raise ValueError(
-            "general plane curves require differentials_kind_1")
-    if not first_kind or any(not callable(value) for value in first_kind):
-        raise ValueError(
-            "differentials_kind_1 must be a sequence of callables")
-    if differentials_kind_2 is None:
-        second_kind = ()
-    else:
-        try:
-            second_kind = tuple(differentials_kind_2)
-        except TypeError:
-            raise ValueError(
-                "differentials_kind_2 must be a sequence of callables")
-        if any(not callable(value) for value in second_kind):
-            raise ValueError(
-                "differentials_kind_2 must be a sequence of callables")
+        @wraps(f)
+        def wrapper(ctx, key):
+            return cached(_curve_cache_state(ctx), ctx, key)
 
-    branch_points, resultant = _plane_curve_critical_values(ctx, prepared)
-    monodromy = _radial_plane_curve_monodromy(
-        ctx, prepared, branch_points, circle_steps=12,
-        max_refinements=20)
-    genus = monodromy.genus
-    if len(first_kind) != genus:
-        raise ValueError(
-            "differentials_kind_1 must contain one form per genus")
-    if second_kind and len(second_kind) != genus:
-        raise ValueError(
-            "differentials_kind_2 must contain one form per genus")
+        wrapper.cache_info = cached.cache_info
+        wrapper.cache_clear = cached.cache_clear
+        return wrapper
+    return decorator
+
+
+@_curve_stage_cache(32)
+def _stage_branch_locus(ctx, curve):
+    """Return ``(branch_values, resultant)`` for a prepared plane curve."""
+    return _plane_curve_critical_values(ctx, curve)
+
+
+@_curve_stage_cache(8)
+def _stage_monodromy(ctx, curve):
+    """Return the guarded radial monodromy system of a prepared curve."""
+    branch_values, unused_resultant = _stage_branch_locus(ctx, curve)
+    return _radial_plane_curve_monodromy(
+        ctx, curve, branch_values,
+        circle_steps=_MONODROMY_CIRCLE_STEPS,
+        max_refinements=_MONODROMY_MAX_REFINEMENTS)
+
+
+@_curve_stage_cache(8)
+def _stage_monodromy_graph(ctx, curve):
+    """Return ``(lifted_graph, symplectic_reduction)`` for a curve."""
+    monodromy = _stage_monodromy(ctx, curve)
     graph = _ordered_monodromy_graph(monodromy)
     reduction = _symplectic_reduce_intersection(graph.intersection)
-    numerical = _numerical_ordered_graph_cycles(ctx, graph, monodromy)
-    canonical_cycles = _transform_lifted_path_chains(
+    return graph, reduction
+
+
+@_curve_stage_cache(8)
+def _stage_canonical_cycles(ctx, curve):
+    """Return lifted-path chains realizing a canonical homology basis."""
+    graph, reduction = _stage_monodromy_graph(ctx, curve)
+    numerical = _numerical_ordered_graph_cycles(
+        ctx, graph, _stage_monodromy(ctx, curve))
+    return _transform_lifted_path_chains(
         numerical.chains, reduction.transformation)
-    forms = first_kind + second_kind
+
+
+@_curve_stage_cache(16)
+def _stage_cycle_integrals(ctx, key):
+    """Integrate differential forms over the canonical cycles of a curve.
+
+    ``key`` is ``(curve, forms, quadrature_order)``.  The result is
+    ``(columns, max_sheet_residual)`` with one column of form values per
+    canonical cycle.
+    """
+    curve, forms, quadrature_order = key
+    forms = tuple(forms)
+    genus = _stage_monodromy(ctx, curve).genus
+    chains = _stage_canonical_cycles(ctx, curve)
     columns = []
     max_sheet_residual = ctx.zero
-    for chain in canonical_cycles[:2 * genus]:
+    for chain in chains[:2 * genus]:
         integral = _integrate_lifted_path_chain(
-            ctx, prepared, chain, forms,
-            quadrature_order=max(12, ctx.dps // 2))
+            ctx, curve, chain, forms, quadrature_order=quadrature_order)
         columns.append(integral.values)
         max_sheet_residual = max(
             max_sheet_residual, integral.max_sheet_residual)
+    return tuple(columns), max_sheet_residual
+
+
+def _curve_differential_sequence(differentials, name):
+    """Return a validated tuple of differential callables."""
+    try:
+        forms = tuple(differentials)
+    except TypeError:
+        raise ValueError(name + " must be a sequence of callables")
+    if not forms or any(not callable(value) for value in forms):
+        raise ValueError(name + " must be a sequence of callables")
+    return forms
+
+
+def _tau_imaginary_eigenvalues(ctx, tau):
+    """Return the eigenvalues of the imaginary part of a period matrix."""
+    genus = tau.rows
+    imaginary_tau = ctx.matrix([
+        [ctx.im(tau[row, column]) for column in range(genus)]
+        for row in range(genus)])
+    return tuple(ctx.eigsy(imaginary_tau, eigvals_only=True))
+
+# Public curve functions
+# ---------------------
+
+
+@defun
+def curve_branch_locus(ctx, curve):
+    r"""Return the finite branch locus of a plane algebraic curve.
+
+    ``curve`` may be an ascending coefficient sequence defining
+    ``y**2 = P(x)``, a sparse mapping from ``(x_power, y_power)`` pairs to
+    a coefficient, or a sequence of ``(x_power, y_power, coefficient)``
+    terms.
+
+    The returned ``CurveBranchLocus`` record contains the degree of the
+    ``x`` projection, the distinct finite branch values above which the
+    projection ramifies, and the ascending coefficients of the
+    y-derivative resultant whose roots they are.  Ramification above
+    infinity is reported by :func:`~mpmath.curve_monodromy` instead,
+    because it requires monodromy rather than the resultant alone.
+
+    The lemniscatic curve :math:`y^2 = x^3 - x` has a two-sheeted
+    projection with three finite branch values::
+
+        >>> from mpmath import curve_branch_locus
+        >>> locus = curve_branch_locus((0, -1, 0, 1))
+        >>> locus.degree
+        2
+        >>> locus.branch_values
+        (mpf('-1.0'), mpf('0.0'), mpf('1.0'))
+    """
+    prepared, unused_hyperelliptic = _normalise_algebraic_curve_input(
+        ctx, curve)
+    branch_values, resultant = _stage_branch_locus(ctx, prepared)
+    return CurveBranchLocus(prepared.y_degree, branch_values, resultant)
+
+
+@defun
+def curve_monodromy(ctx, curve):
+    r"""Return the monodromy of a plane algebraic curve over the x-line.
+
+    The curve is continued numerically along guarded radial loops around
+    the finite branch values, from an exterior base point chosen
+    automatically.  A large outer loop supplies the monodromy at infinity
+    geometrically.  The returned ``CurveMonodromy`` record contains the
+    computational base point, its ordered fibre, the branch values, the
+    counter-clockwise product-ordered local permutations, the permutation
+    at infinity, the total ramification, the genus from
+    Riemann--Hurwitz, the transitivity and product identities of the
+    permutation system, and the minimum geometric clearance of the
+    continuation paths.
+
+    The sheet labels refer to the internally selected base fibre.  The
+    routing continuations used to compute them are private.
+
+    Each finite branch value of the lemniscatic curve
+    :math:`y^2 = x^3 - x` exchanges its two sheets, as does infinity::
+
+        >>> from mpmath import curve_monodromy
+        >>> monodromy = curve_monodromy((0, -1, 0, 1))
+        >>> monodromy.genus
+        1
+        >>> monodromy.permutations
+        ((1, 0), (1, 0), (1, 0))
+        >>> monodromy.infinity_permutation
+        (1, 0)
+    """
+    prepared, unused_hyperelliptic = _normalise_algebraic_curve_input(
+        ctx, curve)
+    monodromy = _stage_monodromy(ctx, prepared)
+    degree = prepared.y_degree
+    generators = tuple(monodromy.product_generators)
+    permutations = tuple(
+        generator.permutation for generator in generators[:-1])
+    infinity_permutation = generators[-1].permutation
+    all_permutations = permutations + (infinity_permutation,)
+    product = tuple(range(degree))
+    for permutation in all_permutations:
+        product = _compose_permutations(permutation, product)
+    transitive = len(_monodromy_orbit(all_permutations)) == degree
+    return CurveMonodromy(
+        base_point=monodromy.base_point,
+        base_sheets=monodromy.base_sheets,
+        branch_values=monodromy.branch_points,
+        permutations=permutations,
+        infinity_permutation=infinity_permutation,
+        ramification=monodromy.ramification,
+        genus=monodromy.genus,
+        transitive=transitive,
+        product_identity=product == tuple(range(degree)),
+        minimum_clearance=monodromy.minimum_clearance)
+
+
+@defun
+def curve_genus(ctx, curve):
+    r"""Return the genus of a plane algebraic curve by monodromy.
+
+    The genus is obtained from the Riemann--Hurwitz formula applied to
+    the monodromy of the ``x`` projection, including the permutation at
+    infinity.  The returned ``CurveGenus`` record also records the
+    projection degree and the total ramification, so the Riemann--Hurwitz
+    balance :math:`2g-2 = -2d+r` can be checked directly::
+
+        >>> from mpmath import curve_genus
+        >>> curve_genus((0, -1, 0, 1))
+        CurveGenus(genus=1, degree=2, ramification=4)
+    """
+    prepared, unused_hyperelliptic = _normalise_algebraic_curve_input(
+        ctx, curve)
+    monodromy = _stage_monodromy(ctx, prepared)
+    return CurveGenus(
+        monodromy.genus, prepared.y_degree, monodromy.ramification)
+
+
+@defun
+def curve_homology(ctx, curve):
+    r"""Return a canonical homology basis of a plane algebraic curve.
+
+    The lifted monodromy graph of the ``x`` projection is reduced to a
+    primitive symplectic homology basis.  The returned
+    ``CurveHomology`` record contains the genus, the number of independent
+    graph cycles, the number of boundary components of the lifted ribbon
+    graph (the places above infinity), the rank of the graph intersection
+    form, the dimension of its radical, the resulting canonical
+    intersection form, and the integer transformation realizing the
+    canonical basis from the graph cycles.
+
+    The lifted graph of the lemniscatic curve :math:`y^2 = x^3 - x` has
+    three independent cycles and two boundary components::
+
+        >>> from mpmath import curve_homology
+        >>> homology = curve_homology((0, -1, 0, 1))
+        >>> homology.genus, homology.boundary_components
+        (1, 2)
+        >>> homology.intersection_form
+        ((0, 1, 0), (-1, 0, 0), (0, 0, 0))
+    """
+    prepared, unused_hyperelliptic = _normalise_algebraic_curve_input(
+        ctx, curve)
+    graph, reduction = _stage_monodromy_graph(ctx, prepared)
+    return CurveHomology(
+        genus=reduction.genus,
+        cycle_count=len(graph.cycles),
+        boundary_components=graph.boundary_components,
+        intersection_rank=graph.intersection_rank,
+        radical_rank=reduction.radical_rank,
+        intersection_form=reduction.form,
+        transformation=reduction.transformation)
+
+
+@defun
+def curve_periods(ctx, curve, differentials=None, *,
+                  second_differentials=None):
+    r"""Return the period matrices of a plane algebraic curve.
+
+    ``curve`` uses the input forms accepted by
+    :func:`~mpmath.curve_branch_locus`.  A hyperelliptic coefficient
+    sequence without supplied differentials is dispatched to the
+    specialized engine :func:`~mpmath.hyperelliptic_periods`.
+
+    A general plane curve requires ``differentials``, a sequence of one
+    holomorphic differential callable ``f(x, y)`` per genus, supplying the
+    coefficient of ``dx``.  Optional ``second_differentials`` supply the
+    same number of second-kind forms; they are integrated on the same
+    cycles, with the classical convention ``2*eta = -integral_a(dr)``.
+
+    The returned ``CurvePeriods`` record contains the differential basis,
+    the half-period matrices ``omega`` and ``omega_prime``, the normalized
+    Riemann matrix ``tau = omega**-1 * omega_prime``, the optional
+    second-kind half-period matrices ``eta`` and ``eta_prime`` and
+    ``kappa = eta * omega**-1``, and numerical quality residuals.  A
+    non-positive-definite normalized period matrix raises ``ValueError``,
+    because it always indicates an invalid differential count or basis.
+
+    The normalized Riemann matrix of the lemniscatic curve
+    :math:`y^2 = x^3 - x` is :math:`i`::
+
+        >>> from mpmath import curve_periods, curve_validate, mp
+        >>> mp.dps = 15
+        >>> data = curve_periods((0, -1, 0, 1))
+        >>> mp.re(data.tau[0, 0]), mp.im(data.tau[0, 0])
+        (mpf('0.0'), mpf('1.0'))
+
+    A general plane curve needs a supplied holomorphic basis, given as
+    callables returning the coefficient of ``dx``::
+
+        >>> curve = {(0, 2): 1, (1, 0): 1, (3, 0): -1}
+        >>> data = curve_periods(curve, (lambda x, y: 1 / y,))
+        >>> curve_validate(data).passed
+        True
+    """
+    prepared, hyperelliptic_coefficients = _normalise_algebraic_curve_input(
+        ctx, curve)
+    if hyperelliptic_coefficients is not None and differentials is None:
+        if second_differentials is not None:
+            raise ValueError(
+                "supplied second-kind differentials require a supplied "
+                "first-kind basis")
+        omega, omega_prime, eta, eta_prime, tau, kappa = (
+            ctx.hyperelliptic_periods(
+                hyperelliptic_coefficients, second_kind=True))
+        genus = omega.rows
+        return CurvePeriods(
+            genus, None, omega, omega_prime, tau, eta, eta_prime, kappa,
+            ctx.norm(tau - tau.T), ctx.norm(kappa - kappa.T),
+            _tau_imaginary_eigenvalues(ctx, tau), None)
+
+    first_kind = _curve_differential_sequence(
+        differentials, "differentials")
+    if second_differentials is None:
+        second_kind = ()
+    else:
+        second_kind = _curve_differential_sequence(
+            second_differentials, "second_differentials")
+    monodromy = _stage_monodromy(ctx, prepared)
+    genus = monodromy.genus
+    if len(first_kind) != genus:
+        raise ValueError(
+            "differentials must contain one form per genus")
+    if second_kind and len(second_kind) != genus:
+        raise ValueError(
+            "second_differentials must contain one form per genus")
+    forms = first_kind + second_kind
+    quadrature_order = max(12, ctx.dps // 2)
+    columns, max_sheet_residual = _stage_cycle_integrals(
+        ctx, (prepared, forms, quadrature_order))
 
     periods = _period_matrix_from_columns(
         ctx, columns, 0, genus, genus)
@@ -2633,38 +2894,11 @@ def algebraic_curve_data(
     raw_tau = omega**-1 * omega_prime
     symmetry_residual = ctx.norm(raw_tau - raw_tau.T)
     tau = (raw_tau + raw_tau.T) / 2
-    imaginary_tau = ctx.matrix([
-        [ctx.im(tau[row, column]) for column in range(genus)]
-        for row in range(genus)
-    ])
-    imaginary_eigenvalues = tuple(ctx.eigsy(
-        imaginary_tau, eigvals_only=True))
+    imaginary_eigenvalues = _tau_imaginary_eigenvalues(ctx, tau)
     if min(imaginary_eigenvalues) <= 0:
         raise ValueError("normalized period matrix is not positive definite")
 
-    quadrature_order = max(12, ctx.dps // 2)
-    riemann_constant, unused_iterated, normalised = (
-        _riemann_constant_vector(
-            ctx, prepared, monodromy, canonical_cycles, first_kind,
-            periods[:, :genus], tau, quadrature_order))
-    theta_samples = _theta_divisor_samples(
-        ctx, prepared, monodromy, branch_points, normalised, genus,
-        quadrature_order)
-    riemann_constant = _theta_divisor_riemann_constant(
-        ctx, tau, theta_samples, riemann_constant)
-    resolved_base_place = _PlaneCurvePlace(
-        monodromy.base_point, monodromy.base_sheets[0])
-    if base_place is not None:
-        resolved_base_place = _normalise_finite_base_place(
-            ctx, prepared, base_place)
-        base_abel = _finite_base_abel_value(
-            ctx, prepared, monodromy, branch_points,
-            resolved_base_place, normalised, quadrature_order)
-        riemann_constant += (genus - 1) * base_abel
-    characteristic = _jacobian_characteristic(
-        ctx, riemann_constant, tau)
-
-    eta = eta_prime = kappa = second_periods = None
+    eta = eta_prime = kappa = None
     kappa_symmetry_residual = None
     if second_kind:
         second_periods = _period_matrix_from_columns(
@@ -2674,24 +2908,404 @@ def algebraic_curve_data(
         raw_kappa = eta * omega**-1
         kappa_symmetry_residual = ctx.norm(raw_kappa - raw_kappa.T)
         kappa = (raw_kappa + raw_kappa.T) / 2
+    return CurvePeriods(
+        genus, first_kind, omega, omega_prime, tau, eta, eta_prime, kappa,
+        symmetry_residual, kappa_symmetry_residual, imaginary_eigenvalues,
+        max_sheet_residual)
 
-    diagnostics = _AlgebraicCurveDiagnostics(
-        curve=prepared,
-        branch_points=branch_points,
-        resultant=resultant,
-        monodromy=monodromy,
-        graph=graph,
-        canonical_cycles=canonical_cycles,
-        periods=periods,
-        second_periods=second_periods,
-        symmetry_residual=symmetry_residual,
-        kappa_symmetry_residual=kappa_symmetry_residual,
-        imaginary_eigenvalues=imaginary_eigenvalues,
-        max_sheet_residual=max_sheet_residual,
-    )
-    return AlgebraicCurveData(
-        genus, omega, omega_prime, tau, eta, eta_prime, kappa,
-        resolved_base_place, characteristic, diagnostics)
+
+@defun
+def curve_riemann_matrix(ctx, curve, differentials=None):
+    r"""Return the normalized Riemann matrix of a plane algebraic curve.
+
+    This is a convenience wrapper returning
+    ``curve_periods(curve, differentials).tau``; see
+    :func:`~mpmath.curve_periods` for the input conventions.
+
+        >>> from mpmath import curve_riemann_matrix, mp
+        >>> mp.dps = 15
+        >>> tau = curve_riemann_matrix((0, -1, 0, 1))
+        >>> mp.im(tau[0, 0])
+        mpf('1.0')
+    """
+    return curve_periods(ctx, curve, differentials).tau
+
+
+@defun
+def curve_validate(ctx, result):
+    r"""Validate a result record returned by the curve functions.
+
+    ``result`` is one of ``CurveBranchLocus``, ``CurveMonodromy``,
+    ``CurveHomology`` or ``CurvePeriods``.  The returned
+    ``CurveValidation`` record contains one named ``CurveCheck`` per
+    invariant, the largest
+    numerical residual among them, and whether every check passed.  The
+    checks are recomputed from the record itself; the underlying curve
+    data is not recomputed.
+
+        >>> from mpmath import curve_periods, curve_validate
+        >>> report = curve_validate(curve_periods((0, -1, 0, 1)))
+        >>> report.passed
+        True
+        >>> report.checks[0]
+        CurveCheck(name='tau_symmetry_residual', value=mpf('0.0'), passed=True)
+    """
+    checks = []
+    residuals = []
+    if isinstance(result, CurveBranchLocus):
+        values = tuple(result.branch_values)
+        scale = max([ctx.one] + [abs(value) for value in values])
+        tolerance = ctx.sqrt(ctx.eps) * scale
+        separation = min(
+            (abs(left - right)
+             for index, left in enumerate(values)
+             for right in values[index + 1:]),
+            default=ctx.zero)
+        checks.append(CurveCheck(
+            "branch_values_distinct", separation, separation > tolerance))
+        checks.append(CurveCheck(
+            "resultant_nonconstant", len(result.resultant),
+            len(result.resultant) > 1))
+    elif isinstance(result, CurveMonodromy):
+        degree = len(result.base_sheets)
+        all_permutations = result.permutations + (
+            result.infinity_permutation,)
+        valid = all(
+            sorted(permutation) == list(range(degree))
+            for permutation in all_permutations)
+        checks.append(CurveCheck(
+            "permutations_valid", valid, valid))
+        orbit = _monodromy_orbit(all_permutations)
+        checks.append(CurveCheck(
+            "monodromy_transitive", len(orbit), len(orbit) == degree))
+        product = tuple(range(degree))
+        for permutation in all_permutations:
+            product = _compose_permutations(permutation, product)
+        checks.append(CurveCheck(
+            "monodromy_product_identity", product,
+            product == tuple(range(degree))))
+        balanced = (2 * result.genus - 2
+                    == -2 * degree + result.ramification)
+        checks.append(CurveCheck(
+            "riemann_hurwitz_balance", balanced, balanced))
+    elif isinstance(result, CurveHomology):
+        genus = result.genus
+        form = result.intersection_form
+        antisymmetric = all(
+            form[row][column] == -form[column][row]
+            for row in range(len(form)) for column in range(len(form)))
+        checks.append(CurveCheck(
+            "intersection_form_antisymmetric", antisymmetric,
+            antisymmetric))
+        form_rank = _integer_matrix_rank(form)
+        checks.append(CurveCheck(
+            "intersection_form_rank", form_rank, form_rank == 2 * genus))
+        integral = all(
+            isinstance(entry, int)
+            for row in result.transformation for entry in row)
+        checks.append(CurveCheck(
+            "transformation_integral", integral, integral))
+        checks.append(CurveCheck(
+            "cycle_count", result.cycle_count,
+            result.cycle_count == result.intersection_rank
+            + result.radical_rank))
+    elif isinstance(result, CurvePeriods):
+        tau = result.tau
+        scale = max([ctx.one] + [
+            abs(tau[row, column]) for row in range(tau.rows)
+            for column in range(tau.cols)])
+        tolerance = 100 * ctx.sqrt(ctx.eps) * scale
+        symmetry_residual = ctx.norm(tau - tau.T)
+        residuals.append(symmetry_residual)
+        checks.append(CurveCheck(
+            "tau_symmetry_residual", symmetry_residual,
+            symmetry_residual <= tolerance))
+        eigenvalues = _tau_imaginary_eigenvalues(ctx, tau)
+        checks.append(CurveCheck(
+            "tau_imaginary_positive_definite", min(eigenvalues),
+            min(eigenvalues) > 0))
+        if result.kappa is not None:
+            kappa = result.kappa
+            kappa_scale = max([ctx.one] + [
+                abs(kappa[row, column]) for row in range(kappa.rows)
+                for column in range(kappa.cols)])
+            kappa_residual = ctx.norm(kappa - kappa.T)
+            residuals.append(kappa_residual)
+            checks.append(CurveCheck(
+                "kappa_symmetry_residual", kappa_residual,
+                kappa_residual <= 100 * ctx.sqrt(ctx.eps) * kappa_scale))
+        if result.max_sheet_residual is not None:
+            residuals.append(result.max_sheet_residual)
+            checks.append(CurveCheck(
+                "max_sheet_residual", result.max_sheet_residual,
+                result.max_sheet_residual <= tolerance))
+    else:
+        raise ValueError("curve_validate requires a curve result record")
+    maximum_residual = max(residuals) if residuals else None
+    return CurveValidation(
+        type(result).__name__, all(check.passed for check in checks),
+        maximum_residual, tuple(checks))
+
+
+@defun
+def curve_fibre(ctx, curve, x):
+    r"""Return the labelled fibre of a plane algebraic curve over x.
+
+    ``curve`` uses the input forms accepted by
+    :func:`~mpmath.curve_branch_locus`, and ``x`` must be a finite regular
+    value of the ``x`` projection: not a branch value, and one over which
+    the projection does not drop degree.  The returned tuple contains one
+    ``CurvePlace`` record per sheet, ordered deterministically by the real
+    and imaginary parts of ``y``.  The labelling agrees with the base fibre
+    used by :func:`~mpmath.curve_monodromy`.
+
+    >>> from mpmath import curve_fibre, mp
+    >>> mp.dps = 15
+    >>> [mp.nstr(place.y, 6) for place in curve_fibre((0, -1, 0, 1), 2)]
+    ['-2.44949', '2.44949']
+    """
+    prepared, unused_hyperelliptic = _normalise_algebraic_curve_input(
+        ctx, curve)
+    x = ctx.convert(x)
+    if not ctx.isfinite(x):
+        raise ValueError("x must be finite")
+    sheets = _ordered_plane_curve_sheets(ctx, prepared, x)
+    scale = max([ctx.one] + [abs(value) for value in sheets])
+    separation = min(
+        abs(left - right)
+        for index, left in enumerate(sheets)
+        for right in sheets[index + 1:])
+    if separation <= 100 * ctx.sqrt(ctx.eps) * scale:
+        raise ValueError("x must not be a finite branch value")
+    return tuple(CurvePlace(x, value) for value in sheets)
+
+
+@defun
+def curve_path(ctx, curve, start, end):
+    r"""Return a lifted path between two regular finite places.
+
+    ``start`` and ``end`` are regular finite places, each given as a
+    ``(x, y)`` pair or a ``CurvePlace`` from :func:`~mpmath.curve_fibre`.
+    A guarded polyline in the x-plane avoids the branch values, and the
+    path is lifted by numerical continuation from ``start``.  The returned
+    ``CurvePath`` record contains the endpoint places, the sheet index
+    reached, and the continuation record carrying the numerical routing
+    data used by :func:`~mpmath.curve_integral`.
+
+    Both places must have distinct ``x`` values, and ``end`` must lie on
+    the sheet reached by continuation; otherwise ``ValueError`` is raised.
+
+    >>> from mpmath import curve_path, mp
+    >>> mp.dps = 15
+    >>> curve = {(0, 2): 1, (1, 0): -1}
+    >>> path = curve_path(curve, (1, 1), (4, 2))
+    >>> mp.nstr(path.start.y, 6), mp.nstr(path.end.y, 6)
+    ('1.0', '2.0')
+    """
+    prepared, unused_hyperelliptic = _normalise_algebraic_curve_input(
+        ctx, curve)
+    start = _normalise_curve_place(ctx, prepared, start, "start")
+    end = _normalise_curve_place(ctx, prepared, end, "end")
+    if start.x == end.x:
+        raise ValueError(
+            "path endpoints must have distinct x values")
+    branch_values, unused_resultant = _stage_branch_locus(ctx, prepared)
+    path = _guarded_open_path(ctx, start.x, end.x, branch_values)
+    lifted = _lift_plane_curve_path(ctx, prepared, path, start.y)
+    scale = max(ctx.one, abs(end.x), abs(end.y), abs(lifted.end.y))
+    if abs(lifted.end.y - end.y) > 100 * ctx.sqrt(ctx.eps) * scale:
+        raise ValueError(
+            "the lifted path from start does not reach end; the two "
+            "places lie on different sheets along the guarded path")
+    return CurvePath(
+        start=lifted.start,
+        end=lifted.end,
+        sheet=lifted.sheet,
+        continuation=lifted.continuation)
+
+
+@defun
+def curve_integral(ctx, curve, differentials, path):
+    r"""Integrate one differential or a differential basis along a path.
+
+    ``differentials`` is either a single callable ``f(x, y)`` returning the
+    coefficient of ``dx``, or a sequence of such callables; ``path`` is a
+    ``CurvePath`` from :func:`~mpmath.curve_path`.  A single differential
+    gives a scalar ``values`` entry, a sequence gives one entry per form.
+    The returned ``CurveIntegral`` record also carries the maximum
+    curve-equation residual encountered on the integration nodes and the
+    number of path segments.
+
+    >>> from mpmath import curve_integral, curve_path, mp
+    >>> mp.dps = 15
+    >>> curve = {(0, 2): 1, (1, 0): -1}
+    >>> path = curve_path(curve, (1, 1), (4, 2))
+    >>> integral = curve_integral(curve, lambda x, y: 1 / y, path)
+    >>> mp.nstr(integral.values, 12)
+    '2.0'
+    """
+    prepared, unused_hyperelliptic = _normalise_algebraic_curve_input(
+        ctx, curve)
+    if callable(differentials):
+        single = True
+        forms = (differentials,)
+    else:
+        single = False
+        forms = _curve_differential_sequence(
+            differentials, "differentials")
+    if not isinstance(path, CurvePath):
+        raise ValueError("path must be a CurvePath from curve_path")
+    integral = _integrate_plane_curve_path(
+        ctx, prepared, path.continuation, forms, sheet=path.sheet)
+    values = integral.values[0] if single else integral.values
+    return CurveIntegral(
+        values, integral.max_sheet_residual, integral.segments)
+
+
+def _normalise_curve_places(ctx, curve, target):
+    """Return normalised places from a single place or a divisor."""
+    if isinstance(target, CurvePlace):
+        return (_normalise_curve_place(ctx, curve, target),)
+    try:
+        left, right = target
+        pair = True
+    except (TypeError, ValueError):
+        pair = False
+    if pair and not any(
+            isinstance(value, (list, tuple, CurvePlace))
+            for value in (left, right)):
+        return (_normalise_curve_place(ctx, curve, target),)
+    places = []
+    for place in target:
+        places.append(_normalise_curve_place(ctx, curve, place))
+    return tuple(places)
+
+
+@defun
+def curve_abel_map(ctx, curve, target, differentials=None,
+                   base_place=None, reduce=False):
+    r"""Evaluate the Abel map of a place or divisor on a plane curve.
+
+    ``target`` is one regular finite place, given as a ``(x, y)`` pair or
+    ``CurvePlace``, or a sequence of places representing an effective
+    divisor; an empty sequence returns the zero vector.  A hyperelliptic
+    coefficient sequence without supplied differentials is dispatched to
+    :func:`~mpmath.hyperelliptic_abel_map`; a general plane curve requires
+    ``differentials``, one first-kind callable per genus, and returns the
+    unnormalized Abelian coordinates they integrate to.
+
+    ``base_place`` selects a regular finite base place; the default is
+    sheet zero over the internally selected computational base point.
+    With ``reduce=True`` the result is reduced modulo the period lattice
+    of the supplied basis, equivalent to applying
+    :func:`~mpmath.curve_lattice_reduce`.
+
+    >>> from mpmath import curve_abel_map, mp
+    >>> mp.dps = 15
+    >>> curve = {(0, 2): 1, (1, 0): 1, (3, 0): -1}
+    >>> point = (mp.mpf(2), mp.sqrt(6))
+    >>> forms = (lambda x, y: 1 / y,)
+    >>> value = curve_abel_map(curve, point, forms, base_place=point)
+    >>> mp.nstr(mp.norm(value), 3)
+    '0.0'
+    """
+    prepared, hyperelliptic_coefficients = _normalise_algebraic_curve_input(
+        ctx, curve)
+    if hyperelliptic_coefficients is not None and differentials is None:
+        if base_place is None:
+            return ctx.hyperelliptic_abel_map(
+                hyperelliptic_coefficients, target, reduce=reduce)
+        result = (ctx.hyperelliptic_abel_map(
+                      hyperelliptic_coefficients, target)
+                  - ctx.hyperelliptic_abel_map(
+                      hyperelliptic_coefficients, base_place))
+        if reduce:
+            tau = curve_periods(ctx, curve).tau
+            lattice = _jacobian_lattice_matrix(ctx, tau)
+            result = _reduce_jacobian_point(
+                ctx, result, tau, lattice ** -1)
+        return result
+
+    forms = _curve_differential_sequence(
+        differentials, "differentials")
+    monodromy = _stage_monodromy(ctx, prepared)
+    genus = monodromy.genus
+    if len(forms) != genus:
+        raise ValueError(
+            "differentials must contain one form per genus")
+    if base_place is None:
+        base = _PlaneCurvePlace(
+            monodromy.base_point, monodromy.base_sheets[0])
+    else:
+        base = _normalise_curve_place(
+            ctx, prepared, base_place, "base_place")
+    branch_values, unused_resultant = _stage_branch_locus(ctx, prepared)
+    quadrature_order = max(12, ctx.dps // 2)
+
+    def place_value(place):
+        if _same_numerical_place(
+                ctx, (place.x, place.y),
+                (monodromy.base_point, monodromy.base_sheets[0])):
+            return ctx.zeros(genus, 1)
+        return _finite_base_abel_value(
+            ctx, prepared, monodromy, branch_values, place, forms,
+            quadrature_order)
+
+    places = _normalise_curve_places(ctx, prepared, target)
+    result = ctx.zeros(genus, 1)
+    for place in places:
+        result += place_value(place)
+    result -= len(places) * place_value(base)
+    if reduce:
+        tau = curve_periods(ctx, curve, differentials).tau
+        lattice = _jacobian_lattice_matrix(ctx, tau)
+        result = _reduce_jacobian_point(ctx, result, tau, lattice ** -1)
+    return result
+
+
+@defun
+def curve_lattice_reduce(ctx, value, periods):
+    r"""Reduce a Jacobian vector modulo the period lattice.
+
+    ``value`` is a genus-length column vector of Abelian coordinates, and
+    ``periods`` is either a ``CurvePeriods`` record or a normalized
+    Riemann matrix ``tau``.  The returned ``CurveLatticeReduction`` record
+    contains the equivalent reduced vector and the integer lattice shift
+    ``(m, n)`` with ``value - (m + tau*n)`` equal to the reduced vector.
+
+    >>> from mpmath import curve_lattice_reduce, curve_riemann_matrix, mp
+    >>> mp.dps = 15
+    >>> tau = curve_riemann_matrix((0, -1, 0, 1))
+    >>> reduced = curve_lattice_reduce(mp.matrix([2 + 1j]), tau)
+    >>> reduced.shift
+    (2, 1)
+    >>> mp.nstr(reduced.value[0, 0], 3)
+    '0.0'
+    """
+    if isinstance(periods, CurvePeriods):
+        tau = periods.tau
+    else:
+        tau = periods
+    if tau.rows != tau.cols:
+        raise ValueError("periods must be square or a CurvePeriods record")
+    genus = tau.rows
+    try:
+        value = ctx.matrix(value)
+    except (TypeError, ValueError):
+        raise ValueError("value must be a genus-length column vector")
+    if value.rows != genus or value.cols != 1:
+        raise ValueError("value must be a genus-length column vector")
+    lattice = _jacobian_lattice_matrix(ctx, tau)
+    coordinates = lattice ** -1 * ctx.matrix(
+        [ctx.re(entry) for entry in value]
+        + [ctx.im(entry) for entry in value])
+    shift = tuple(int(ctx.nint(entry)) for entry in coordinates)
+    reduced = value - ctx.matrix([
+        shift[row] + ctx.fsum(
+            tau[row, column] * shift[genus + column]
+            for column in range(genus))
+        for row in range(genus)])
+    return CurveLatticeReduction(reduced, shift)
 
 
 def _real_plane_curve_monodromy(
