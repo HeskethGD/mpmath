@@ -7,7 +7,8 @@ from ._records import (
 from .polynomial import (
     _evaluate_plane_derivative, _evaluate_plane_polynomial,
     _minimum_cost_assignment, _minimum_root_separation,
-    _ordered_plane_curve_sheets, _plane_curve_sheets,
+    _newton_plane_curve_sheet, _ordered_plane_curve_sheets,
+    _plane_curve_sheets,
 )
 
 # Base-plane paths
@@ -404,20 +405,9 @@ def _continue_plane_curve_branch(
         derivative_y = _evaluate_plane_derivative(
             ctx, curve, left, value, "y")
         prediction = value - derivative_x * (right - left) / derivative_y
-        candidate = prediction
-        converged = False
-        for unused in range(max_newton_steps):
-            residual_value = _evaluate_plane_polynomial(
-                ctx, curve, right, candidate)
-            candidate_derivative = _evaluate_plane_derivative(
-                ctx, curve, right, candidate, "y")
-            candidate_scale = polynomial_scale(right, candidate)
-            if abs(residual_value) <= 100 * ctx.eps * candidate_scale:
-                converged = True
-                break
-            if abs(candidate_derivative) <= ctx.eps * candidate_scale:
-                break
-            candidate -= residual_value / candidate_derivative
+        (candidate, unused_residual, unused_derivative, unused_scale,
+         converged) = _newton_plane_curve_sheet(
+             ctx, curve, right, prediction, maxsteps=max_newton_steps)
 
         correction = abs(candidate - prediction)
         motion = abs(candidate - value)

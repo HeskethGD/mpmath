@@ -5,11 +5,106 @@ from ._records import (
 )
 from .polynomial import (
     _evaluate_plane_derivative, _evaluate_plane_polynomial,
-    _minimum_cost_assignment, _plane_curve_sheets, _polynomial_multiply,
+    _minimum_cost_assignment, _newton_plane_curve_sheet,
+    _plane_curve_sheets, _polynomial_multiply,
 )
 
 # Lifted-path integration
 # -----------------------
+
+def _full_plane_curve_segment_samples(
+        ctx, curve, left_x, right_x, left_fibre, right_fibre,
+        parameters, sheet):
+    """Resolve one selected sheet independently at every quadrature node."""
+    delta_x = right_x - left_x
+    samples = []
+    for parameter in parameters:
+        x = left_x + parameter * delta_x
+        predictions = tuple(
+            left + parameter * (right - left)
+            for left, right in zip(left_fibre, right_fibre))
+        candidates = _plane_curve_sheets(
+            ctx, curve, x, roots_init=predictions)
+        assignment = _minimum_cost_assignment(ctx, predictions, candidates)
+        y = candidates[assignment[sheet]]
+        residual = abs(_evaluate_plane_polynomial(ctx, curve, x, y))
+        samples.append((x, y, residual))
+    return tuple(samples)
+
+
+def _newton_plane_curve_segment_samples(
+        ctx, curve, left_x, right_x, left_fibre, right_fibre,
+        parameters, sheet):
+    """Continue one sheet through ordered nodes, or return ``None``.
+
+    The known right endpoint certifies the resulting branch.  A caller must
+    fall back to independent full-fibre solves when this fast path fails.
+    """
+    current_x = left_x
+    current_y = left_fibre[sheet]
+    delta_x = right_x - left_x
+    samples = []
+
+    def advance(next_x):
+        nonlocal current_x, current_y
+        derivative_x = _evaluate_plane_derivative(
+            ctx, curve, current_x, current_y, "x")
+        derivative_y = _evaluate_plane_derivative(
+            ctx, curve, current_x, current_y, "y")
+        derivative_scale = max(
+            ctx.one, abs(derivative_x), abs(derivative_y))
+        if abs(derivative_y) <= ctx.sqrt(ctx.eps) * derivative_scale:
+            return None
+        prediction = current_y - (
+            derivative_x * (next_x - current_x) / derivative_y)
+        (candidate, residual, unused_derivative, unused_scale,
+         converged) = _newton_plane_curve_sheet(
+             ctx, curve, next_x, prediction)
+        correction = abs(candidate - prediction)
+        motion = abs(candidate - current_y)
+        if (not converged
+                or correction > max(ctx.one, motion) / 4):
+            return None
+        current_x = next_x
+        current_y = candidate
+        return candidate, abs(residual)
+
+    for parameter in parameters:
+        x = left_x + parameter * delta_x
+        result = advance(x)
+        if result is None:
+            return None
+        y, residual = result
+        samples.append((x, y, residual))
+
+    endpoint = advance(right_x)
+    if endpoint is None:
+        return None
+    expected = right_fibre[sheet]
+    endpoint_scale = max(ctx.one, abs(expected), abs(current_y))
+    tolerance = 100 * ctx.sqrt(ctx.eps) * endpoint_scale
+    if abs(current_y - expected) > tolerance:
+        return None
+    if any(abs(current_y - other) < abs(current_y - expected)
+           for index, other in enumerate(right_fibre) if index != sheet):
+        return None
+    return tuple(samples)
+
+
+def _plane_curve_segment_samples(
+        ctx, curve, left_x, right_x, left_fibre, right_fibre,
+        parameters, sheet):
+    """Sample one lifted segment, using certified Newton continuation."""
+    if curve.y_degree > 2:
+        samples = _newton_plane_curve_segment_samples(
+            ctx, curve, left_x, right_x, left_fibre, right_fibre,
+            parameters, sheet)
+        if samples is not None:
+            return samples
+    return _full_plane_curve_segment_samples(
+        ctx, curve, left_x, right_x, left_fibre, right_fibre,
+        parameters, sheet)
+
 
 def _integrate_plane_curve_path(
         ctx, curve, continuation, differentials, sheet=0,
@@ -17,9 +112,10 @@ def _integrate_plane_curve_path(
     """Integrate coefficients of dx along one continued sheet.
 
     Each differential is a callable ``differential(x, y)`` returning the
-    coefficient of ``dx``.  Intermediate fibres are solved and matched
-    against the linearly interpolated endpoint fibres, making quadrature
-    independent of mutable root-tracking state.
+    coefficient of ``dx``.  Ordered quadrature nodes use predictor-corrector
+    continuation of the selected sheet, certified against each segment's
+    known endpoint fibre. Unsafe segments fall back to independent full-fibre
+    solves matched against the interpolated endpoint fibres.
     """
     try:
         differentials = tuple(differentials)
@@ -57,31 +153,12 @@ def _integrate_plane_curve_path(
         left_fibre = continuation.fibres[segment]
         right_fibre = continuation.fibres[segment + 1]
 
-        def lifted_point(parameter):
-            nonlocal max_sheet_residual
-            parameter = ctx.convert(parameter)
-            x = left_x + parameter * delta_x
-            if not parameter:
-                ordered = left_fibre
-            elif parameter == 1:
-                ordered = right_fibre
-            else:
-                predictions = tuple(
-                    left + parameter * (right - left)
-                    for left, right in zip(left_fibre, right_fibre))
-                candidates = _plane_curve_sheets(
-                    ctx, curve, x, roots_init=predictions)
-                assignment = _minimum_cost_assignment(
-                    ctx, predictions, candidates)
-                ordered = tuple(candidates[index] for index in assignment)
-            y = ordered[sheet]
-            residual = abs(_evaluate_plane_polynomial(ctx, curve, x, y))
-            max_sheet_residual = max(max_sheet_residual, residual)
-            return x, y
-
         contributions = [[] for unused in differentials]
-        for parameter, weight in zip(parameters, weights):
-            x, y = lifted_point(parameter)
+        samples = _plane_curve_segment_samples(
+            ctx, curve, left_x, right_x, left_fibre, right_fibre,
+            parameters, sheet)
+        for (x, y, residual), weight in zip(samples, weights):
+            max_sheet_residual = max(max_sheet_residual, residual)
             for index, differential in enumerate(differentials):
                 contributions[index].append(
                     weight * differential(x, y))
@@ -153,20 +230,12 @@ def _integrate_plane_curve_path_iterated(
             continue
         left_fibre = continuation.fibres[segment]
         right_fibre = continuation.fibres[segment + 1]
+        lifted_samples = _plane_curve_segment_samples(
+            ctx, curve, left_x, right_x, left_fibre, right_fibre,
+            parameters, sheet)
         samples = []
-        for parameter in parameters:
-            x = left_x + parameter * delta_x
-            predictions = tuple(
-                left + parameter * (right - left)
-                for left, right in zip(left_fibre, right_fibre))
-            candidates = _plane_curve_sheets(
-                ctx, curve, x, roots_init=predictions)
-            assignment = _minimum_cost_assignment(
-                ctx, predictions, candidates)
-            y = candidates[assignment[sheet]]
-            max_sheet_residual = max(
-                max_sheet_residual,
-                abs(_evaluate_plane_polynomial(ctx, curve, x, y)))
+        for x, y, residual in lifted_samples:
+            max_sheet_residual = max(max_sheet_residual, residual)
             samples.append(tuple(
                 differential(x, y) for differential in differentials))
 

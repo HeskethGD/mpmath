@@ -1,6 +1,7 @@
 import pytest
 
 import mpmath
+import mpmath.curves.integration as curve_integration
 from mpmath import (
     AlgebraicCurve, CurveBranchLocus, CurveChart, CurveCheck, CurveGenus, CurveHomology,
     CurveIntegral, CurveLatticeReduction, CurveMonodromy, CurvePath,
@@ -268,6 +269,52 @@ def test_lifted_path_integrals_on_square_root_curve():
     closed_integral = _integrate_lifted_path_chain(
         mp, curve, closed_chain, (lambda x, y: 1 / x,))
     assert abs(closed_integral.values[0] - 4j * mp.pi) < mp.mpf("1e-27")
+
+
+def test_lifted_path_integrals_use_single_sheet_newton(monkeypatch):
+    # Once the degree-three endpoint fibres have been continued, integration
+    # should correct only the selected branch instead of resolving all three
+    # roots again at every Gauss node.
+    mp.dps = 30
+    curve = _prepare_plane_curve(mp, {(0, 3): 1, (1, 0): -1})
+    continuation = _continue_plane_curve_sheets(mp, curve, (1, 8))
+
+    def reject_full_fibre_solve(*unused_args, **unused_kwargs):
+        raise AssertionError("unexpected full-fibre solve")
+
+    monkeypatch.setattr(
+        curve_integration, "_plane_curve_sheets", reject_full_fibre_solve)
+    integral = _integrate_plane_curve_path(
+        mp, curve, continuation, (lambda x, y: 1 / y,),
+        sheet=2, quadrature_order=32)
+    assert abs(integral.values[0] - mp.mpf("4.5")) < mp.mpf("1e-20")
+    assert integral.max_sheet_residual < mp.mpf("1e-28")
+
+
+def test_lifted_path_integrals_fall_back_to_full_fibres(monkeypatch):
+    mp.dps = 30
+    curve = _prepare_plane_curve(mp, {(0, 3): 1, (1, 0): -1})
+    continuation = _continue_plane_curve_sheets(mp, curve, (1, 8))
+    full_solve = curve_integration._plane_curve_sheets
+    calls = []
+
+    def reject_newton(*unused_args, **unused_kwargs):
+        return None
+
+    def counted_full_solve(*args, **kwargs):
+        calls.append(args[2])
+        return full_solve(*args, **kwargs)
+
+    monkeypatch.setattr(
+        curve_integration, "_newton_plane_curve_segment_samples",
+        reject_newton)
+    monkeypatch.setattr(
+        curve_integration, "_plane_curve_sheets", counted_full_solve)
+    integral = _integrate_plane_curve_path(
+        mp, curve, continuation, (lambda x, y: 1 / y,),
+        sheet=2, quadrature_order=16)
+    assert len(calls) == 16
+    assert abs(integral.values[0] - mp.mpf("4.5")) < mp.mpf("2e-11")
 
 
 def test_reverse_continuation_inverts_three_sheet_monodromy():

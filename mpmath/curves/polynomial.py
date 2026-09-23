@@ -291,6 +291,36 @@ def _plane_polynomial_y_coefficients(ctx, curve, x):
     return coefficients
 
 
+def _newton_plane_curve_sheet(
+        ctx, curve, x, prediction, maxsteps=20):
+    """Correct one predicted sheet above ``x`` by Newton iteration.
+
+    Return ``(value, residual, derivative, scale, converged)``.  Evaluating
+    the fibre polynomial and its derivative together by Horner's rule is
+    substantially cheaper than resolving every sheet with ``polyroots``.
+    """
+    coefficients = _plane_polynomial_y_coefficients(ctx, curve, x)
+    candidate = ctx.convert(prediction)
+    residual = derivative = ctx.zero
+    scale = ctx.one
+    for unused in range(maxsteps):
+        residual = coefficients[-1]
+        derivative = ctx.zero
+        scale = abs(coefficients[-1])
+        magnitude = abs(candidate)
+        for coefficient in reversed(coefficients[:-1]):
+            derivative = derivative * candidate + residual
+            residual = residual * candidate + coefficient
+            scale = scale * magnitude + abs(coefficient)
+        scale = max(ctx.one, scale)
+        if abs(residual) <= 100 * ctx.eps * scale:
+            return candidate, residual, derivative, scale, True
+        if abs(derivative) <= ctx.eps * scale:
+            break
+        candidate -= residual / derivative
+    return candidate, residual, derivative, scale, False
+
+
 def _reciprocal_y_plane_curve(ctx, curve):
     """Return ``y**degree * F(x, 1/y)`` as a prepared plane curve."""
     degree = curve.y_degree
