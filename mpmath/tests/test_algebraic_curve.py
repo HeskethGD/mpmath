@@ -2,66 +2,157 @@ import pytest
 
 import mpmath
 from mpmath import (
-    CurveBranchLocus, CurveChart, CurveCheck, CurveGenus, CurveHomology,
+    AlgebraicCurve, CurveBranchLocus, CurveChart, CurveCheck, CurveGenus, CurveHomology,
     CurveIntegral, CurveLatticeReduction, CurveMonodromy, CurvePath,
     CurvePeriods, CurvePlace, CurveRiemannConstant, CurveValidation,
-    curve_abel_map, curve_branch_locus, curve_fibre, curve_genus,
-    curve_chart, curve_chart_fibre, curve_chart_integral,
-    curve_chart_monomial, curve_chart_place, curve_homology, curve_integral,
-    curve_lattice_reduce, curve_monodromy, curve_path, curve_periods,
-    curve_riemann_constant, curve_riemann_matrix, curve_validate,
     hyperelliptic_abel_map, hyperelliptic_periods, mp,
 )
-from mpmath.functions.algebraic_curve import (
-    _assemble_plane_curve_periods,
+from mpmath.curves.charts import (
+    _curve_chart_blow_up,
+    _curve_chart_reciprocal_y,
+    chart_fibre as _chart_fibre,
+    chart_integral as _chart_integral,
+    monomial_chart as _chart_monomial,
+)
+from mpmath.curves.continuation import (
     _align_closed_continuation_base_fibre,
-    _blow_up_plane_curve_y,
-    _brahana_canonical_words,
-    _canonical_polygon_riemann_constant,
-    _canonical_ribbon_polygon,
     _close_monodromy_lift,
-    _concatenate_iterated_path_integrals,
     _concatenate_plane_curve_continuations,
     _continue_plane_curve_branch,
     _continue_plane_curve_sheets,
-    _evaluate_plane_derivative,
-    _evaluate_plane_polynomial,
-    _finite_plane_curve_sheets,
+    _lift_plane_curve_path,
+    _lifted_path_chain_boundary,
+    _prepare_lifted_path_chain,
+    _reverse_plane_curve_branch,
+    _reverse_plane_curve_continuation,
+)
+from mpmath.curves.integration import (
+    _assemble_plane_curve_periods,
+    _concatenate_iterated_path_integrals,
     _integrate_plane_curve_path,
     _integrate_plane_curve_path_iterated,
     _integrate_plane_curve_branch,
     _integrate_lifted_path_chain,
+    _pullback_plane_curve_differentials,
+    _reverse_iterated_path_integrals,
+)
+from mpmath.curves.jacobian import (
+    _canonical_polygon_riemann_constant,
     _jacobian_lattice_matrix,
-    _lift_plane_curve_path,
+    _reduce_jacobian_point,
+    _theta_divisor_samples,
+)
+from mpmath.curves.monodromy import (
+    _brahana_canonical_words,
+    _canonical_ribbon_polygon,
     _lifted_monodromy_graph,
-    _lifted_path_chain_boundary,
     _numerical_graph_cycles,
     _numerical_canonical_polygon,
     _numerical_ordered_canonical_polygon,
     _numerical_ordered_graph_cycles,
-    _ordered_plane_curve_sheets,
     _ordered_monodromy_graph,
-    _monomial_plane_curve_chart,
     _monodromy_graph_permutations,
-    _plane_polynomial_y_coefficients,
-    _plane_curve_critical_values,
     _permutation_cycles,
-    _prepare_plane_curve,
-    _prepare_lifted_path_chain,
     _real_branch_loop_path,
     _real_plane_curve_monodromy,
     _radial_plane_curve_monodromy,
-    _reciprocal_y_plane_curve,
-    _reduce_jacobian_point,
     _ribbon_tree_cotree_cut_system,
-    _pullback_plane_curve_differentials,
-    _reverse_plane_curve_branch,
-    _reverse_plane_curve_continuation,
-    _reverse_iterated_path_integrals,
     _symplectic_reduce_intersection,
-    _theta_divisor_samples,
     _transform_lifted_path_chains,
 )
+from mpmath.curves.polynomial import (
+    _blow_up_plane_curve_y,
+    _evaluate_plane_derivative,
+    _evaluate_plane_polynomial,
+    _finite_plane_curve_sheets,
+    _monomial_plane_curve_chart,
+    _ordered_plane_curve_sheets,
+    _plane_curve_critical_values,
+    _plane_polynomial_y_coefficients,
+    _prepare_plane_curve,
+    _reciprocal_y_plane_curve,
+)
+from mpmath.curves import _operations
+
+
+def _curve(specification):
+    return AlgebraicCurve(mp, specification)
+
+
+def curve_branch_locus(curve):
+    return _curve(curve).branch_locus
+
+
+def curve_monodromy(curve):
+    return _curve(curve).monodromy
+
+
+def curve_genus(curve):
+    return _curve(curve).genus_data
+
+
+def curve_homology(curve):
+    return _curve(curve).homology
+
+
+def curve_periods(curve, differentials=None, *, second_differentials=None):
+    return _curve(curve).periods(
+        differentials, second_differentials=second_differentials)
+
+
+def curve_riemann_matrix(curve, differentials=None):
+    return _curve(curve).riemann_matrix(differentials)
+
+
+def curve_riemann_constant(curve, differentials=None, *, base_place=None):
+    return _curve(curve).riemann_constant(
+        differentials, base_place=base_place)
+
+
+def curve_validate(result):
+    return _operations.validate(mp, result)
+
+
+def curve_fibre(curve, x):
+    return _curve(curve).fibre(x)
+
+
+def curve_path(curve, start, end):
+    return _curve(curve).path(start, end)
+
+
+def curve_integral(curve, differentials, path):
+    return _curve(curve).integral(differentials, path)
+
+
+def curve_abel_map(curve, target, differentials=None, base_place=None,
+                   reduce=False):
+    return _curve(curve).abel_map(
+        target, differentials, base_place=base_place, reduce=reduce)
+
+
+def curve_lattice_reduce(value, periods):
+    return _operations.lattice_reduce(mp, value, periods)
+
+
+def curve_chart(curve, chart_curve, coordinate_map):
+    return _curve(curve).chart(chart_curve, coordinate_map)
+
+
+def curve_chart_monomial(source, x_power, y_power):
+    return _chart_monomial(mp, source, x_power, y_power)
+
+
+def curve_chart_fibre(chart, t):
+    return _chart_fibre(mp, chart, t)
+
+
+def curve_chart_place(curve, chart, seed, cutoff):
+    return _curve(curve).chart_place(chart, seed, cutoff)
+
+
+def curve_chart_integral(chart, differentials, t_path, seed):
+    return _chart_integral(mp, chart, differentials, t_path, seed)
 
 
 def _canonical_intersection_form(genus, radical_rank):
@@ -691,7 +782,7 @@ def test_curve_periods_second_kind_general_plane_curve():
 
 def test_curve_stage_caching_and_input_forms():
     mp.dps = 20
-    stages = mpmath.functions.algebraic_curve
+    from mpmath.curves import _stages as stages
     for stage in (stages._stage_branch_locus, stages._stage_monodromy,
                   stages._stage_monodromy_graph,
                   stages._stage_canonical_cycles,
@@ -861,7 +952,7 @@ def test_curve_lattice_reduce_exact_lattice():
 
 
 def test_curve_result_records_are_public():
-    assert all(record.__module__ == "mpmath.functions.algebraic_curve"
+    assert all(record.__module__ == "mpmath.curves._records"
                for record in (
                    CurveBranchLocus, CurveChart, CurveGenus, CurveHomology,
                    CurveCheck, CurveIntegral, CurveLatticeReduction,

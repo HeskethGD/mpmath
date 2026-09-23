@@ -7,6 +7,7 @@ from .calculus.inverselaplace import LaplaceTransformInversionMethods
 from .calculus.odes import ODEMethods
 from .calculus.optimization import OptimizationMethods
 from .calculus.quadrature import QuadratureMethods
+from .curves.algebraic_curve import CurveMethods
 from .functions.functions import SpecialFunctions
 from .functions.rszeta import RSCache
 from .identification import IdentificationMethods
@@ -26,6 +27,7 @@ class StandardBaseContext(Context,
     QuadratureMethods,
     LaplaceTransformInversionMethods,
     CalculusMethods,
+    CurveMethods,
     MatrixMethods,
     MatrixCalculusMethods,
     LinearAlgebraMethods,

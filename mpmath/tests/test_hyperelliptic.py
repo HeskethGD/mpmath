@@ -32,6 +32,20 @@ def test_hyperelliptic_periods_genus_two_relations():
             - mp.im(tau[0, 1]) ** 2) > 0
 
 
+def test_hyperelliptic_periods_real_oval_orientations():
+    # The square-root sheet is continued from the rightmost interval rather
+    # than reset to the positive principal root on every real oval. For this
+    # odd-degree genus-two curve, dx/y is therefore positive on the first
+    # a-cut and negative on the second one.
+    mp.dps = 30
+    omega, unused_omega_prime, unused_tau = hyperelliptic_periods(
+        [0, 4, 0, -5, 0, 1], method="real")
+    assert abs(mp.im(omega[0, 0])) < mp.mpf('1e-28')
+    assert abs(mp.im(omega[0, 1])) < mp.mpf('1e-28')
+    assert mp.re(omega[0, 0]) > 0
+    assert mp.re(omega[0, 1]) < 0
+
+
 def test_hyperelliptic_periods_genus_three():
     # P(x) = x(x^2-1)(x^2-4)(x^2-9). This primarily checks that the cycle
     # construction and differential basis extend beyond genus 2.

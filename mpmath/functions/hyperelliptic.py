@@ -698,6 +698,13 @@ def hyperelliptic_periods(ctx, coefficients, method="auto",
     and otherwise uses an ordered polygonal path through the complex branch
     points. The latter order is lexicographic by real and imaginary part.
 
+    For the real-axis construction, the square-root sheet is continued from
+    the right of all branch points. Moving left across each real root
+    multiplies the continued square root by ``j``. Consequently, on successive
+    real ovals where :math:`P(x)>0`, the selected value of :math:`y` may have
+    alternating signs; it is not the positive principal square root chosen
+    independently on every oval.
+
     """
     # Unary plus freezes this context constant at the caller's precision;
     # otherwise ctx.eps would follow the temporary guard precision below.

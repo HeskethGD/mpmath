@@ -1,121 +1,122 @@
 Algebraic curves
 ----------------
 
-Numerical pipeline for smooth plane algebraic curves, computing their
-topology and periods from the defining polynomial.  Given a plane curve,
-mpmath determines its branch locus, monodromy, genus, a canonical homology
-basis, and the period matrices of its holomorphic differentials.  The
-calculations are purely numerical: arbitrary-precision continuation of the
-curve sheets supplies the monodromy, a lifted ribbon graph supplies the
-homology, and validated quadrature supplies the periods.
+The ``AlgebraicCurve`` class represents a smooth plane algebraic curve and
+provides a lazy numerical pipeline for its topology, periods and Jacobian
+data. Arbitrary-precision continuation of the sheets supplies monodromy, a
+lifted ribbon graph supplies homology, and validated quadrature supplies the
+periods.
 
-Each stage is a separate function returning a small fixed-field record, and
-expensive earlier stages are cached: a user requesting the periods of a
-curve whose monodromy has already been computed pays only for the new
-quadrature.  Topology and period result records can be checked independently
-with :func:`~mpmath.curve_validate`.
+Create a curve with the active mpmath context::
 
-Curves are supplied as an ascending coefficient sequence defining
-:math:`y^2 = P(x)`, as accepted by :func:`~mpmath.hyperelliptic_periods`, as
-a sparse mapping from :math:`(i, j)` power pairs to coefficients of
-:math:`x^i y^j`, or as a sequence of :math:`(i, j, c)` terms.  Hyperelliptic
-input is dispatched to the specialized engine when no differential basis
-is supplied; a general plane curve requires a user-supplied holomorphic
-basis of one differential callable per genus.  Singular curves and
-projections with repeated critical values are not supported.
-The current API always uses projection onto the ``x`` coordinate; selecting
-an alternative linear projection is future work.
+    >>> from mpmath import algebraic_curve, mp
+    >>> mp.dps = 30
+    >>> curve = algebraic_curve((0, -1, 0, 1))
+    >>> curve.genus
+    1
+    >>> curve.branch_locus.degree
+    2
 
-Places over a finite regular value are labelled by
-:func:`~mpmath.curve_fibre`, connected by lifted paths and integrated
-along by :func:`~mpmath.curve_path` and :func:`~mpmath.curve_integral`,
-and mapped into the Jacobian by :func:`~mpmath.curve_abel_map`, with
-:func:`~mpmath.curve_lattice_reduce` reducing the result modulo the
-period lattice.  Explicit numerical charts extend the same operations to
-ramification points and places over infinity.  Charts are bound to their
-ambient curve and working precision; discovering charts automatically is
-outside the present numerical API.
+``mp.algebraic_curve(specification)`` is equivalent. The explicit
+``AlgebraicCurve(ctx, specification)`` constructor is available when working
+with a custom context.
 
-The record classes ``CurveBranchLocus``, ``CurveMonodromy``, ``CurveGenus``,
-``CurveHomology``, ``CurvePeriods``, ``CurveRiemannConstant``, ``CurveChart``,
-``CurvePlace``, ``CurvePath``, ``CurveIntegral``, ``CurveLatticeReduction``,
-``CurveCheck`` and ``CurveValidation`` are importable from the top-level
-``mpmath`` namespace.  They contain results rather than additional methods;
-ordinary use starts with the functions below.
+Curves may be supplied as an ascending coefficient sequence defining
+:math:`y^2 = P(x)`, a sparse mapping from :math:`(i,j)` power pairs to the
+coefficients of :math:`x^i y^j`, or a sequence of :math:`(i,j,c)` terms.
+Hyperelliptic input is dispatched to the specialized engine when no
+differential basis is supplied. A general plane curve requires a user-supplied
+holomorphic basis containing one differential callable per genus. The current
+implementation uses projection onto the ``x`` coordinate.
 
-These functions complement the hyperelliptic period and Kleinian function
-machinery described in :doc:`abelian`: the hyperelliptic engine covers
-:math:`y^2 = P(x)` with its automatic differential bases, while the
-functions below cover general smooth projections of plane curves.
+Expensive stages are computed lazily and cached using the numerical context,
+including its precision. If the context changes after construction, the curve
+warns once and recomputes numerical stages for the new state. Inexact input
+coefficients retain the precision at which they were constructed.
+
+.. autoclass:: mpmath.AlgebraicCurve
 
 
-Branch locus and genus
-......................
-
-.. autofunction:: mpmath.curve_branch_locus
-
-.. autofunction:: mpmath.curve_genus
-
-
-Monodromy
-.........
-
-.. autofunction:: mpmath.curve_monodromy
-
-
-Homology
+Topology
 ........
 
-.. autofunction:: mpmath.curve_homology
+.. autoattribute:: mpmath.AlgebraicCurve.branch_locus
+
+.. autoattribute:: mpmath.AlgebraicCurve.monodromy
+
+.. autoattribute:: mpmath.AlgebraicCurve.genus
+
+.. autoattribute:: mpmath.AlgebraicCurve.genus_data
+
+.. autoattribute:: mpmath.AlgebraicCurve.homology
 
 
-Periods
-.......
+Periods and Riemann data
+........................
 
-.. autofunction:: mpmath.curve_periods
+.. automethod:: mpmath.AlgebraicCurve.periods
 
-.. autofunction:: mpmath.curve_riemann_matrix
+.. automethod:: mpmath.AlgebraicCurve.riemann_matrix
 
-.. autofunction:: mpmath.curve_riemann_constant
+.. automethod:: mpmath.AlgebraicCurve.riemann_constant
 
-``curve_periods`` already accepts a caller-supplied second-kind basis and
-returns ``eta``, ``eta_prime`` and ``kappa``.  No separate
-``curve_second_kind_periods`` step is required.
+``periods`` accepts an optional caller-supplied second-kind basis and returns
+``eta``, ``eta_prime`` and ``kappa`` with the first-kind period data.
 
 
-Places, paths and integrals
-...........................
+Places, paths and integration
+.............................
 
-.. autofunction:: mpmath.curve_fibre
+.. automethod:: mpmath.AlgebraicCurve.fibre
 
-.. autofunction:: mpmath.curve_path
+.. automethod:: mpmath.AlgebraicCurve.path
 
-.. autofunction:: mpmath.curve_integral
+.. automethod:: mpmath.AlgebraicCurve.integral
+
+Places over a finite regular value are labelled by ``fibre``. A ``CurvePath``
+is bound to its curve and numerical context, and can be passed to ``integral``
+with either one differential or a sequence of differentials.
 
 
 Explicit local charts
 .....................
 
-.. autofunction:: mpmath.curve_chart
+.. automethod:: mpmath.AlgebraicCurve.chart
 
-.. autofunction:: mpmath.curve_chart_monomial
+.. automethod:: mpmath.AlgebraicCurve.monomial_chart
 
-.. autofunction:: mpmath.curve_chart_fibre
+.. automethod:: mpmath.AlgebraicCurve.chart_fibre
 
-.. autofunction:: mpmath.curve_chart_place
+.. automethod:: mpmath.AlgebraicCurve.chart_place
 
-.. autofunction:: mpmath.curve_chart_integral
+.. automethod:: mpmath.AlgebraicCurve.chart_integral
+
+Explicit charts extend paths and integrals to ramification points and places
+over infinity. Charts are bound to their ambient curve and working precision;
+automatic chart discovery is outside the present numerical API.
 
 
 Abel map and lattice reduction
 ..............................
 
-.. autofunction:: mpmath.curve_abel_map
+.. automethod:: mpmath.AlgebraicCurve.abel_map
 
-.. autofunction:: mpmath.curve_lattice_reduce
+.. automethod:: mpmath.AlgebraicCurve.lattice_reduce
 
 
-Validation
-..........
+Validation and result records
+.............................
 
-.. autofunction:: mpmath.curve_validate
+.. automethod:: mpmath.AlgebraicCurve.validate
+
+The record classes ``CurveBranchLocus``, ``CurveMonodromy``, ``CurveGenus``,
+``CurveHomology``, ``CurvePeriods``, ``CurveRiemannConstant``, ``CurveChart``,
+``CurvePlace``, ``CurvePath``, ``CurveIntegral``, ``CurveLatticeReduction``,
+``CurveCheck`` and ``CurveValidation`` are importable from the top-level
+``mpmath`` namespace. They are immutable results rather than additional
+stateful objects.
+
+The curve class complements the hyperelliptic period and Kleinian-function
+machinery described in :doc:`abelian`: the hyperelliptic engine supplies
+automatic differential bases for :math:`y^2=P(x)`, while ``AlgebraicCurve``
+also supports general smooth plane projections.

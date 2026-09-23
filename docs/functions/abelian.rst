@@ -91,6 +91,16 @@ matrices and characteristic may then change to a symplectically equivalent
 representation rather than varying continuously, although the underlying
 curve and functions are unchanged when the returned data are used together.
 
+For a real polynomial with real ordered roots, the real-axis construction
+fixes the square-root sheet by continuation from the interval to the right of
+all branch points. Moving left across a root multiplies the continued square
+root by :math:`i`. Thus, even on successive intervals where
+:math:`P(x)>0`, the value of :math:`y` used by the period construction can
+alternate between :math:`+\sqrt{P(x)}` and :math:`-\sqrt{P(x)}`. Direct
+quadrature intended to reproduce individual cycle periods must use this
+continued sheet rather than choosing the positive principal square root
+independently on each real oval.
+
 .. autofunction:: mpmath.hyperelliptic_periods
 
 The corresponding Abel map integrates the same first-kind differential
