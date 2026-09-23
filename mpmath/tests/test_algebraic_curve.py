@@ -317,6 +317,34 @@ def test_lifted_path_integrals_fall_back_to_full_fibres(monkeypatch):
     assert abs(integral.values[0] - mp.mpf("4.5")) < mp.mpf("2e-11")
 
 
+def test_lifted_path_chain_reuses_stage_local_integrals(monkeypatch):
+    mp.dps = 30
+    curve = _prepare_plane_curve(mp, {(0, 3): 1, (1, 0): -1})
+    continuation = _continue_plane_curve_sheets(mp, curve, (1, 8))
+    positive = _prepare_lifted_path_chain(((1, continuation, 2),))
+    negative = _prepare_lifted_path_chain(((-2, continuation, 2),))
+    integrate_path = curve_integration._integrate_plane_curve_path
+    calls = []
+
+    def counted_integral(*args, **kwargs):
+        calls.append((id(args[2]), kwargs.get("sheet")))
+        return integrate_path(*args, **kwargs)
+
+    monkeypatch.setattr(
+        curve_integration, "_integrate_plane_curve_path", counted_integral)
+    integral_cache = {}
+    first = _integrate_lifted_path_chain(
+        mp, curve, positive, (lambda x, y: 1 / y,),
+        quadrature_order=16, integral_cache=integral_cache)
+    second = _integrate_lifted_path_chain(
+        mp, curve, negative, (lambda x, y: 1 / y,),
+        quadrature_order=16, integral_cache=integral_cache)
+    assert len(calls) == 1
+    assert len(integral_cache) == 1
+    assert mp.almosteq(second.values[0], -2 * first.values[0])
+    assert second.segments == first.segments
+
+
 def test_reverse_continuation_inverts_three_sheet_monodromy():
     mp.dps = 30
     curve = _prepare_plane_curve(mp, {(0, 3): 1, (1, 0): -1})

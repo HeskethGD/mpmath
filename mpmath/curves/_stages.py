@@ -101,9 +101,11 @@ def _stage_cycle_integrals(ctx, key):
     chains = _stage_canonical_cycles(ctx, curve)
     columns = []
     max_sheet_residual = ctx.zero
+    integral_cache = {}
     for chain in chains[:2 * genus]:
         integral = _integrate_lifted_path_chain(
-            ctx, curve, chain, forms, quadrature_order=quadrature_order)
+            ctx, curve, chain, forms, quadrature_order=quadrature_order,
+            integral_cache=integral_cache)
         columns.append(integral.values)
         max_sheet_residual = max(
             max_sheet_residual, integral.max_sheet_residual)

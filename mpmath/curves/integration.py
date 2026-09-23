@@ -42,22 +42,23 @@ def _newton_plane_curve_segment_samples(
     """
     current_x = left_x
     current_y = left_fibre[sheet]
+    current_derivative_y = _evaluate_plane_derivative(
+        ctx, curve, current_x, current_y, "y")
     delta_x = right_x - left_x
     samples = []
 
     def advance(next_x):
-        nonlocal current_x, current_y
+        nonlocal current_x, current_y, current_derivative_y
         derivative_x = _evaluate_plane_derivative(
             ctx, curve, current_x, current_y, "x")
-        derivative_y = _evaluate_plane_derivative(
-            ctx, curve, current_x, current_y, "y")
         derivative_scale = max(
-            ctx.one, abs(derivative_x), abs(derivative_y))
-        if abs(derivative_y) <= ctx.sqrt(ctx.eps) * derivative_scale:
+            ctx.one, abs(derivative_x), abs(current_derivative_y))
+        if (abs(current_derivative_y)
+                <= ctx.sqrt(ctx.eps) * derivative_scale):
             return None
         prediction = current_y - (
-            derivative_x * (next_x - current_x) / derivative_y)
-        (candidate, residual, unused_derivative, unused_scale,
+            derivative_x * (next_x - current_x) / current_derivative_y)
+        (candidate, residual, candidate_derivative_y, unused_scale,
          converged) = _newton_plane_curve_sheet(
              ctx, curve, next_x, prediction)
         correction = abs(candidate - prediction)
@@ -67,6 +68,7 @@ def _newton_plane_curve_segment_samples(
             return None
         current_x = next_x
         current_y = candidate
+        current_derivative_y = candidate_derivative_y
         return candidate, abs(residual)
 
     for parameter in parameters:
@@ -404,8 +406,15 @@ def _integrate_plane_curve_branch(
 
 
 def _integrate_lifted_path_chain(
-        ctx, curve, chain, differentials, quadrature_order=None):
-    """Integrate supplied differentials termwise over a lifted-path chain."""
+        ctx, curve, chain, differentials, quadrature_order=None,
+        integral_cache=None):
+    """Integrate supplied differentials termwise over a lifted-path chain.
+
+    ``integral_cache`` may be a stage-local dictionary shared by chains that
+    reuse the same continuation objects. It stores only completed path
+    integrals; term coefficients and diagnostic segment counts are still
+    applied for every algebraic use of a path.
+    """
     try:
         differentials = tuple(differentials)
     except TypeError:
@@ -417,9 +426,20 @@ def _integrate_lifted_path_chain(
     max_sheet_residual = ctx.zero
     segments = 0
     for term in chain.terms:
-        integral = _integrate_plane_curve_path(
-            ctx, curve, term.continuation, differentials,
-            sheet=term.sheet, quadrature_order=quadrature_order)
+        cache_key = id(term.continuation), term.sheet
+        cached = (None if integral_cache is None
+                  else integral_cache.get(cache_key))
+        if cached is not None and cached[0] is term.continuation:
+            integral = cached[1]
+        else:
+            integral = _integrate_plane_curve_path(
+                ctx, curve, term.continuation, differentials,
+                sheet=term.sheet, quadrature_order=quadrature_order)
+            if integral_cache is not None:
+                # Retaining the continuation both guards against object-ID
+                # reuse and documents that identity, rather than structural
+                # hashing of its large path and fibre tuples, defines reuse.
+                integral_cache[cache_key] = term.continuation, integral
         for index, value in enumerate(integral.values):
             values[index] += term.coefficient * value
         max_sheet_residual = max(
@@ -447,10 +467,12 @@ def _assemble_plane_curve_periods(
 
     columns = []
     max_sheet_residual = ctx.zero
+    integral_cache = {}
     for chain in canonical_chains[:2 * genus]:
         integral = _integrate_lifted_path_chain(
             ctx, curve, chain, differentials,
-            quadrature_order=quadrature_order)
+            quadrature_order=quadrature_order,
+            integral_cache=integral_cache)
         columns.append(integral.values)
         max_sheet_residual = max(
             max_sheet_residual, integral.max_sheet_residual)
