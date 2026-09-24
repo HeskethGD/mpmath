@@ -3,14 +3,17 @@ import pytest
 import mpmath
 import mpmath.curves.integration as curve_integration
 from mpmath import (
-    AlgebraicCurve, CurveBranchLocus, CurveChart, CurveCheck, CurveGenus, CurveHomology,
-    CurveIntegral, CurveLatticeReduction, CurveMonodromy, CurvePath,
-    CurvePeriods, CurvePlace, CurveRiemannConstant, CurveValidation,
-    hyperelliptic_abel_map, hyperelliptic_periods, mp,
+    AlgebraicCurve, CurveBranchLocus, CurveChart, CurveCheck,
+    CurveFirstKindPeriods, CurveGenus, CurveHomology, CurveIntegral,
+    CurveLatticeReduction, CurveMonodromy, CurvePath, CurvePlace,
+    CurveRiemannConstant, CurveSecondKindAbelMap, CurveSecondKindPeriods,
+    CurveValidation, mp,
+)
+from mpmath.curves._hyperelliptic import (
+    _hyperelliptic_abel_map as _specialized_hyperelliptic_abel_map,
+    _hyperelliptic_periods as _specialized_hyperelliptic_periods,
 )
 from mpmath.curves.charts import (
-    _curve_chart_blow_up,
-    _curve_chart_reciprocal_y,
     chart_fibre as _chart_fibre,
     chart_integral as _chart_integral,
     monomial_chart as _chart_monomial,
@@ -80,6 +83,18 @@ def _curve(specification):
     return AlgebraicCurve(mp, specification)
 
 
+def hyperelliptic_periods(coefficients, **kwargs):
+    """Private specialized oracle for facade-dispatch tests."""
+    return _specialized_hyperelliptic_periods(
+        mp, coefficients, **kwargs)
+
+
+def hyperelliptic_abel_map(coefficients, target, **kwargs):
+    """Private specialized oracle for facade-dispatch tests."""
+    return _specialized_hyperelliptic_abel_map(
+        mp, coefficients, target, **kwargs)
+
+
 def curve_branch_locus(curve):
     return _curve(curve).branch_locus
 
@@ -96,9 +111,13 @@ def curve_homology(curve):
     return _curve(curve).homology
 
 
-def curve_periods(curve, differentials=None, *, second_differentials=None):
-    return _curve(curve).periods(
-        differentials, second_differentials=second_differentials)
+def curve_periods(curve, differentials=None, *, second_kind=False,
+                  second_differentials=None):
+    instance = _curve(curve)
+    if second_kind or second_differentials is not None:
+        return instance.second_kind_periods(
+            differentials, second_differentials=second_differentials)
+    return instance.first_kind_periods(differentials)
 
 
 def curve_riemann_matrix(curve, differentials=None):
@@ -127,8 +146,15 @@ def curve_integral(curve, differentials, path):
 
 
 def curve_abel_map(curve, target, differentials=None, base_place=None,
-                   reduce=False):
-    return _curve(curve).abel_map(
+                   reduce=False, second_kind=False,
+                   second_differentials=None):
+    instance = _curve(curve)
+    if second_kind or second_differentials is not None:
+        return instance.second_kind_abel_map(
+            target, differentials,
+            second_differentials=second_differentials,
+            base_place=base_place, reduce=reduce)
+    return instance.abel_map(
         target, differentials, base_place=base_place, reduce=reduce)
 
 
@@ -756,34 +782,108 @@ def test_curve_homology_lemniscatic():
     mp.dps = 25
     homology = curve_homology((0, -1, 0, 1))
     assert homology.genus == 1
-    assert homology.cycle_count == 3
-    assert homology.boundary_components == 2
+    assert homology.cycle_count == 2
+    assert homology.boundary_components == 0
     assert homology.intersection_rank == 2
-    assert homology.radical_rank == 1
-    assert homology.intersection_form == ((0, 1, 0), (-1, 0, 0), (0, 0, 0))
+    assert homology.radical_rank == 0
+    assert homology.intersection_form == ((0, 1), (-1, 0))
+    assert homology.transformation == ((1, 0), (0, 1))
+    assert homology.engine == "hyperelliptic"
+    assert homology.marking == "baker"
     assert all(isinstance(entry, int)
                for row in homology.transformation for entry in row)
+    assert curve_validate(homology).passed
+
+
+def test_curve_homology_general_curve_uses_polygon_marking():
+    mp.dps = 20
+    homology = curve_homology({
+        (3, 0): 1,
+        (0, 3): 1,
+        (0, 0): -1,
+    })
+    assert homology.genus == 1
+    assert homology.engine == "general"
+    assert homology.marking == "canonical-polygon"
+    assert homology.cycle_count == (
+        homology.intersection_rank + homology.radical_rank)
     assert curve_validate(homology).passed
 
 
 def test_curve_periods_hyperelliptic_dispatch():
     mp.dps = 25
     data = curve_periods((0, -1, 0, 1))
-    expected = hyperelliptic_periods((0, -1, 0, 1), second_kind=True)
+    expected = hyperelliptic_periods((0, -1, 0, 1))
     assert data.genus == 1
     assert data.differentials is None
     assert data.max_sheet_residual is None
+    assert data.engine == "hyperelliptic"
+    assert data.marking == "baker"
+    assert isinstance(data, CurveFirstKindPeriods)
     for actual, reference in zip(
-            (data.omega, data.omega_prime, data.eta, data.eta_prime,
-             data.tau, data.kappa), expected):
+            (data.omega, data.omega_prime, data.tau), expected):
+        assert mp.norm(actual - reference) < mp.mpf("1e-22")
+
+    second = curve_periods((0, -1, 0, 1), second_kind=True)
+    expected_second = hyperelliptic_periods(
+        (0, -1, 0, 1), second_kind=True)
+    assert isinstance(second, CurveSecondKindPeriods)
+    for actual, reference in zip(
+            (second.eta, second.eta_prime, second.kappa),
+            (expected_second[2], expected_second[3], expected_second[5])):
         assert mp.norm(actual - reference) < mp.mpf("1e-22")
     assert curve_validate(data).passed
     assert mp.norm(curve_riemann_matrix((0, -1, 0, 1)) - data.tau) == 0
     constant = curve_riemann_constant((0, -1, 0, 1))
     assert isinstance(constant, CurveRiemannConstant)
-    expected_characteristic = mpmath.hyperelliptic_data(
-        (0, -1, 0, 1))[3]
-    assert constant.characteristic == expected_characteristic
+    half = mp.mpf("0.5")
+    assert constant.characteristic == ((half,), (half,))
+
+
+def test_curve_hyperelliptic_dispatch_is_representation_independent():
+    mp.dps = 25
+    coefficients = (0, -1, 0, 1)
+    sparse = {(0, 2): 1, (1, 0): 1, (3, 0): -1}
+    expected = curve_periods(coefficients)
+    actual = curve_periods(sparse)
+    assert actual.differentials is None
+    for name in ("omega", "omega_prime", "tau"):
+        assert mp.norm(getattr(actual, name) - getattr(expected, name)) < (
+            mp.mpf("1e-22"))
+
+
+def test_curve_hyperelliptic_linear_y_normalization():
+    mp.dps = 25
+    # (y + x)**2 = x**3 - x.  The specialized coordinate is z = y + x.
+    shifted = {
+        (0, 2): 1,
+        (1, 1): 2,
+        (1, 0): 1,
+        (2, 0): 1,
+        (3, 0): -1,
+    }
+    coefficients = (0, -1, 0, 1)
+    expected = curve_periods(coefficients)
+    actual = curve_periods(shifted)
+    for name in ("omega", "omega_prime", "tau"):
+        assert mp.norm(getattr(actual, name) - getattr(expected, name)) < (
+            mp.mpf("1e-22"))
+
+    x = mp.mpf(2)
+    z = mp.sqrt(6)
+    shifted_image = curve_abel_map(shifted, (x, z - x))
+    expected_image = hyperelliptic_abel_map(coefficients, (x, z))
+    assert mp.norm(shifted_image - expected_image) < mp.mpf("1e-22")
+
+    base_z = mp.sqrt(mp.mpf(3) / 8)
+    shifted_base = (mp.mpf("-0.5"), base_z + mp.mpf("0.5"))
+    shifted_image = curve_abel_map(
+        shifted, (x, z - x), base_place=shifted_base)
+    expected_image = (
+        hyperelliptic_abel_map(coefficients, (x, z))
+        - hyperelliptic_abel_map(
+            coefficients, (shifted_base[0], base_z)))
+    assert mp.norm(shifted_image - expected_image) < mp.mpf("1e-22")
 
 
 def test_curve_riemann_constant_hyperelliptic_base_change():
@@ -816,8 +916,6 @@ def test_curve_periods_general_plane_curve():
     data = curve_periods(curve, differentials)
     assert data.genus == 1
     assert data.differentials == differentials
-    assert data.eta is None and data.eta_prime is None
-    assert data.kappa is None and data.kappa_symmetry_residual is None
     assert data.symmetry_residual < mp.mpf("1e-24")
     assert min(data.imaginary_eigenvalues) > 0
     assert data.max_sheet_residual < mp.mpf("1e-23")
@@ -833,7 +931,7 @@ def test_curve_periods_general_plane_curve():
         curve, differentials, base_place=point)
     assert abs(shifted.value[0] - constant.value[0]) < mp.mpf("1e-22")
     validation = curve_validate(data)
-    assert validation.kind == "CurvePeriods"
+    assert validation.kind == "CurveFirstKindPeriods"
     assert validation.passed
     assert validation.maximum_residual < mp.mpf("1e-23")
     assert not curve_validate(data._replace(
@@ -841,7 +939,7 @@ def test_curve_periods_general_plane_curve():
     with pytest.raises(ValueError, match="one form per genus"):
         curve_periods(curve, (lambda x, y: 1 / y,) * 2)
     with pytest.raises(ValueError, match="sequence of callables"):
-        curve_periods(curve, None)
+        curve_periods({(0, 3): 1, (3, 0): 1, (0, 0): -1}, None)
     with pytest.raises(
             ValueError, match="second_differentials must contain"):
         curve_periods(
@@ -972,6 +1070,49 @@ def test_curve_abel_map_hyperelliptic_dispatch():
         - curve_lattice_reduce(shifted, periods).value) < mp.mpf("1e-20")
 
 
+def test_curve_abel_map_hyperelliptic_second_kind_dispatch():
+    mp.dps = 25
+    coefficients = (0, 4, 0, -5, 0, 1)
+    x = mp.mpf(5)
+    y = mp.sqrt(mp.fsum(
+        coefficient * x**degree
+        for degree, coefficient in enumerate(coefficients)))
+    actual = curve_abel_map(
+        coefficients, (x, y), second_kind=True, reduce=True)
+    expected_first, expected_second = hyperelliptic_abel_map(
+        coefficients, (x, y), second_kind=True, reduce=True)
+    assert isinstance(actual, CurveSecondKindAbelMap)
+    assert actual.engine == "hyperelliptic"
+    assert actual.marking == "baker"
+    assert mp.norm(actual.value - expected_second) < mp.mpf("1e-22")
+    reduced_first = curve_abel_map(
+        coefficients, (x, y), reduce=True)
+    assert mp.norm(reduced_first - expected_first) < mp.mpf("1e-22")
+
+    base_x = mp.mpf(4)
+    base_y = mp.sqrt(mp.fsum(
+        coefficient * base_x**degree
+        for degree, coefficient in enumerate(coefficients)))
+    based = curve_abel_map(
+        coefficients, (x, y), base_place=(base_x, base_y),
+        second_kind=True, reduce=True)
+    raw_first, raw_second = hyperelliptic_abel_map(
+        coefficients, (x, y), second_kind=True)
+    base_first, base_second = hyperelliptic_abel_map(
+        coefficients, (base_x, base_y), second_kind=True)
+    first_periods = curve_periods(coefficients)
+    second_data = curve_periods(coefficients, second_kind=True)
+    reduction = curve_lattice_reduce(raw_first - base_first, first_periods)
+    second_periods = mp.matrix(2, 4)
+    second_periods[:, :2] = 2 * second_data.eta
+    second_periods[:, 2:] = 2 * second_data.eta_prime
+    expected_based_second = (
+        raw_second - base_second
+        + second_periods * mp.matrix(reduction.shift))
+    assert based.reduction_shift == reduction.shift
+    assert mp.norm(based.value - expected_based_second) < mp.mpf("1e-20")
+
+
 def test_curve_abel_map_general_plane_curve():
     mp.dps = 20
     curve = {(0, 2): 1, (1, 0): 1, (3, 0): -1}
@@ -988,6 +1129,16 @@ def test_curve_abel_map_general_plane_curve():
     assert mp.norm(shifted - (first - second)) < mp.mpf("1e-18")
     empty = curve_abel_map(curve, [], forms)
     assert mp.norm(empty) == 0
+    paired = curve_abel_map(
+        curve, place1, forms, second_kind=True,
+        second_differentials=(lambda x, y: x / y,))
+    assert isinstance(paired, CurveSecondKindAbelMap)
+    assert paired.engine == "general"
+    assert paired.marking == "canonical-polygon"
+    based_pair = curve_abel_map(
+        curve, place1, forms, base_place=place1, second_kind=True,
+        second_differentials=(lambda x, y: x / y,))
+    assert mp.norm(based_pair.value) == 0
     curve_place = curve_fibre(curve, 2)[1]
     assert mp.norm(
         curve_abel_map(curve, curve_place, forms) - first) < mp.mpf("1e-18")
@@ -1040,8 +1191,8 @@ def test_curve_result_records_are_public():
                for record in (
                    CurveBranchLocus, CurveChart, CurveGenus, CurveHomology,
                    CurveCheck, CurveIntegral, CurveLatticeReduction,
-                   CurveMonodromy,
-                   CurvePath, CurvePeriods, CurvePlace,
+                   CurveMonodromy, CurvePath, CurveFirstKindPeriods,
+                   CurveSecondKindPeriods, CurveSecondKindAbelMap, CurvePlace,
                    CurveRiemannConstant, CurveValidation))
 
 

@@ -24,11 +24,13 @@ from .algebraic_curve import AlgebraicCurve
 
 # Public namedtuples for result records
 from .algebraic_curve import (
+    CurveFirstKindPeriods,
+    CurveSecondKindPeriods,
+    CurveSecondKindAbelMap,
     CurveBranchLocus,
     CurveMonodromy,
     CurveGenus,
     CurveHomology,
-    CurvePeriods,
     CurveRiemannConstant,
     CurveValidation,
     CurveCheck,
@@ -41,11 +43,13 @@ from .algebraic_curve import (
 
 __all__ = [
     'AlgebraicCurve',
+    'CurveFirstKindPeriods',
+    'CurveSecondKindPeriods',
+    'CurveSecondKindAbelMap',
     'CurveBranchLocus',
     'CurveMonodromy',
     'CurveGenus',
     'CurveHomology',
-    'CurvePeriods',
     'CurveRiemannConstant',
     'CurveValidation',
     'CurveCheck',

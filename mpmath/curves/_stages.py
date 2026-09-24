@@ -2,6 +2,10 @@
 
 from functools import lru_cache, wraps
 
+from ._hyperelliptic import _hyperelliptic_periods
+from ._hyperelliptic.model import (
+    _hyperelliptic_coefficients, _hyperelliptic_roots,
+)
 from ._context import _curve_cache_state
 from .integration import _integrate_lifted_path_chain
 from .jacobian import _canonical_polygon_riemann_constant
@@ -52,6 +56,28 @@ def _curve_stage_cache(maxsize):
 def _stage_branch_locus(ctx, curve):
     """Return ``(branch_values, resultant)`` for a prepared plane curve."""
     return _plane_curve_critical_values(ctx, curve)
+
+
+@_curve_stage_cache(16)
+def _stage_hyperelliptic_periods(ctx, key):
+    """Return a specialized first- or second-kind half-period bundle.
+
+    The cached matrices are private.  Public orchestration copies them before
+    returning a result so callers cannot mutate the cache.
+    """
+    coefficients, second_kind = key
+    return _hyperelliptic_periods(
+        ctx, coefficients, second_kind=second_kind)
+
+
+@_curve_stage_cache(16)
+def _stage_hyperelliptic_homology(ctx, coefficients):
+    """Validate a Baker-marked model and return its genus."""
+    coefficients = _hyperelliptic_coefficients(ctx, coefficients)
+    # The ordered roots determine the Baker marking as well as checking that
+    # the model is smooth. Period integration remains a separate lazy stage.
+    _hyperelliptic_roots(ctx, coefficients)
+    return (len(coefficients) - 2) // 2
 
 
 @_curve_stage_cache(8)

@@ -4,6 +4,10 @@ from collections import namedtuple
 
 _PlaneCurve = namedtuple(
     "_PlaneCurve", "terms x_degree y_degree")
+_HyperellipticModel = namedtuple(
+    "_HyperellipticModel", "coefficients y_shift")
+_ClassifiedCurve = namedtuple(
+    "_ClassifiedCurve", "curve hyperelliptic")
 _SheetContinuation = namedtuple(
     "_SheetContinuation",
     "sheets permutation max_residual min_separation "
@@ -80,15 +84,24 @@ CurveGenus = namedtuple("CurveGenus", "genus degree ramification")
 CurveHomology = namedtuple(
     "CurveHomology",
     "genus cycle_count boundary_components intersection_rank radical_rank "
-    "intersection_form transformation")
-CurvePeriods = namedtuple(
-    "CurvePeriods",
-    "genus differentials omega omega_prime tau eta eta_prime kappa "
-    "symmetry_residual kappa_symmetry_residual imaginary_eigenvalues "
-    "max_sheet_residual")
+    "intersection_form transformation engine marking",
+    defaults=(None, None))
+CurveFirstKindPeriods = namedtuple(
+    "CurveFirstKindPeriods",
+    "genus differentials omega omega_prime tau symmetry_residual "
+    "imaginary_eigenvalues max_sheet_residual engine marking",
+    defaults=(None, None))
+CurveSecondKindPeriods = namedtuple(
+    "CurveSecondKindPeriods",
+    "genus differentials eta eta_prime kappa kappa_symmetry_residual "
+    "max_sheet_residual engine marking",
+    defaults=(None, None))
 CurveRiemannConstant = namedtuple(
     "CurveRiemannConstant",
-    "value characteristic base_place max_sheet_residual")
+    "value characteristic base_place max_sheet_residual engine marking",
+    defaults=(None, None))
+CurveSecondKindAbelMap = namedtuple(
+    "CurveSecondKindAbelMap", "value reduction_shift engine marking")
 CurveCheck = namedtuple("CurveCheck", "name value passed")
 CurveValidation = namedtuple(
     "CurveValidation", "kind passed maximum_residual checks")

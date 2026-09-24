@@ -1,15 +1,19 @@
 """Internal orchestration for :class:`~mpmath.curves.AlgebraicCurve`."""
 
-from ..functions.hyperelliptic import _normalise_abel_targets
+from ._hyperelliptic import _hyperelliptic_abel_map
+from ._hyperelliptic.jacobian import _hyperelliptic_characteristic
+from ._hyperelliptic.model import _normalise_abel_targets
 from ._context import _curve_cache_state
 from ._records import (
-    CurveBranchLocus, CurveCheck, CurveGenus, CurveHomology, CurveIntegral,
-    CurveLatticeReduction, CurveMonodromy, CurvePath, CurvePeriods, CurvePlace,
-    CurveRiemannConstant, CurveValidation, _PlaneCurvePlace,
+    CurveBranchLocus, CurveCheck, CurveFirstKindPeriods, CurveGenus,
+    CurveHomology, CurveIntegral, CurveLatticeReduction, CurveMonodromy,
+    CurvePath, CurvePlace, CurveRiemannConstant, CurveSecondKindAbelMap,
+    CurveSecondKindPeriods, CurveValidation, _PlaneCurvePlace,
 )
 from ._stages import (
     _curve_differential_sequence, _stage_branch_locus,
     _stage_canonical_polygon, _stage_cycle_integrals, _stage_monodromy,
+    _stage_hyperelliptic_homology, _stage_hyperelliptic_periods,
     _stage_monodromy_graph, _stage_riemann_constant,
     _tau_imaginary_eigenvalues,
 )
@@ -24,7 +28,7 @@ from .integration import (
 from .jacobian import (
     _finite_base_abel_value, _guarded_open_path, _jacobian_characteristic,
     _normalise_algebraic_curve_input, _normalise_curve_endpoint,
-    _period_matrix_from_columns,
+    _period_matrix_from_columns, _to_hyperelliptic_points,
 )
 from .monodromy import (
     _compose_permutations, _integer_matrix_rank, _monodromy_orbit,
@@ -38,10 +42,10 @@ from .polynomial import _ordered_plane_curve_sheets
 def branch_locus(ctx, curve):
     r"""Return the finite branch locus of a plane algebraic curve.
 
-    ``curve`` may be an ascending coefficient sequence defining
-    ``y**2 = P(x)``, a sparse mapping from ``(x_power, y_power)`` pairs to
-    a coefficient, or a sequence of ``(x_power, y_power, coefficient)``
-    terms.
+    The canonical ``curve`` input is a sparse mapping from
+    ``(x_power, y_power)`` pairs to coefficients.  Ascending coefficient
+    sequences defining ``y**2 = P(x)`` and sequences of
+    ``(x_power, y_power, coefficient)`` terms remain compatibility forms.
 
     The returned ``CurveBranchLocus`` record contains the degree of the
     ``x`` projection, the distinct finite branch values above which the
@@ -142,29 +146,54 @@ def genus_data(ctx, curve):
 
 
 def homology(ctx, curve):
-    r"""Return a canonical homology basis of a plane algebraic curve.
+    r"""Return the homology marking used by the curve's default engine.
 
-    The lifted monodromy graph of the ``x`` projection is reduced to a
-    primitive symplectic homology basis.  The returned
-    ``CurveHomology`` record contains the genus, the number of independent
-    graph cycles, the number of boundary components of the lifted ribbon
-    graph (the places above infinity), the rank of the graph intersection
-    form, the dimension of its radical, the resulting canonical
-    intersection form, and the integer transformation realizing the
-    canonical basis from the graph cycles.
+    A recognized hyperelliptic curve returns the compact Baker-marked basis
+    used by its automatic periods and Abel maps.  This basis has ``2*genus``
+    cycles, the standard symplectic intersection form, and no auxiliary
+    boundary or radical cycles.  Its transformation is therefore the
+    identity.
 
-    The lifted graph of the lemniscatic curve :math:`y^2 = x^3 - x` has
-    three independent cycles and two boundary components::
+    For a general curve, the lifted monodromy graph of the ``x`` projection
+    is reduced to a primitive symplectic basis.  In that case the record also
+    reports the graph's boundary and radical counts and the integer
+    transformation from graph cycles to the canonical-polygon marking.
+
+    The lemniscatic curve :math:`y^2 = x^3 - x` uses its Baker marking::
 
         >>> from mpmath import algebraic_curve
         >>> homology = algebraic_curve((0, -1, 0, 1)).homology
-        >>> homology.genus, homology.boundary_components
-        (1, 2)
+        >>> homology.genus, homology.marking
+        (1, 'baker')
         >>> homology.intersection_form
-        ((0, 1, 0), (-1, 0, 0), (0, 0, 0))
+        ((0, 1), (-1, 0))
     """
-    prepared, unused_hyperelliptic = _normalise_algebraic_curve_input(
+    prepared, hyperelliptic_model = _normalise_algebraic_curve_input(
         ctx, curve)
+    if hyperelliptic_model is not None:
+        genus = _stage_hyperelliptic_homology(
+            ctx, hyperelliptic_model.coefficients)
+        cycle_count = 2 * genus
+        intersection_form = tuple(tuple(
+            1 if row < genus and column == genus + row
+            else -1 if column < genus and row == genus + column
+            else 0
+            for column in range(cycle_count))
+            for row in range(cycle_count))
+        transformation = tuple(tuple(
+            int(row == column) for column in range(cycle_count))
+            for row in range(cycle_count))
+        return CurveHomology(
+            genus=genus,
+            cycle_count=cycle_count,
+            boundary_components=0,
+            intersection_rank=cycle_count,
+            radical_rank=0,
+            intersection_form=intersection_form,
+            transformation=transformation,
+            engine="hyperelliptic",
+            marking="baker")
+
     graph, reduction = _stage_monodromy_graph(ctx, prepared)
     polygon = _stage_canonical_polygon(ctx, prepared)
     return CurveHomology(
@@ -174,29 +203,38 @@ def homology(ctx, curve):
         intersection_rank=graph.intersection_rank,
         radical_rank=reduction.radical_rank,
         intersection_form=polygon.intersection_form,
-        transformation=polygon.transformation)
+        transformation=polygon.transformation,
+        engine="general",
+        marking="canonical-polygon")
 
 
-def periods(ctx, curve, differentials=None, *,
-                  second_differentials=None):
+def periods(ctx, curve, differentials=None, *, second_kind=False,
+            second_differentials=None, _return_first=False):
     r"""Return the period matrices of a plane algebraic curve.
 
     ``curve`` uses the input forms accepted by
-    :attr:`AlgebraicCurve.branch_locus`.  A hyperelliptic coefficient
-    sequence without supplied differentials is dispatched to the
-    specialized engine :func:`~mpmath.hyperelliptic_periods`.
+    :attr:`AlgebraicCurve.branch_locus`.  A structurally hyperelliptic
+    equation without supplied differentials is dispatched to the specialized
+    engine, independently of whether it was entered as a sparse polynomial
+    or a compatibility coefficient sequence.  A linear term in ``y`` is
+    removed by completing the square when the coefficient of ``y**2`` is a
+    nonzero constant.
 
-    A general plane curve requires ``differentials``, a sequence of one
-    holomorphic differential callable ``f(x, y)`` per genus, supplying the
-    coefficient of ``dx``.  Optional ``second_differentials`` supply the
-    same number of second-kind forms; they are integrated on the same
-    cycles, with the classical convention ``2*eta = -integral_a(dr)``.
+    :meth:`AlgebraicCurve.second_kind_periods` also computes the canonical
+    BEL second-kind periods for the automatic hyperelliptic basis. The
+    :meth:`AlgebraicCurve.first_kind_periods` method computes only first-kind
+    data. A general plane curve requires ``differentials``,
+    a sequence of one holomorphic differential callable ``f(x, y)`` per
+    genus, supplying the coefficient of ``dx``.  Optional
+    ``second_differentials`` supply the same number of second-kind forms;
+    they are integrated on the same cycles, with the classical convention
+    ``2*eta = -integral_a(dr)``.
 
-    The returned ``CurvePeriods`` record contains the differential basis,
-    the half-period matrices ``omega`` and ``omega_prime``, the normalized
-    Riemann matrix ``tau = omega**-1 * omega_prime``, the optional
-    second-kind half-period matrices ``eta`` and ``eta_prime`` and
-    ``kappa = eta * omega**-1``, and numerical quality residuals.  A
+    ``first_kind_periods`` returns a ``CurveFirstKindPeriods`` record with
+    ``omega``, ``omega_prime`` and ``tau``. ``second_kind_periods`` returns a
+    separate ``CurveSecondKindPeriods`` record with ``eta``, ``eta_prime``
+    and ``kappa``. Their ``engine`` and ``marking`` fields distinguish
+    automatic Baker-marked data from custom canonical-polygon data. A
     non-positive-definite normalized period matrix raises ``ValueError``,
     because it always indicates an invalid differential count or basis.
 
@@ -206,7 +244,7 @@ def periods(ctx, curve, differentials=None, *,
         >>> from mpmath import algebraic_curve, mp
         >>> mp.dps = 15
         >>> curve = algebraic_curve((0, -1, 0, 1))
-        >>> data = curve.periods()
+        >>> data = curve.first_kind_periods()
         >>> mp.re(data.tau[0, 0]), mp.im(data.tau[0, 0])
         (mpf('0.0'), mpf('1.0'))
 
@@ -214,42 +252,64 @@ def periods(ctx, curve, differentials=None, *,
     callables returning the coefficient of ``dx``::
 
         >>> curve = algebraic_curve({(0, 2): 1, (1, 0): 1, (3, 0): -1})
-        >>> data = curve.periods((lambda x, y: 1 / y,))
+        >>> data = curve.first_kind_periods((lambda x, y: 1 / y,))
         >>> curve.validate(data).passed
         True
     """
-    prepared, hyperelliptic_coefficients = _normalise_algebraic_curve_input(
+    prepared, hyperelliptic_model = _normalise_algebraic_curve_input(
         ctx, curve)
-    if hyperelliptic_coefficients is not None and differentials is None:
+    if hyperelliptic_model is not None and differentials is None:
         if second_differentials is not None:
             raise ValueError(
                 "supplied second-kind differentials require a supplied "
                 "first-kind basis")
-        omega, omega_prime, eta, eta_prime, tau, kappa = (
-            ctx.hyperelliptic_periods(
-                hyperelliptic_coefficients, second_kind=True))
+        cached = _stage_hyperelliptic_periods(
+            ctx, (hyperelliptic_model.coefficients, second_kind))
+        if second_kind:
+            omega, omega_prime, eta, eta_prime, tau, kappa = (
+                +matrix for matrix in cached)
+            kappa_symmetry_residual = ctx.norm(kappa - kappa.T)
+        else:
+            omega, omega_prime, tau = (+matrix for matrix in cached)
+            eta = eta_prime = kappa = None
+            kappa_symmetry_residual = None
         genus = omega.rows
-        return CurvePeriods(
-            genus, None, omega, omega_prime, tau, eta, eta_prime, kappa,
-            ctx.norm(tau - tau.T), ctx.norm(kappa - kappa.T),
-            _tau_imaginary_eigenvalues(ctx, tau), None)
+        first_record = CurveFirstKindPeriods(
+            genus, None, omega, omega_prime, tau,
+            ctx.norm(tau - tau.T),
+            _tau_imaginary_eigenvalues(ctx, tau), None,
+            "hyperelliptic", "baker")
+        if second_kind:
+            second_record = CurveSecondKindPeriods(
+                genus, None, eta, eta_prime, kappa,
+                kappa_symmetry_residual, None,
+                "hyperelliptic", "baker")
+            if _return_first:
+                return first_record, second_record
+            return second_record
+        return first_record
+
+    if second_kind and second_differentials is None:
+        raise ValueError(
+            "second_kind_periods requires second_differentials with the "
+            "general engine")
 
     first_kind = _curve_differential_sequence(
         differentials, "differentials")
     if second_differentials is None:
-        second_kind = ()
+        second_forms = ()
     else:
-        second_kind = _curve_differential_sequence(
+        second_forms = _curve_differential_sequence(
             second_differentials, "second_differentials")
     monodromy = _stage_monodromy(ctx, prepared)
     genus = monodromy.genus
     if len(first_kind) != genus:
         raise ValueError(
             "differentials must contain one form per genus")
-    if second_kind and len(second_kind) != genus:
+    if second_forms and len(second_forms) != genus:
         raise ValueError(
             "second_differentials must contain one form per genus")
-    forms = first_kind + second_kind
+    forms = first_kind + second_forms
     quadrature_order = max(12, ctx.dps // 2)
     columns, max_sheet_residual = _stage_cycle_integrals(
         ctx, (prepared, forms, quadrature_order))
@@ -267,7 +327,7 @@ def periods(ctx, curve, differentials=None, *,
 
     eta = eta_prime = kappa = None
     kappa_symmetry_residual = None
-    if second_kind:
+    if second_forms:
         second_periods = _period_matrix_from_columns(
             ctx, columns, genus, genus, genus)
         eta = -second_periods[:, :genus] / 2
@@ -275,18 +335,27 @@ def periods(ctx, curve, differentials=None, *,
         raw_kappa = eta * omega**-1
         kappa_symmetry_residual = ctx.norm(raw_kappa - raw_kappa.T)
         kappa = (raw_kappa + raw_kappa.T) / 2
-    return CurvePeriods(
-        genus, first_kind, omega, omega_prime, tau, eta, eta_prime, kappa,
-        symmetry_residual, kappa_symmetry_residual, imaginary_eigenvalues,
-        max_sheet_residual)
+    first_record = CurveFirstKindPeriods(
+        genus, first_kind, omega, omega_prime, tau, symmetry_residual,
+        imaginary_eigenvalues, max_sheet_residual,
+        "general", "canonical-polygon")
+    if second_forms:
+        second_record = CurveSecondKindPeriods(
+            genus, second_forms, eta, eta_prime, kappa,
+            kappa_symmetry_residual, max_sheet_residual,
+            "general", "canonical-polygon")
+        if _return_first:
+            return first_record, second_record
+        return second_record
+    return first_record
 
 
 def riemann_matrix(ctx, curve, differentials=None):
     r"""Return the normalized Riemann matrix of a plane algebraic curve.
 
     This is a convenience wrapper returning
-    ``curve.periods(differentials).tau``; see
-    :meth:`AlgebraicCurve.periods` for the input conventions.
+    ``curve.first_kind_periods(differentials).tau``; see
+    :meth:`AlgebraicCurve.first_kind_periods` for the input conventions.
 
         >>> from mpmath import algebraic_curve, mp
         >>> mp.dps = 15
@@ -310,14 +379,14 @@ def riemann_constant(ctx, curve, differentials=None, *,
 
     For a general plane curve, ``differentials`` supplies one holomorphic
     differential per genus, in exactly the basis accepted by
-    :meth:`AlgebraicCurve.periods`.  The value is computed directly from the
+    :meth:`AlgebraicCurve.first_kind_periods`. The value is computed directly from the
     certified canonical polygon and level-two contour integrals; theta
     functions and characteristic searches are not used.  ``base_place`` may
     be a regular finite place or a chart-backed place.  Changing the base
     uses ``K_Q = K_P + (g-1) A_P(Q)`` in normalized coordinates.
 
-    Hyperelliptic coefficient input without supplied differentials dispatches
-    to the established hyperelliptic periods and characteristic convention.
+    Structurally hyperelliptic input without supplied differentials dispatches
+    to the Baker-marked specialized periods and characteristic convention.
 
     In genus one the answer is the odd half-period ``(1+tau)/2``::
 
@@ -326,7 +395,7 @@ def riemann_constant(ctx, curve, differentials=None, *,
         >>> curve = algebraic_curve({(0, 2): 1, (1, 0): 1, (3, 0): -1})
         >>> forms = (lambda x, y: 1 / y,)
         >>> constant = curve.riemann_constant(forms)
-        >>> periods = curve.periods(forms)
+        >>> periods = curve.first_kind_periods(forms)
         >>> mp.almosteq(constant.value[0], (1 + periods.tau[0, 0]) / 2)
         True
 
@@ -334,11 +403,14 @@ def riemann_constant(ctx, curve, differentials=None, *,
     ordinary periods, although their cost does not include an exponential
     characteristic enumeration.
     """
-    prepared, hyperelliptic_coefficients = _normalise_algebraic_curve_input(
+    prepared, hyperelliptic_model = _normalise_algebraic_curve_input(
         ctx, curve)
-    if hyperelliptic_coefficients is not None and differentials is None:
-        omega, tau, unused_kappa, characteristic = ctx.hyperelliptic_data(
-            hyperelliptic_coefficients)
+    if hyperelliptic_model is not None and differentials is None:
+        cached = _stage_hyperelliptic_periods(
+            ctx, (hyperelliptic_model.coefficients, False))
+        omega, unused_omega_prime, tau = (
+            +matrix for matrix in cached)
+        characteristic = _hyperelliptic_characteristic(ctx, omega.rows)
         a, b = characteristic
         genus = tau.rows
         value = ctx.matrix([
@@ -351,7 +423,8 @@ def riemann_constant(ctx, curve, differentials=None, *,
             value += (genus - 1) * ((2 * omega) ** -1 * displacement)
         characteristic = _jacobian_characteristic(ctx, value, tau)
         return CurveRiemannConstant(
-            value, characteristic, base_place, None)
+            value, characteristic, base_place, None,
+            "hyperelliptic", "baker")
 
     forms = _curve_differential_sequence(
         differentials, "differentials")
@@ -371,14 +444,16 @@ def riemann_constant(ctx, curve, differentials=None, *,
         (integral.max_sheet_residual for integral in cycle_integrals),
         default=ctx.zero)
     return CurveRiemannConstant(
-        value, characteristic, base_place, max_sheet_residual)
+        value, characteristic, base_place, max_sheet_residual,
+        "general", "canonical-polygon")
 
 
 def validate(ctx, result):
     r"""Validate a result record returned by the curve functions.
 
     ``result`` is one of ``CurveBranchLocus``, ``CurveMonodromy``,
-    ``CurveGenus``, ``CurveHomology``, ``CurvePeriods`` or
+    ``CurveGenus``, ``CurveHomology``, ``CurveFirstKindPeriods``,
+    ``CurveSecondKindPeriods`` or
     ``CurveRiemannConstant``.  The returned
     ``CurveValidation`` record contains one named ``CurveCheck`` per
     invariant, the largest
@@ -388,7 +463,7 @@ def validate(ctx, result):
 
         >>> from mpmath import algebraic_curve
         >>> curve = algebraic_curve((0, -1, 0, 1))
-        >>> report = curve.validate(curve.periods())
+        >>> report = curve.validate(curve.first_kind_periods())
         >>> report.passed
         True
         >>> report.checks[0]
@@ -458,7 +533,7 @@ def validate(ctx, result):
             "cycle_count", result.cycle_count,
             result.cycle_count == result.intersection_rank
             + result.radical_rank))
-    elif isinstance(result, CurvePeriods):
+    elif isinstance(result, CurveFirstKindPeriods):
         tau = result.tau
         scale = max([ctx.one] + [
             abs(tau[row, column]) for row in range(tau.rows)
@@ -473,16 +548,22 @@ def validate(ctx, result):
         checks.append(CurveCheck(
             "tau_imaginary_positive_definite", min(eigenvalues),
             min(eigenvalues) > 0))
-        if result.kappa is not None:
-            kappa = result.kappa
-            kappa_scale = max([ctx.one] + [
-                abs(kappa[row, column]) for row in range(kappa.rows)
-                for column in range(kappa.cols)])
-            kappa_residual = result.kappa_symmetry_residual
-            residuals.append(kappa_residual)
+        if result.max_sheet_residual is not None:
+            residuals.append(result.max_sheet_residual)
             checks.append(CurveCheck(
-                "kappa_symmetry_residual", kappa_residual,
-                kappa_residual <= 100 * ctx.sqrt(ctx.eps) * kappa_scale))
+                "max_sheet_residual", result.max_sheet_residual,
+                result.max_sheet_residual <= tolerance))
+    elif isinstance(result, CurveSecondKindPeriods):
+        kappa = result.kappa
+        kappa_scale = max([ctx.one] + [
+            abs(kappa[row, column]) for row in range(kappa.rows)
+            for column in range(kappa.cols)])
+        tolerance = 100 * ctx.sqrt(ctx.eps) * kappa_scale
+        kappa_residual = result.kappa_symmetry_residual
+        residuals.append(kappa_residual)
+        checks.append(CurveCheck(
+            "kappa_symmetry_residual", kappa_residual,
+            kappa_residual <= tolerance))
         if result.max_sheet_residual is not None:
             residuals.append(result.max_sheet_residual)
             checks.append(CurveCheck(
@@ -700,19 +781,35 @@ def _curve_contains_chart_place(value):
         return False
 
 
-def abel_map(ctx, curve, target, differentials=None,
-                   base_place=None, reduce=False):
+def _reduce_second_kind_abel(
+        ctx, first, second, first_periods, second_periods):
+    """Reduce paired Abelian integrals with one shared lattice shift."""
+    reduction = lattice_reduce(ctx, first, first_periods)
+    genus = first_periods.genus
+    matrix = ctx.matrix(genus, 2 * genus)
+    matrix[:, :genus] = 2 * second_periods.eta
+    matrix[:, genus:] = 2 * second_periods.eta_prime
+    second += matrix * ctx.matrix(reduction.shift)
+    return second, reduction.shift
+
+
+def abel_map(ctx, curve, target, differentials=None, *, second_kind=False,
+             second_differentials=None, base_place=None, reduce=False):
     r"""Evaluate the Abel map of a place or divisor on a plane curve.
 
     ``target`` is one regular finite place, given as a ``(x, y)`` pair or
     ``CurvePlace``, a chart-backed place from
     :meth:`AlgebraicCurve.chart_place`, or a sequence of places representing
     an effective divisor; an empty sequence returns the zero vector.  A
-    hyperelliptic coefficient sequence without supplied differentials is
-    dispatched to :func:`~mpmath.hyperelliptic_abel_map`; a general plane
-    curve requires ``differentials``, one first-kind callable per genus,
-    and returns the unnormalized Abelian coordinates they integrate to.
+    structurally hyperelliptic equation without supplied differentials is
+    dispatched to the specialized Abel-map engine, including the ordinate
+    change required after completing the square.  A general plane curve
+    requires ``differentials``, one first-kind callable per genus, and returns
+    the unnormalized Abelian coordinates they integrate to.
     Chart-backed places require the general pipeline.
+    :meth:`AlgebraicCurve.second_kind_abel_map` returns the second-kind value
+    in a ``CurveSecondKindAbelMap`` record. The general engine requires an
+    explicit ``second_differentials`` basis for the same result.
 
     ``base_place`` selects a regular finite base place; the default is
     sheet zero over the internally selected computational base point.
@@ -730,9 +827,12 @@ def abel_map(ctx, curve, target, differentials=None,
     >>> mp.nstr(mp.norm(value), 3)
     '0.0'
     """
-    prepared, hyperelliptic_coefficients = _normalise_algebraic_curve_input(
+    prepared, hyperelliptic_model = _normalise_algebraic_curve_input(
         ctx, curve)
-    if hyperelliptic_coefficients is not None and differentials is None:
+    if hyperelliptic_model is not None and differentials is None:
+        if second_differentials is not None:
+            raise ValueError(
+                "second_differentials require a supplied first-kind basis")
         if (_curve_contains_chart_place(target)
                 or (base_place is not None
                     and _curve_contains_chart_place(base_place))):
@@ -740,13 +840,46 @@ def abel_map(ctx, curve, target, differentials=None,
                 "chart-backed places require the general pipeline with "
                 "supplied differentials")
         targets = _normalise_abel_targets(ctx, target)
+        transformed_targets = _to_hyperelliptic_points(
+            ctx, hyperelliptic_model, targets)
         if base_place is None:
-            return ctx.hyperelliptic_abel_map(
-                hyperelliptic_coefficients, targets, reduce=reduce)
-        result = (ctx.hyperelliptic_abel_map(
-                      hyperelliptic_coefficients, targets)
-                  - len(targets) * ctx.hyperelliptic_abel_map(
-                      hyperelliptic_coefficients, base_place))
+            result = _hyperelliptic_abel_map(
+                ctx, hyperelliptic_model.coefficients, transformed_targets,
+                reduce=reduce, second_kind=second_kind,
+                _return_shift=second_kind and reduce)
+            if second_kind:
+                if reduce:
+                    unused_first, second, shift = result
+                else:
+                    unused_first, second = result
+                    shift = None
+                return CurveSecondKindAbelMap(
+                    second, shift, "hyperelliptic", "baker")
+            return result
+        base_points = _normalise_abel_targets(ctx, base_place)
+        if len(base_points) != 1:
+            raise ValueError("base_place must be one affine point (x, y)")
+        transformed_base = _to_hyperelliptic_points(
+            ctx, hyperelliptic_model, base_points)[0]
+        target_result = _hyperelliptic_abel_map(
+            ctx, hyperelliptic_model.coefficients, transformed_targets,
+            second_kind=second_kind)
+        base_result = _hyperelliptic_abel_map(
+            ctx, hyperelliptic_model.coefficients, transformed_base,
+            second_kind=second_kind)
+        if second_kind:
+            first = target_result[0] - len(targets) * base_result[0]
+            second = target_result[1] - len(targets) * base_result[1]
+            shift = None
+            if reduce:
+                first_periods = periods(ctx, curve)
+                second_periods = periods(
+                    ctx, curve, second_kind=True)
+                second, shift = _reduce_second_kind_abel(
+                    ctx, first, second, first_periods, second_periods)
+            return CurveSecondKindAbelMap(
+                second, shift, "hyperelliptic", "baker")
+        result = target_result - len(targets) * base_result
         if reduce:
             result = lattice_reduce(
                 ctx, result, periods(ctx, curve)).value
@@ -754,11 +887,24 @@ def abel_map(ctx, curve, target, differentials=None,
 
     forms = _curve_differential_sequence(
         differentials, "differentials")
+    if second_differentials is None:
+        second_forms = ()
+    else:
+        second_forms = _curve_differential_sequence(
+            second_differentials, "second_differentials")
+    if second_kind and not second_forms:
+        raise ValueError(
+            "second_kind_abel_map requires second_differentials with the "
+            "general engine")
     monodromy = _stage_monodromy(ctx, prepared)
     genus = monodromy.genus
     if len(forms) != genus:
         raise ValueError(
             "differentials must contain one form per genus")
+    if second_forms and len(second_forms) != genus:
+        raise ValueError(
+            "second_differentials must contain one form per genus")
+    all_forms = forms + second_forms
     if base_place is None:
         base_junction = _PlaneCurvePlace(
             monodromy.base_point, monodromy.base_sheets[0])
@@ -774,36 +920,49 @@ def abel_map(ctx, curve, target, differentials=None,
         if _same_numerical_place(
                 ctx, (junction.x, junction.y),
                 (monodromy.base_point, monodromy.base_sheets[0])):
-            affine_value = ctx.zeros(genus, 1)
+            affine_value = ctx.zeros(len(all_forms), 1)
         else:
             affine_value = _finite_base_abel_value(
-                ctx, prepared, monodromy, branch_values, junction, forms,
+                ctx, prepared, monodromy, branch_values, junction, all_forms,
                 quadrature_order)
         if tail is None:
             return affine_value
         pullbacks = _pullback_plane_curve_differentials(
-            forms, _validated_chart_coordinate_map(ctx, tail.chart))
+            all_forms, _validated_chart_coordinate_map(ctx, tail.chart))
         local = _integrate_plane_curve_branch(
             ctx, tail.chart.curve, tail.branch, pullbacks)
         return affine_value - ctx.matrix(local.values)
 
     places = _normalise_curve_places(ctx, prepared, target)
-    result = ctx.zeros(genus, 1)
+    result = ctx.zeros(len(all_forms), 1)
     for junction, tail, unused_place in places:
         result += place_value(junction, tail)
     result -= len(places) * place_value(base_junction, base_tail)
+    first = result[:genus, :]
+    if second_forms:
+        second = result[genus:, :]
+        shift = None
+        if reduce:
+            first_periods = periods(ctx, curve, differentials)
+            second_periods = periods(
+                ctx, curve, differentials, second_kind=True,
+                second_differentials=second_forms)
+            second, shift = _reduce_second_kind_abel(
+                ctx, first, second, first_periods, second_periods)
+        return CurveSecondKindAbelMap(
+            second, shift, "general", "canonical-polygon")
     if reduce:
-        result = lattice_reduce(
-            ctx, result, periods(ctx, curve, differentials)).value
-    return result
+        first = lattice_reduce(
+            ctx, first, periods(ctx, curve, differentials)).value
+    return first
 
 
 def lattice_reduce(ctx, value, periods):
     r"""Reduce a Jacobian vector modulo the period lattice.
 
-    ``value`` is a genus-length column vector of Abelian coordinates.  If
-    ``periods`` is a ``CurvePeriods`` record, ``value`` is in the original
-    differential basis and is reduced by the full lattice
+    ``value`` is a genus-length column vector of Abelian coordinates. If
+    ``periods`` is a ``CurveFirstKindPeriods`` record, ``value`` is in the
+    original differential basis and is reduced by the full lattice
     ``[2*omega, 2*omega_prime]``.  If ``periods`` is a normalized Riemann
     matrix ``tau``, ``value`` is in normalized coordinates and is reduced
     by ``[I, tau]``.  The returned ``CurveLatticeReduction`` record contains
@@ -819,7 +978,7 @@ def lattice_reduce(ctx, value, periods):
     >>> mp.nstr(reduced.value[0, 0], 3)
     '0.0'
     """
-    if isinstance(periods, CurvePeriods):
+    if isinstance(periods, CurveFirstKindPeriods):
         genus = periods.genus
         period_matrix = ctx.matrix(genus, 2 * genus)
         period_matrix[:, :genus] = 2 * periods.omega
@@ -829,10 +988,10 @@ def lattice_reduce(ctx, value, periods):
             tau = ctx.matrix(periods)
         except (TypeError, ValueError):
             raise ValueError(
-                "periods must be square or a CurvePeriods record")
+                "periods must be square or a CurveFirstKindPeriods record")
         if tau.rows != tau.cols:
             raise ValueError(
-                "periods must be square or a CurvePeriods record")
+                "periods must be square or a CurveFirstKindPeriods record")
         genus = tau.rows
         period_matrix = ctx.matrix(genus, 2 * genus)
         period_matrix[:, :genus] = ctx.eye(genus)

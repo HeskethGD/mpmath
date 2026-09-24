@@ -1,7 +1,10 @@
 """Input normalization and Jacobian-level curve operations."""
 
 from ._context import _curve_cache_state
-from ._records import CurvePlace, _CurveChartTail, _PlaneCurvePlace
+from ._records import (
+    CurvePlace, _ClassifiedCurve, _CurveChartTail, _HyperellipticModel,
+    _PlaneCurvePlace,
+)
 from .continuation import (
     _concatenate_plane_curve_continuations,
     _continue_plane_curve_sheets_adaptive, _point_segment_distance,
@@ -14,38 +17,107 @@ from .monodromy import (
 )
 from .polynomial import (
     _evaluate_plane_derivative, _evaluate_plane_polynomial,
-    _ordered_plane_curve_sheets, _prepare_plane_curve,
+    _ordered_plane_curve_sheets, _polynomial_multiply, _polynomial_trim,
+    _prepare_plane_curve,
 )
 
+
+def _classify_hyperelliptic_model(ctx, curve):
+    """Recognize a polynomial quadratic cover with constant leading term.
+
+    For ``A*y**2 + B(x)*y + C(x) = 0`` with constant nonzero ``A``, use
+    ``z = y + B/(2*A)`` and ``z**2 = B**2/(4*A**2) - C/A``.  The returned
+    descriptor contains the ascending coefficients of the right-hand side
+    and of the shift added to the caller's ``y`` coordinate.
+
+    This is deliberately a cheap structural classification.  Root
+    separation and smoothness are checked lazily by the specialized engine.
+    Models with a nonconstant coefficient of ``y**2`` remain on the general
+    path because completing their square can change affine and infinite
+    places birationally.
+    """
+    if curve.y_degree != 2:
+        return None
+    quadratic = [term for term in curve.terms if term[1] == 2]
+    if len(quadratic) != 1 or quadratic[0][0] != 0:
+        return None
+    leading = quadratic[0][2]
+    linear_degree = max(
+        [term[0] for term in curve.terms if term[1] == 1], default=0)
+    constant_degree = max(
+        [term[0] for term in curve.terms if term[1] == 0], default=0)
+    linear = [ctx.zero] * (linear_degree + 1)
+    constant = [ctx.zero] * (constant_degree + 1)
+    for x_power, y_power, coefficient in curve.terms:
+        if y_power == 1:
+            linear[x_power] = coefficient
+        elif y_power == 0:
+            constant[x_power] = coefficient
+    shift = _polynomial_trim(
+        ctx, tuple(value / (2 * leading) for value in linear))
+    square = _polynomial_multiply(ctx, shift, shift)
+    size = max(len(square), len(constant))
+    polynomial = tuple(
+        (square[index] if index < len(square) else ctx.zero)
+        - (constant[index] / leading
+           if index < len(constant) else ctx.zero)
+        for index in range(size))
+    polynomial = _polynomial_trim(ctx, polynomial)
+    # The current specialized engine starts in genus one.  Lower-degree
+    # quadratic covers continue through the general machinery.
+    if len(polynomial) < 4:
+        return None
+    return _HyperellipticModel(polynomial, shift)
+
+
 def _normalise_algebraic_curve_input(ctx, curve):
-    """Return ``(prepared_curve, hyperelliptic_coefficients_or_none)``."""
+    """Return a prepared curve and its optional specialized model."""
+    if isinstance(curve, _ClassifiedCurve):
+        return curve.curve, curve.hyperelliptic
     if hasattr(curve, "items"):
-        return _prepare_plane_curve(ctx, curve), None
-    try:
-        values = tuple(curve)
-    except TypeError:
-        raise ValueError("curve must be coefficients or sparse plane terms")
-    if not values:
-        raise ValueError("curve must not be empty")
-    if all(isinstance(term, (tuple, list)) and len(term) == 3
-           for term in values):
-        terms = {}
-        for x_power, y_power, coefficient in values:
-            try:
-                coefficient = ctx.convert(coefficient)
-            except (TypeError, ValueError):
-                raise ValueError("polynomial coefficients must be numbers")
-            key = (x_power, y_power)
-            terms[key] = terms.get(key, ctx.zero) + coefficient
-        return _prepare_plane_curve(ctx, terms), None
-    coefficients = tuple(ctx.convert(value) for value in values)
-    terms = {(0, 2): ctx.one}
-    terms.update({
-        (degree, 0): -coefficient
-        for degree, coefficient in enumerate(coefficients)
-        if coefficient
-    })
-    return _prepare_plane_curve(ctx, terms), coefficients
+        prepared = _prepare_plane_curve(ctx, curve)
+    else:
+        try:
+            values = tuple(curve)
+        except TypeError:
+            raise ValueError("curve must be coefficients or sparse plane terms")
+        if not values:
+            raise ValueError("curve must not be empty")
+        if all(isinstance(term, (tuple, list)) and len(term) == 3
+               for term in values):
+            terms = {}
+            for x_power, y_power, coefficient in values:
+                try:
+                    coefficient = ctx.convert(coefficient)
+                except (TypeError, ValueError):
+                    raise ValueError("polynomial coefficients must be numbers")
+                key = (x_power, y_power)
+                terms[key] = terms.get(key, ctx.zero) + coefficient
+            prepared = _prepare_plane_curve(ctx, terms)
+        else:
+            coefficients = tuple(ctx.convert(value) for value in values)
+            terms = {(0, 2): ctx.one}
+            terms.update({
+                (degree, 0): -coefficient
+                for degree, coefficient in enumerate(coefficients)
+                if coefficient
+            })
+            prepared = _prepare_plane_curve(ctx, terms)
+    return prepared, _classify_hyperelliptic_model(ctx, prepared)
+
+
+def _evaluate_ascending_polynomial(ctx, coefficients, value):
+    result = ctx.zero
+    for coefficient in reversed(coefficients):
+        result = result * value + coefficient
+    return result
+
+
+def _to_hyperelliptic_points(ctx, model, points):
+    """Map affine points from the user's equation to ``z**2 = P(x)``."""
+    return tuple(
+        (x, y + _evaluate_ascending_polynomial(ctx, model.y_shift, x))
+        for x, y in points)
 
 
 def _period_matrix_from_columns(ctx, columns, start, count, genus):

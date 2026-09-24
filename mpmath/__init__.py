@@ -54,15 +54,13 @@ kleinian_sigma_jet = mp.kleinian_sigma_jet
 kleinian_baker_akhiezer = mp.kleinian_baker_akhiezer
 kleinian_zeta = mp.kleinian_zeta
 kleinian_p = mp.kleinian_p
-hyperelliptic_periods = mp.hyperelliptic_periods
-hyperelliptic_abel_map = mp.hyperelliptic_abel_map
-hyperelliptic_data = mp.hyperelliptic_data
 algebraic_curve = mp.algebraic_curve
 from .curves import (
-    AlgebraicCurve,
+    AlgebraicCurve, CurveFirstKindPeriods, CurveSecondKindAbelMap,
+    CurveSecondKindPeriods,
     CurveBranchLocus, CurveChart, CurveCheck, CurveGenus, CurveHomology,
     CurveIntegral, CurveLatticeReduction, CurveMonodromy, CurvePath,
-    CurvePeriods, CurvePlace, CurveRiemannConstant, CurveValidation,
+    CurvePlace, CurveRiemannConstant, CurveValidation,
 )
 kleinj = mp.kleinj
 kleinjinv = mp.kleinjinv

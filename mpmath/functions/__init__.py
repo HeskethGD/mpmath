@@ -8,7 +8,6 @@ from . import orthogonal
 from . import theta
 from . import riemann_theta
 from . import kleinian
-from . import hyperelliptic
 from . import elliptic
 from . import signals
 from . import zeta

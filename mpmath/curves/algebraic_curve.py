@@ -13,9 +13,11 @@ class AlgebraicCurve:
     custom contexts. Expensive stages are lazy and are cached by the core
     engine using the current precision and numerical context state.
 
-    ``specification`` may be a sparse ``(x_power, y_power)`` coefficient
-    mapping, a sequence of ``(x_power, y_power, coefficient)`` terms, or an
-    ascending coefficient sequence for ``y**2 = P(x)``.
+    The canonical ``specification`` is a sparse ``(x_power, y_power)``
+    coefficient mapping.  Sequences of ``(x_power, y_power, coefficient)``
+    terms and ascending coefficient sequences for ``y**2 = P(x)`` remain
+    accepted for compatibility.  Structurally hyperelliptic equations are
+    recognized after normalization, independently of their input syntax.
     """
 
     def __init__(self, ctx, specification):
@@ -31,8 +33,22 @@ class AlgebraicCurve:
                 # Let the shared validator provide the public error message.
                 pass
         self._specification = specification
-        self._prepared, self._hyperelliptic_coefficients = (
+        self._prepared, self._hyperelliptic_model = (
             _operations._normalise_algebraic_curve_input(ctx, specification))
+        self._classified_states = {
+            self._creation_state: _records._ClassifiedCurve(
+                self._prepared, self._hyperelliptic_model)
+        }
+        self._automatic_first_kind_periods = {}
+
+    @staticmethod
+    def _copy_first_kind_periods(result):
+        """Copy mutable matrices in an automatic first-kind result."""
+        return result._replace(
+            omega=+result.omega,
+            omega_prime=+result.omega_prime,
+            tau=+result.tau,
+        )
 
     def _check_precision(self):
         """Warn once for each numerical state different from construction."""
@@ -50,8 +66,17 @@ class AlgebraicCurve:
 
     def _call(self, function, *args, **kwargs):
         self._check_precision()
+        state = _operations._curve_cache_state(self.ctx)
+        classified = self._classified_states.get(state)
+        if classified is None:
+            prepared, hyperelliptic = (
+                _operations._normalise_algebraic_curve_input(
+                    self.ctx, self._specification))
+            classified = _records._ClassifiedCurve(
+                prepared, hyperelliptic)
+            self._classified_states[state] = classified
         return function(
-            self.ctx, self._specification, *args, **kwargs)
+            self.ctx, classified, *args, **kwargs)
 
     @property
     def specification(self):
@@ -92,16 +117,51 @@ class AlgebraicCurve:
 
     @property
     def homology(self):
-        """Canonical homology data for the curve."""
+        """Homology data in the marking used by the default curve engine."""
         return self._call(_operations.homology)
 
-    def periods(self, differentials=None, *, second_differentials=None):
-        """Return first- and optionally second-kind period matrices."""
-        return self._call(
+    def first_kind_periods(self, differentials=None):
+        """Return first-kind half-periods and the Riemann matrix.
+
+        Recognized hyperelliptic curves use their automatic basis and Baker
+        marking unless ``differentials`` is supplied, which selects the
+        general canonical-polygon engine.
+        """
+        state = _operations._curve_cache_state(self.ctx)
+        if differentials is None:
+            cached = self._automatic_first_kind_periods.get(state)
+            if cached is not None:
+                return self._copy_first_kind_periods(cached)
+        result = self._call(
             _operations.periods,
             differentials,
-            second_differentials=second_differentials,
         )
+        if differentials is None:
+            self._automatic_first_kind_periods[state] = (
+                self._copy_first_kind_periods(result))
+        return result
+
+    def second_kind_periods(self, differentials=None, *,
+                            second_differentials=None):
+        """Return second-kind half-periods and kappa.
+
+        Recognized hyperelliptic curves use the automatic BEL basis. The
+        general engine requires both ``differentials`` and
+        ``second_differentials``.
+        """
+        result = self._call(
+            _operations.periods,
+            differentials,
+            second_kind=True,
+            second_differentials=second_differentials,
+            _return_first=True,
+        )
+        first, second = result
+        if differentials is None:
+            state = _operations._curve_cache_state(self.ctx)
+            self._automatic_first_kind_periods[state] = (
+                self._copy_first_kind_periods(first))
+        return second
 
     def riemann_matrix(self, differentials=None):
         """Return the normalized Riemann matrix."""
@@ -134,11 +194,30 @@ class AlgebraicCurve:
 
     def abel_map(self, target, differentials=None, *, base_place=None,
                  reduce=False):
-        """Evaluate the Abel map of a place or divisor."""
+        """Evaluate the first-kind Abel map of a place or divisor."""
         return self._call(
             _operations.abel_map,
             target,
             differentials,
+            base_place=base_place,
+            reduce=reduce,
+        )
+
+    def second_kind_abel_map(
+            self, target, differentials=None, *, second_differentials=None,
+            base_place=None, reduce=False):
+        """Evaluate second-kind Abelian integrals.
+
+        The result is a ``CurveSecondKindAbelMap`` record. Recognized
+        hyperelliptic curves use their automatic BEL basis; the general
+        engine requires both ``differentials`` and ``second_differentials``.
+        """
+        return self._call(
+            _operations.abel_map,
+            target,
+            differentials,
+            second_kind=True,
+            second_differentials=second_differentials,
             base_place=base_place,
             reduce=reduce,
         )
@@ -192,10 +271,12 @@ class CurveMethods:
 
 
 CurveBranchLocus = _records.CurveBranchLocus
+CurveFirstKindPeriods = _records.CurveFirstKindPeriods
+CurveSecondKindPeriods = _records.CurveSecondKindPeriods
+CurveSecondKindAbelMap = _records.CurveSecondKindAbelMap
 CurveMonodromy = _records.CurveMonodromy
 CurveGenus = _records.CurveGenus
 CurveHomology = _records.CurveHomology
-CurvePeriods = _records.CurvePeriods
 CurveRiemannConstant = _records.CurveRiemannConstant
 CurveValidation = _records.CurveValidation
 CurveCheck = _records.CurveCheck
@@ -208,6 +289,9 @@ CurveLatticeReduction = _records.CurveLatticeReduction
 
 __all__ = [
     "AlgebraicCurve",
+    "CurveFirstKindPeriods",
+    "CurveSecondKindPeriods",
+    "CurveSecondKindAbelMap",
     "CurveBranchLocus",
     "CurveChart",
     "CurveCheck",
@@ -217,7 +301,6 @@ __all__ = [
     "CurveLatticeReduction",
     "CurveMonodromy",
     "CurvePath",
-    "CurvePeriods",
     "CurvePlace",
     "CurveRiemannConstant",
     "CurveValidation",

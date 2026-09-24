@@ -296,7 +296,8 @@ def kleinian_sigma(ctx, u, omega, tau, kappa, characteristic=None,
         \lfloor(g+1)/2\rfloor}.
 
     This mode assumes the differential ordering and Riemann characteristic
-    returned by :func:`~mpmath.hyperelliptic_data`. In genus one it
+    in the records returned by
+    :meth:`~mpmath.AlgebraicCurve.second_kind_periods`. In genus one it
     agrees with the conventional Weierstrass sigma function. See
     [BEL1997]_, Definition 1.
 
@@ -341,8 +342,10 @@ def kleinian_baker_akhiezer(ctx, u, abel, second_kind, omega, tau, kappa,
     the unique point at infinity. See [Onishi2005]_, Definition 6.1 and
     Proposition 6.6, and [BEH2005]_, equation (3.3).
 
-    ``abel`` and ``second_kind`` should normally be obtained together from
-    :func:`~mpmath.hyperelliptic_abel_map` with ``second_kind=True``. The
+    ``abel`` and ``second_kind`` should normally be obtained from
+    :meth:`~mpmath.AlgebraicCurve.abel_map` and the ``value`` field returned
+    by :meth:`~mpmath.AlgebraicCurve.second_kind_abel_map`, using the same
+    target and reduction choice. The
     remaining inputs use the same conventions as
     :func:`~mpmath.kleinian_sigma`. Sigma is evaluated with its canonical
     ``normalization="hyperelliptic"``; this is required because its
@@ -354,8 +357,9 @@ def kleinian_baker_akhiezer(ctx, u, abel, second_kind, omega, tau, kappa,
     used here, :math:`2\eta=-\oint_a dr`. See [CEEK2000]_, equations (3.21)
     and (3.22).
 
-    For an odd-degree hyperelliptic curve,
-    :func:`~mpmath.hyperelliptic_abel_map` uses the unique point at infinity
+    For an odd-degree hyperelliptic curve, the automatic specialized path in
+    :meth:`~mpmath.AlgebraicCurve.second_kind_abel_map` uses the unique point
+    at infinity
     required by this standard spectral interpretation. Its even-degree base
     point is instead finite; constructing a BA function with an essential
     singularity at either of the two even-degree points at infinity requires

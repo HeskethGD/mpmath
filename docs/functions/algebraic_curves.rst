@@ -11,7 +11,11 @@ Create a curve with the active mpmath context::
 
     >>> from mpmath import algebraic_curve, mp
     >>> mp.dps = 30
-    >>> curve = algebraic_curve((0, -1, 0, 1))
+    >>> curve = algebraic_curve({
+    ...     (0, 2): 1,
+    ...     (1, 0): 1,
+    ...     (3, 0): -1,
+    ... })
     >>> curve.genus
     1
     >>> curve.branch_locus.degree
@@ -21,13 +25,32 @@ Create a curve with the active mpmath context::
 ``AlgebraicCurve(ctx, specification)`` constructor is available when working
 with a custom context.
 
-Curves may be supplied as an ascending coefficient sequence defining
-:math:`y^2 = P(x)`, a sparse mapping from :math:`(i,j)` power pairs to the
-coefficients of :math:`x^i y^j`, or a sequence of :math:`(i,j,c)` terms.
-Hyperelliptic input is dispatched to the specialized engine when no
-differential basis is supplied. A general plane curve requires a user-supplied
-holomorphic basis containing one differential callable per genus. The current
-implementation uses projection onto the ``x`` coordinate.
+The canonical curve specification is a sparse mapping from :math:`(i,j)`
+power pairs to the coefficients of :math:`x^i y^j`. Ascending coefficient
+sequences defining :math:`y^2=P(x)` and sequences of :math:`(i,j,c)` terms
+remain accepted for compatibility, but new code should use the sparse form.
+
+Classification is based on the normalized polynomial rather than its input
+syntax. In particular, a constant-leading quadratic equation
+
+.. math::
+
+    A y^2+B(x)y+C(x)=0
+
+is sent to the specialized hyperelliptic engine, when no differential basis
+is supplied, after the change of coordinate
+:math:`z=y+B(x)/(2A)`. The resulting model is
+:math:`z^2=B(x)^2/(4A^2)-C(x)/A`. Its automatic first-kind basis is
+:math:`x^k dx/z`, expressed in the original coordinate as
+:math:`x^k dx/(y+B(x)/(2A))`. Root separation and smoothness are checked
+lazily when the specialized computation is requested.
+The transformed polynomial must currently have distinct roots. A repeated
+root describes a singular plane model; periods of its normalization and
+generalized-Jacobian data are not yet part of this dispatch.
+
+A general plane curve requires a user-supplied holomorphic basis containing
+one differential callable per genus. The current implementation uses
+projection onto the ``x`` coordinate.
 
 Expensive stages are computed lazily and cached using the numerical context,
 including its precision. If the context changes after construction, the curve
@@ -50,18 +73,52 @@ Topology
 
 .. autoattribute:: mpmath.AlgebraicCurve.homology
 
+``homology`` describes the marking used by the curve's default computational
+engine. For an automatically classified hyperelliptic curve this is the
+compact Baker basis used by its periods and Abel maps. For a general curve it
+is the canonical-polygon basis reduced from the lifted monodromy graph. The
+``engine`` and ``marking`` fields make the distinction explicit.
+
 
 Periods and Riemann data
 ........................
 
-.. automethod:: mpmath.AlgebraicCurve.periods
+.. automethod:: mpmath.AlgebraicCurve.first_kind_periods
+
+.. automethod:: mpmath.AlgebraicCurve.second_kind_periods
 
 .. automethod:: mpmath.AlgebraicCurve.riemann_matrix
 
 .. automethod:: mpmath.AlgebraicCurve.riemann_constant
 
-``periods`` accepts an optional caller-supplied second-kind basis and returns
-``eta``, ``eta_prime`` and ``kappa`` with the first-kind period data.
+``first_kind_periods()`` computes first-kind data only.
+``second_kind_periods()`` returns only the second-kind data ``eta``,
+``eta_prime`` and ``kappa``. Any compatible first-kind work needed to form
+``kappa`` is used internally rather than duplicated in the result.
+Automatically classified hyperelliptic curves use the BEL basis; a general
+curve instead requires an explicit
+``second_differentials`` basis. The arbitrary-genus algebraic second-kind
+basis and half-period conventions are equation (1.3) and Lemma 1.1 of
+[BEL1997]_.
+
+Automatic hyperelliptic calculations use the deterministic Baker cycle
+marking. Supplying a callable first-kind basis is an explicit request for the
+general canonical-polygon engine. The returned ``engine`` and ``marking``
+fields identify that choice; results carrying different markings must not be
+combined without a symplectic basis conversion.
+
+The Baker marking orders branch points lexicographically. In a parameterized
+family, roots can exchange this order without colliding, causing the returned
+matrices and characteristic to change by a symplectic basis transformation
+rather than vary continuously. For real ordered roots, the square-root sheet
+is continued from the interval to the right of every branch point. Moving
+left across a root multiplies it by :math:`i`; it is therefore incorrect to
+choose the positive principal square root independently on every real oval.
+
+The corresponding records are ``CurveFirstKindPeriods`` and
+``CurveSecondKindPeriods``. Their ``differentials`` field is ``None`` for an
+automatic hyperelliptic basis and is the relevant supplied callable tuple for
+the general engine.
 
 
 Places, paths and integration
@@ -101,7 +158,17 @@ Abel map and lattice reduction
 
 .. automethod:: mpmath.AlgebraicCurve.abel_map
 
+.. automethod:: mpmath.AlgebraicCurve.second_kind_abel_map
+
 .. automethod:: mpmath.AlgebraicCurve.lattice_reduce
+
+For an automatically classified hyperelliptic curve,
+``second_kind_abel_map(target)`` returns a ``CurveSecondKindAbelMap`` record
+with the second-kind ``value``. With custom first-kind differentials, the
+general engine provides the same record when an explicit
+``second_differentials`` basis is supplied. Lattice reduction uses the
+compatible first-kind Abel map internally and records the shared cycle shift
+as ``reduction_shift``.
 
 
 Validation and result records
@@ -110,13 +177,16 @@ Validation and result records
 .. automethod:: mpmath.AlgebraicCurve.validate
 
 The record classes ``CurveBranchLocus``, ``CurveMonodromy``, ``CurveGenus``,
-``CurveHomology``, ``CurvePeriods``, ``CurveRiemannConstant``, ``CurveChart``,
-``CurvePlace``, ``CurvePath``, ``CurveIntegral``, ``CurveLatticeReduction``,
-``CurveCheck`` and ``CurveValidation`` are importable from the top-level
+``CurveHomology``, ``CurveFirstKindPeriods``, ``CurveSecondKindPeriods``,
+``CurveRiemannConstant``, ``CurveSecondKindAbelMap``, ``CurveChart``,
+``CurvePlace``, ``CurvePath``, ``CurveIntegral``,
+``CurveLatticeReduction``, ``CurveCheck`` and ``CurveValidation`` are
+importable from the top-level
 ``mpmath`` namespace. They are immutable results rather than additional
 stateful objects.
 
-The curve class complements the hyperelliptic period and Kleinian-function
-machinery described in :doc:`abelian`: the hyperelliptic engine supplies
-automatic differential bases for :math:`y^2=P(x)`, while ``AlgebraicCurve``
-also supports general smooth plane projections.
+The curve class is the common interface to the hyperelliptic period and
+Kleinian-function machinery described in :doc:`abelian` and to the general
+plane-curve pipeline. Internally the hyperelliptic engine supplies automatic
+differential bases and specialized integration, while the general engine
+supports smooth plane projections with caller-supplied differentials.
