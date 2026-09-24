@@ -5,7 +5,7 @@ from ._records import (
 )
 from .polynomial import (
     _evaluate_plane_derivative, _evaluate_plane_polynomial,
-    _minimum_cost_assignment, _newton_plane_curve_sheet,
+    _minimum_cost_assignment, _newton_plane_curve_sheet_with_derivatives,
     _plane_curve_sheets, _polynomial_multiply,
 )
 
@@ -42,24 +42,27 @@ def _newton_plane_curve_segment_samples(
     """
     current_x = left_x
     current_y = left_fibre[sheet]
+    current_derivative_x = _evaluate_plane_derivative(
+        ctx, curve, current_x, current_y, "x")
     current_derivative_y = _evaluate_plane_derivative(
         ctx, curve, current_x, current_y, "y")
     delta_x = right_x - left_x
     samples = []
 
     def advance(next_x):
-        nonlocal current_x, current_y, current_derivative_y
-        derivative_x = _evaluate_plane_derivative(
-            ctx, curve, current_x, current_y, "x")
+        nonlocal current_x, current_y
+        nonlocal current_derivative_x, current_derivative_y
         derivative_scale = max(
-            ctx.one, abs(derivative_x), abs(current_derivative_y))
+            ctx.one, abs(current_derivative_x), abs(current_derivative_y))
         if (abs(current_derivative_y)
                 <= ctx.sqrt(ctx.eps) * derivative_scale):
             return None
         prediction = current_y - (
-            derivative_x * (next_x - current_x) / current_derivative_y)
-        (candidate, residual, candidate_derivative_y, unused_scale,
-         converged) = _newton_plane_curve_sheet(
+            current_derivative_x * (next_x - current_x)
+            / current_derivative_y)
+        (candidate, residual, candidate_derivative_x,
+         candidate_derivative_y, unused_scale,
+         converged) = _newton_plane_curve_sheet_with_derivatives(
              ctx, curve, next_x, prediction)
         correction = abs(candidate - prediction)
         motion = abs(candidate - current_y)
@@ -68,6 +71,7 @@ def _newton_plane_curve_segment_samples(
             return None
         current_x = next_x
         current_y = candidate
+        current_derivative_x = candidate_derivative_x
         current_derivative_y = candidate_derivative_y
         return candidate, abs(residual)
 

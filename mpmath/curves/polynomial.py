@@ -291,15 +291,26 @@ def _plane_polynomial_y_coefficients(ctx, curve, x):
     return coefficients
 
 
-def _newton_plane_curve_sheet(
-        ctx, curve, x, prediction, maxsteps=20):
-    """Correct one predicted sheet above ``x`` by Newton iteration.
+def _plane_polynomial_y_coefficients_with_x_derivative(ctx, curve, x):
+    """Return coefficients of ``F`` and ``F_x`` as polynomials in y."""
+    x_powers = [ctx.one]
+    for unused in range(curve.x_degree):
+        x_powers.append(x_powers[-1] * x)
+    coefficients = [ctx.zero] * (curve.y_degree + 1)
+    derivative_x = [ctx.zero] * (curve.y_degree + 1)
+    for x_power, y_power, coefficient in curve.terms:
+        coefficients[y_power] += coefficient * x_powers[x_power]
+        if x_power:
+            derivative_x[y_power] += (
+                x_power * coefficient * x_powers[x_power - 1])
+    if not coefficients[-1]:
+        raise ValueError(
+            "the projection degree drops at the requested x value")
+    return coefficients, derivative_x
 
-    Return ``(value, residual, derivative, scale, converged)``.  Evaluating
-    the fibre polynomial and its derivative together by Horner's rule is
-    substantially cheaper than resolving every sheet with ``polyroots``.
-    """
-    coefficients = _plane_polynomial_y_coefficients(ctx, curve, x)
+
+def _newton_polynomial_root(ctx, coefficients, prediction, maxsteps):
+    """Correct one predicted polynomial root and return Newton data."""
     candidate = ctx.convert(prediction)
     residual = derivative = ctx.zero
     scale = ctx.one
@@ -319,6 +330,35 @@ def _newton_plane_curve_sheet(
             break
         candidate -= residual / derivative
     return candidate, residual, derivative, scale, False
+
+
+def _newton_plane_curve_sheet(
+        ctx, curve, x, prediction, maxsteps=20):
+    """Correct one predicted sheet above ``x`` by Newton iteration.
+
+    Return ``(value, residual, derivative, scale, converged)``.  Evaluating
+    the fibre polynomial and its derivative together by Horner's rule is
+    substantially cheaper than resolving every sheet with ``polyroots``.
+    """
+    coefficients = _plane_polynomial_y_coefficients(ctx, curve, x)
+    return _newton_polynomial_root(
+        ctx, coefficients, prediction, maxsteps)
+
+
+def _newton_plane_curve_sheet_with_derivatives(
+        ctx, curve, x, prediction, maxsteps=20):
+    """Correct one sheet and return both implicit partial derivatives."""
+    coefficients, derivative_x_coefficients = (
+        _plane_polynomial_y_coefficients_with_x_derivative(
+            ctx, curve, x))
+    candidate, residual, derivative_y, scale, converged = (
+        _newton_polynomial_root(
+            ctx, coefficients, prediction, maxsteps))
+    derivative_x = derivative_x_coefficients[-1]
+    for coefficient in reversed(derivative_x_coefficients[:-1]):
+        derivative_x = derivative_x * candidate + coefficient
+    return (candidate, residual, derivative_x, derivative_y,
+            scale, converged)
 
 
 def _reciprocal_y_plane_curve(ctx, curve):

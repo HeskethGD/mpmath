@@ -278,17 +278,26 @@ def test_lifted_path_integrals_use_single_sheet_newton(monkeypatch):
     mp.dps = 30
     curve = _prepare_plane_curve(mp, {(0, 3): 1, (1, 0): -1})
     continuation = _continue_plane_curve_sheets(mp, curve, (1, 8))
+    evaluate_derivative = curve_integration._evaluate_plane_derivative
+    derivative_calls = []
 
     def reject_full_fibre_solve(*unused_args, **unused_kwargs):
         raise AssertionError("unexpected full-fibre solve")
 
+    def counted_derivative(*args, **kwargs):
+        derivative_calls.append(args[-1])
+        return evaluate_derivative(*args, **kwargs)
+
     monkeypatch.setattr(
         curve_integration, "_plane_curve_sheets", reject_full_fibre_solve)
+    monkeypatch.setattr(
+        curve_integration, "_evaluate_plane_derivative", counted_derivative)
     integral = _integrate_plane_curve_path(
         mp, curve, continuation, (lambda x, y: 1 / y,),
         sheet=2, quadrature_order=32)
     assert abs(integral.values[0] - mp.mpf("4.5")) < mp.mpf("1e-20")
     assert integral.max_sheet_residual < mp.mpf("1e-28")
+    assert derivative_calls == ["x", "y"]
 
 
 def test_lifted_path_integrals_fall_back_to_full_fibres(monkeypatch):
