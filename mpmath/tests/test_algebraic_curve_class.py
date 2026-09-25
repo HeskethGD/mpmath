@@ -1,10 +1,13 @@
 import warnings
 
 import mpmath
+import pytest
 from mpmath import (
     AlgebraicCurve, CurveBranchLocus, algebraic_curve, mp,
 )
 from mpmath.curves._stages import _stage_hyperelliptic_periods
+from mpmath.curves.differentials import _baker_differentials
+from mpmath.curves.polynomial import _prepare_plane_curve
 
 
 def test_unshipped_functional_curve_api_is_not_exported():
@@ -108,3 +111,72 @@ def test_algebraic_curve_chart_methods_preserve_curve_ownership():
         assert len(fibre) == 2
         place = curve.chart_place(chart, fibre[-1], mp.mpf("0.05"))
         assert place.chart is not None
+
+
+def test_automatic_trigonal_periods_match_supplied_basis():
+    # y^3 = x(x-1) has one Baker form, dx/(3*y**2).
+    with mp.workdps(20):
+        curve = mp.algebraic_curve({
+            (0, 3): 1, (2, 0): -1, (1, 0): 1,
+        })
+        automatic = curve.first_kind_periods()
+        explicit = curve.first_kind_periods(
+            (lambda x, y: 1 / (3 * y**2),))
+        assert automatic.engine == explicit.engine == "general"
+        assert automatic.marking == explicit.marking == "canonical-polygon"
+        assert automatic.differentials[0].numerator == (0, 0)
+        assert mp.norm(automatic.omega - explicit.omega) < mp.mpf("1e-18")
+        assert mp.norm(automatic.omega_prime - explicit.omega_prime) < mp.mpf("1e-18")
+        assert curve.validate(automatic).passed
+        assert mp.norm(curve.riemann_matrix() - automatic.tau) < mp.mpf("1e-18")
+
+
+def test_baker_basis_order_edge_rejection_and_genus_check():
+    with mp.workdps(25):
+        klein = _prepare_plane_curve(mp, {
+            (3, 1): 1, (0, 3): 1, (1, 0): 1,
+        })
+        forms = _baker_differentials(mp, klein, 3)
+        assert tuple(form.numerator for form in forms) == (
+            (0, 0), (1, 0), (0, 1))
+        with pytest.raises(ValueError, match="interior-point count"):
+            _baker_differentials(mp, klein, 2)
+
+        # The edge polynomial 1-2*t+t**2 has a repeated toric root.
+        kovalevskaya = _prepare_plane_curve(mp, {
+            (0, 0): 1, (1, 0): -5.2, (2, 0): 5.4,
+            (1, 2): -2, (2, 2): 6, (3, 2): -4, (2, 4): 1,
+        })
+        with pytest.raises(ValueError, match="degenerate edge"):
+            _baker_differentials(mp, kovalevskaya, 3)
+
+
+def test_klein_quartic_radial_order_and_automatic_periods():
+    # Two spokes cross the principal-argument cut at the chosen exterior
+    # base. Their product order must be measured about the inward ray.
+    with mp.workdps(30):
+        curve = mp.algebraic_curve({
+            (3, 1): 1, (0, 3): 1, (1, 0): 1,
+        })
+        monodromy = curve.monodromy
+        assert monodromy.product_identity
+        assert monodromy.genus == 3
+        assert curve.validate(monodromy).passed
+        assert curve.homology.intersection_rank == 6
+        periods = curve.first_kind_periods()
+        assert periods.genus == 3
+        assert curve.validate(periods).passed
+        assert periods.symmetry_residual < mp.mpf("1e-13")
+        f_y = lambda x, y: x**3 + 3 * y**2
+        supplied = curve.first_kind_periods((
+            lambda x, y: 1 / f_y(x, y),
+            lambda x, y: y / f_y(x, y),
+            lambda x, y: x / f_y(x, y),
+        ))
+        # Automatic order is (1, x, y); the supplied basis is (1, y, x).
+        reordered = mp.matrix([
+            [supplied.omega[row, column] for column in range(3)]
+            for row in (0, 2, 1)
+        ])
+        assert mp.norm(periods.omega - reordered) < mp.mpf("1e-25")
+        assert mp.norm(periods.tau - supplied.tau) < mp.mpf("1e-25")

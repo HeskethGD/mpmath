@@ -48,8 +48,12 @@ The transformed polynomial must currently have distinct roots. A repeated
 root describes a singular plane model; periods of its normalization and
 generalized-Jacobian data are not yet part of this dispatch.
 
-A general plane curve requires a user-supplied holomorphic basis containing
-one differential callable per genus. The current implementation uses
+For a general plane curve, the engine selects Baker first-kind differentials
+from the interior lattice points of its Newton polygon when the edge and
+genus checks pass. The basis consists of
+:math:`x^{a-1}y^{b-1}dx/F_y` for interior points :math:`(a,b)`, ordered by
+increasing :math:`b` and then :math:`a`. If those checks fail, supply one
+holomorphic differential callable per genus. The general engine uses
 projection onto the ``x`` coordinate.
 
 Expensive stages are computed lazily and cached using the numerical context,
@@ -101,6 +105,12 @@ curve instead requires an explicit
 basis and half-period conventions are equation (1.3) and Lemma 1.1 of
 [BEL1997]_.
 
+For general curves, period integration chooses a Gauss--Legendre order for
+each continued path segment from its distance to the finite branch values.
+This is an accuracy estimate for holomorphic differentials, not a rigorous
+quadrature error bound. Iterated integrals used for Riemann constants retain
+their separate fixed-order rule.
+
 Automatic hyperelliptic calculations use the deterministic Baker cycle
 marking. Supplying a callable first-kind basis is an explicit request for the
 general canonical-polygon engine. The returned ``engine`` and ``marking``
@@ -117,8 +127,9 @@ choose the positive principal square root independently on every real oval.
 
 The corresponding records are ``CurveFirstKindPeriods`` and
 ``CurveSecondKindPeriods``. Their ``differentials`` field is ``None`` for an
-automatic hyperelliptic basis and is the relevant supplied callable tuple for
-the general engine.
+automatic hyperelliptic basis. For the general engine it contains either the
+supplied callables or the selected Baker forms. Each selected form retains
+its lattice point, numerator powers and denominator terms.
 
 
 Places, paths and integration
@@ -164,8 +175,8 @@ Abel map and lattice reduction
 
 For an automatically classified hyperelliptic curve,
 ``second_kind_abel_map(target)`` returns a ``CurveSecondKindAbelMap`` record
-with the second-kind ``value``. With custom first-kind differentials, the
-general engine provides the same record when an explicit
+with the second-kind ``value``. The general engine provides the same record
+with either automatic or supplied first-kind forms when an explicit
 ``second_differentials`` basis is supplied. Lattice reduction uses the
 compatible first-kind Abel map internally and records the shared cycle shift
 as ``reduction_shift``.
@@ -189,4 +200,5 @@ The curve class is the common interface to the hyperelliptic period and
 Kleinian-function machinery described in :doc:`abelian` and to the general
 plane-curve pipeline. Internally the hyperelliptic engine supplies automatic
 differential bases and specialized integration, while the general engine
-supports smooth plane projections with caller-supplied differentials.
+supports smooth plane projections with automatic Baker differentials or a
+caller-supplied basis.

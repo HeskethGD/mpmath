@@ -124,8 +124,10 @@ class AlgebraicCurve:
         """Return first-kind half-periods and the Riemann matrix.
 
         Recognized hyperelliptic curves use their automatic basis and Baker
-        marking unless ``differentials`` is supplied, which selects the
-        general canonical-polygon engine.
+        marking. Other Newton-nondegenerate plane curves use an automatic
+        basis indexed by interior lattice points. Supplying ``differentials``
+        overrides either basis and selects the general canonical-polygon
+        engine.
         """
         state = _operations._curve_cache_state(self.ctx)
         if differentials is None:
@@ -146,8 +148,8 @@ class AlgebraicCurve:
         """Return second-kind half-periods and kappa.
 
         Recognized hyperelliptic curves use the automatic BEL basis. The
-        general engine requires both ``differentials`` and
-        ``second_differentials``.
+        general engine requires ``second_differentials``; its first-kind
+        basis may be supplied or selected automatically.
         """
         result = self._call(
             _operations.periods,
@@ -210,7 +212,8 @@ class AlgebraicCurve:
 
         The result is a ``CurveSecondKindAbelMap`` record. Recognized
         hyperelliptic curves use their automatic BEL basis; the general
-        engine requires both ``differentials`` and ``second_differentials``.
+        engine requires ``second_differentials`` and can select first-kind
+        forms automatically where Baker's construction applies.
         """
         return self._call(
             _operations.abel_map,

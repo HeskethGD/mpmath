@@ -2,6 +2,9 @@
 
 import itertools
 
+from ..polynomial import _polynomial_derivative, _polynomial_gcd
+
+
 def _hyperelliptic_coefficients(ctx, coefficients):
     """Validate polynomial coefficients in ascending order."""
     try:
@@ -20,7 +23,29 @@ def _hyperelliptic_coefficients(ctx, coefficients):
 
 def _hyperelliptic_roots(ctx, coefficients):
     """Return distinct roots ordered by real and then imaginary part."""
-    roots = ctx.polyroots(coefficients, maxsteps=200, error=False)
+    try:
+        roots = ctx.polyroots(coefficients, maxsteps=200, error=False)
+    except ctx.NoConvergence:
+        # A repeated factor cannot be resolved by giving Durand-Kerner more
+        # iterations. Check it before paying for guarded retry attempts.
+        with ctx.extraprec(30):
+            numeric_coefficients = tuple(ctx.convert(value)
+                                         for value in coefficients)
+            common = _polynomial_gcd(
+                ctx, numeric_coefficients,
+                _polynomial_derivative(ctx, numeric_coefficients))
+        if len(common) > 1:
+            raise ValueError("the polynomial must have distinct roots")
+        for guard_bits in (50, 100):
+            try:
+                roots = ctx.polyroots(
+                    coefficients, maxsteps=200,
+                    extraprec=guard_bits, error=False)
+                break
+            except ctx.NoConvergence:
+                continue
+        else:
+            raise ValueError("failed to resolve hyperelliptic roots")
     scale = max([ctx.one] + [abs(root) for root in roots])
     tolerance = ctx.sqrt(ctx.eps) * scale
     roots = sorted(roots, key=lambda root: (ctx.re(root), ctx.im(root)))
@@ -159,6 +184,3 @@ def _admissible_branch_vertex(ctx, target, roots, target_eps):
     if not candidates:
         raise ValueError("failed to find a branch-point path to target")
     return min(candidates)[1]
-
-
-

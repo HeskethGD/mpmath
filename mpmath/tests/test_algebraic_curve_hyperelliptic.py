@@ -65,6 +65,27 @@ def test_hyperelliptic_periods_genus_three():
         [mp.im(tau[i, j]) for j in range(3)] for i in range(3)])
     mp.cholesky(imaginary_tau)
 
+
+def test_generic_genus_three_roots_use_guarded_retry():
+    # Seven distinct positive roots defeat the default polyroots guard.
+    with mp.workdps(30):
+        coefficients = (-510510, 716167, -390238, 107315,
+                        -16186, 1349, -58, 1)
+        roots, unused_tolerance = hyperelliptic_model._hyperelliptic_roots(
+            mp, coefficients)
+        assert roots == tuple(map(mp.mpf, (2, 3, 5, 7, 11, 13, 17)))
+        omega, omega_prime, tau = hyperelliptic_periods(coefficients)
+        assert omega.rows == 3
+        assert mp.norm(omega * tau - omega_prime) < mp.mpf("1e-27")
+
+
+def test_repeated_hyperelliptic_root_is_rejected_after_solver_failure():
+    with mp.workdps(30):
+        # (x-4)**2 * (x-1) * (x-2) * (x-3).
+        coefficients = (-96, 224, -190, 75, -14, 1)
+        with pytest.raises(ValueError, match="distinct roots"):
+            hyperelliptic_model._hyperelliptic_roots(mp, coefficients)
+
 def test_hyperelliptic_second_kind_genus_one():
     # BEL (1997), equation (1.3), gives dr = x dx/(4y) for this odd cubic.
     # Its period ratio is the exponential coefficient in the conventional

@@ -1259,8 +1259,13 @@ def _radial_plane_curve_monodromy(
         _radial_branch_geometry(ctx, points, base_point=base_point))
     base_sheets = _ordered_plane_curve_sheets(ctx, curve, base_point)
     geometry = tuple(zip(points, radii))
+    # All branch values lie inside the radial center's spread circle. Measure
+    # angles from the inward ray so the principal-argument cut cannot split
+    # one cyclic block of finite spokes across -pi and pi.
+    inward = center - base_point
     product_geometry = tuple(sorted(
-        geometry, key=lambda item: ctx.arg(item[0] - base_point)))
+        geometry, key=lambda item: ctx.arg(
+            (item[0] - base_point) / inward)))
     finite_generators = []
     for point, radius in product_geometry:
         path = _radial_branch_loop_path(

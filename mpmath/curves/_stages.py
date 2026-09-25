@@ -7,6 +7,7 @@ from ._hyperelliptic.model import (
     _hyperelliptic_coefficients, _hyperelliptic_roots,
 )
 from ._context import _curve_cache_state
+from .differentials import _baker_differentials
 from .integration import _integrate_lifted_path_chain
 from .jacobian import _canonical_polygon_riemann_constant
 from .monodromy import (
@@ -90,6 +91,13 @@ def _stage_monodromy(ctx, curve):
         max_refinements=_MONODROMY_MAX_REFINEMENTS)
 
 
+@_curve_stage_cache(16)
+def _stage_baker_differentials(ctx, key):
+    """Cache the structured Baker basis for the current numerical state."""
+    curve, genus = key
+    return _baker_differentials(ctx, curve, genus)
+
+
 @_curve_stage_cache(8)
 def _stage_monodromy_graph(ctx, curve):
     """Return ``(lifted_graph, symplectic_reduction)`` for a curve."""
@@ -124,6 +132,8 @@ def _stage_cycle_integrals(ctx, key):
     curve, forms, quadrature_order = key
     forms = tuple(forms)
     genus = _stage_monodromy(ctx, curve).genus
+    branch_values = (_stage_branch_locus(ctx, curve)[0]
+                     if quadrature_order == "geometry" else None)
     chains = _stage_canonical_cycles(ctx, curve)
     columns = []
     max_sheet_residual = ctx.zero
@@ -131,7 +141,7 @@ def _stage_cycle_integrals(ctx, key):
     for chain in chains[:2 * genus]:
         integral = _integrate_lifted_path_chain(
             ctx, curve, chain, forms, quadrature_order=quadrature_order,
-            integral_cache=integral_cache)
+            integral_cache=integral_cache, branch_values=branch_values)
         columns.append(integral.values)
         max_sheet_residual = max(
             max_sheet_residual, integral.max_sheet_residual)
@@ -156,7 +166,9 @@ def _stage_riemann_constant(ctx, key):
     tau = (raw_tau + raw_tau.T) / 2
     polygon = _stage_canonical_polygon(ctx, curve)
     return _canonical_polygon_riemann_constant(
-        ctx, curve, polygon, forms, a_periods, tau, quadrature_order)
+        ctx, curve, polygon, forms, a_periods, tau,
+        max(12, ctx.dps // 2) if quadrature_order == "geometry"
+        else quadrature_order)
 
 
 def _curve_differential_sequence(differentials, name):

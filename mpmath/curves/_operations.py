@@ -11,7 +11,8 @@ from ._records import (
     CurveSecondKindPeriods, CurveValidation, _PlaneCurvePlace,
 )
 from ._stages import (
-    _curve_differential_sequence, _stage_branch_locus,
+    _curve_differential_sequence, _stage_baker_differentials,
+    _stage_branch_locus,
     _stage_canonical_polygon, _stage_cycle_integrals, _stage_monodromy,
     _stage_hyperelliptic_homology, _stage_hyperelliptic_periods,
     _stage_monodromy_graph, _stage_riemann_constant,
@@ -37,6 +38,15 @@ from .polynomial import _ordered_plane_curve_sheets
 
 # Curve operations
 # ----------------
+
+
+def _general_first_kind_forms(ctx, prepared, differentials, monodromy):
+    """Select automatic Baker forms or validate a supplied basis."""
+    if differentials is None:
+        return _stage_baker_differentials(
+            ctx, (prepared, monodromy.genus))
+    return _curve_differential_sequence(
+        differentials, "differentials")
 
 
 def branch_locus(ctx, curve):
@@ -223,9 +233,10 @@ def periods(ctx, curve, differentials=None, *, second_kind=False,
     :meth:`AlgebraicCurve.second_kind_periods` also computes the canonical
     BEL second-kind periods for the automatic hyperelliptic basis. The
     :meth:`AlgebraicCurve.first_kind_periods` method computes only first-kind
-    data. A general plane curve requires ``differentials``,
+    data. A general plane curve uses Baker's Newton-polygon first-kind basis
+    when its applicability checks pass. Otherwise supply ``differentials``,
     a sequence of one holomorphic differential callable ``f(x, y)`` per
-    genus, supplying the coefficient of ``dx``.  Optional
+    genus, returning the coefficient of ``dx``. Optional
     ``second_differentials`` supply the same number of second-kind forms;
     they are integrated on the same cycles, with the classical convention
     ``2*eta = -integral_a(dr)``.
@@ -234,7 +245,8 @@ def periods(ctx, curve, differentials=None, *, second_kind=False,
     ``omega``, ``omega_prime`` and ``tau``. ``second_kind_periods`` returns a
     separate ``CurveSecondKindPeriods`` record with ``eta``, ``eta_prime``
     and ``kappa``. Their ``engine`` and ``marking`` fields distinguish
-    automatic Baker-marked data from custom canonical-polygon data. A
+    the specialized Baker homology marking from the general canonical-polygon
+    marking. A
     non-positive-definite normalized period matrix raises ``ValueError``,
     because it always indicates an invalid differential count or basis.
 
@@ -248,8 +260,7 @@ def periods(ctx, curve, differentials=None, *, second_kind=False,
         >>> mp.re(data.tau[0, 0]), mp.im(data.tau[0, 0])
         (mpf('0.0'), mpf('1.0'))
 
-    A general plane curve needs a supplied holomorphic basis, given as
-    callables returning the coefficient of ``dx``::
+    A supplied basis overrides automatic selection::
 
         >>> curve = algebraic_curve({(0, 2): 1, (1, 0): 1, (3, 0): -1})
         >>> data = curve.first_kind_periods((lambda x, y: 1 / y,))
@@ -294,8 +305,6 @@ def periods(ctx, curve, differentials=None, *, second_kind=False,
             "second_kind_periods requires second_differentials with the "
             "general engine")
 
-    first_kind = _curve_differential_sequence(
-        differentials, "differentials")
     if second_differentials is None:
         second_forms = ()
     else:
@@ -303,6 +312,8 @@ def periods(ctx, curve, differentials=None, *, second_kind=False,
             second_differentials, "second_differentials")
     monodromy = _stage_monodromy(ctx, prepared)
     genus = monodromy.genus
+    first_kind = _general_first_kind_forms(
+        ctx, prepared, differentials, monodromy)
     if len(first_kind) != genus:
         raise ValueError(
             "differentials must contain one form per genus")
@@ -310,7 +321,7 @@ def periods(ctx, curve, differentials=None, *, second_kind=False,
         raise ValueError(
             "second_differentials must contain one form per genus")
     forms = first_kind + second_forms
-    quadrature_order = max(12, ctx.dps // 2)
+    quadrature_order = "geometry"
     columns, max_sheet_residual = _stage_cycle_integrals(
         ctx, (prepared, forms, quadrature_order))
 
@@ -377,7 +388,7 @@ def riemann_constant(ctx, curve, differentials=None, *,
     ``base_place`` (``None`` denotes the engine's natural base), and the
     maximum sheet residual of the direct contour integrations.
 
-    For a general plane curve, ``differentials`` supplies one holomorphic
+    For a general plane curve, ``differentials`` may supply one holomorphic
     differential per genus, in exactly the basis accepted by
     :meth:`AlgebraicCurve.first_kind_periods`. The value is computed directly from the
     certified canonical polygon and level-two contour integrals; theta
@@ -426,11 +437,11 @@ def riemann_constant(ctx, curve, differentials=None, *,
             value, characteristic, base_place, None,
             "hyperelliptic", "baker")
 
-    forms = _curve_differential_sequence(
-        differentials, "differentials")
+    forms = (_general_first_kind_forms(
+        ctx, prepared, differentials, _stage_monodromy(ctx, prepared)))
     periods_data = periods(ctx, curve, forms)
     genus = periods_data.genus
-    quadrature_order = max(12, ctx.dps // 2)
+    quadrature_order = "geometry"
     value, cycle_integrals, unused_normalised = _stage_riemann_constant(
         ctx, (prepared, forms, quadrature_order))
     if base_place is not None:
@@ -804,8 +815,9 @@ def abel_map(ctx, curve, target, differentials=None, *, second_kind=False,
     structurally hyperelliptic equation without supplied differentials is
     dispatched to the specialized Abel-map engine, including the ordinate
     change required after completing the square.  A general plane curve
-    requires ``differentials``, one first-kind callable per genus, and returns
-    the unnormalized Abelian coordinates they integrate to.
+    selects a first-kind basis automatically when Baker's construction
+    applies, or accepts one callable per genus, and returns the
+    unnormalized Abelian coordinates they integrate to.
     Chart-backed places require the general pipeline.
     :meth:`AlgebraicCurve.second_kind_abel_map` returns the second-kind value
     in a ``CurveSecondKindAbelMap`` record. The general engine requires an
@@ -885,8 +897,6 @@ def abel_map(ctx, curve, target, differentials=None, *, second_kind=False,
                 ctx, result, periods(ctx, curve)).value
         return result
 
-    forms = _curve_differential_sequence(
-        differentials, "differentials")
     if second_differentials is None:
         second_forms = ()
     else:
@@ -898,6 +908,8 @@ def abel_map(ctx, curve, target, differentials=None, *, second_kind=False,
             "general engine")
     monodromy = _stage_monodromy(ctx, prepared)
     genus = monodromy.genus
+    forms = _general_first_kind_forms(
+        ctx, prepared, differentials, monodromy)
     if len(forms) != genus:
         raise ValueError(
             "differentials must contain one form per genus")

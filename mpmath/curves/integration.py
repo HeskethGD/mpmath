@@ -112,9 +112,34 @@ def _plane_curve_segment_samples(
         parameters, sheet)
 
 
+def _geometric_quadrature_order(ctx, left_x, right_x, branch_values):
+    """Estimate Gauss order from the nearest projected branch singularity.
+
+    A branch value maps to ``z`` in the standard interval [-1, 1].  The
+    Bernstein ellipse through ``z`` has parameter ``rho``; an analytic
+    integrand's Gauss error then decays approximately as ``rho**(-2*n)``.
+    The extra digits allow for the unknown prefactor and sums of segments.
+    """
+    midpoint = (left_x + right_x) / 2
+    half_width = (right_x - left_x) / 2
+    ellipse = min(
+        (abs((branch - midpoint) / half_width - 1)
+         + abs((branch - midpoint) / half_width + 1)) / 2
+        for branch in branch_values)
+    rho = ellipse + ctx.sqrt(ellipse * ellipse - 1)
+    if rho <= 1:
+        raise ValueError("integration segment meets a branch value")
+    estimate = int(ctx.ceil(
+        (ctx.dps + 5) * ctx.log(10) / (2 * ctx.log(rho))))
+    for order in (8, 12, 16, 24, 32, 48, 64, 96, 128):
+        if estimate <= order:
+            return order
+    return 32 * ((estimate + 31) // 32)
+
+
 def _integrate_plane_curve_path(
         ctx, curve, continuation, differentials, sheet=0,
-        quadrature_order=None):
+        quadrature_order=None, branch_values=None):
     """Integrate coefficients of dx along one continued sheet.
 
     Each differential is a callable ``differential(x, y)`` returning the
@@ -137,16 +162,23 @@ def _integrate_plane_curve_path(
     if any(len(fibre) != curve.y_degree
            for fibre in continuation.fibres):
         raise ValueError("continuation fibres have the wrong degree")
+    geometric = quadrature_order == "geometry"
+    if geometric and not branch_values:
+        raise ValueError("geometry quadrature requires branch values")
     if quadrature_order is None:
         quadrature_order = max(16, 2 * ctx.dps)
-    if not isinstance(quadrature_order, int) or quadrature_order < 2:
+    if not geometric and (not isinstance(quadrature_order, int)
+                          or quadrature_order < 2):
         raise ValueError("quadrature_order must be an integer at least 2")
-    nodes, weights = ctx.gauss_quadrature(
-        quadrature_order, "legendre")
-    parameters = tuple((nodes[index] + 1) / 2
-                       for index in range(quadrature_order))
-    weights = tuple(weights[index] / 2
-                    for index in range(quadrature_order))
+    rules = {}
+
+    def rule(order):
+        if order not in rules:
+            nodes, weights = ctx.gauss_quadrature(order, "legendre")
+            rules[order] = (
+                tuple((nodes[index] + 1) / 2 for index in range(order)),
+                tuple(weights[index] / 2 for index in range(order)))
+        return rules[order]
 
     values = [ctx.zero] * len(differentials)
     max_sheet_residual = ctx.zero
@@ -158,6 +190,10 @@ def _integrate_plane_curve_path(
             continue
         left_fibre = continuation.fibres[segment]
         right_fibre = continuation.fibres[segment + 1]
+        order = (_geometric_quadrature_order(
+            ctx, left_x, right_x, branch_values)
+            if geometric else quadrature_order)
+        parameters, weights = rule(order)
 
         contributions = [[] for unused in differentials]
         samples = _plane_curve_segment_samples(
@@ -411,7 +447,7 @@ def _integrate_plane_curve_branch(
 
 def _integrate_lifted_path_chain(
         ctx, curve, chain, differentials, quadrature_order=None,
-        integral_cache=None):
+        integral_cache=None, branch_values=None):
     """Integrate supplied differentials termwise over a lifted-path chain.
 
     ``integral_cache`` may be a stage-local dictionary shared by chains that
@@ -438,7 +474,8 @@ def _integrate_lifted_path_chain(
         else:
             integral = _integrate_plane_curve_path(
                 ctx, curve, term.continuation, differentials,
-                sheet=term.sheet, quadrature_order=quadrature_order)
+                sheet=term.sheet, quadrature_order=quadrature_order,
+                branch_values=branch_values)
             if integral_cache is not None:
                 # Retaining the continuation both guards against object-ID
                 # reuse and documents that identity, rather than structural
