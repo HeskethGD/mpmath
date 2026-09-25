@@ -4,8 +4,8 @@ Algebraic curves
 The ``AlgebraicCurve`` class represents a smooth plane algebraic curve and
 provides a lazy numerical pipeline for its topology, periods and Jacobian
 data. Arbitrary-precision continuation of the sheets supplies monodromy, a
-lifted ribbon graph supplies homology, and validated quadrature supplies the
-periods.
+lifted ribbon graph supplies homology, and precision-aware quadrature supplies
+the periods.
 
 Create a curve with the active mpmath context::
 
@@ -105,10 +105,28 @@ curve instead requires an explicit
 basis and half-period conventions are equation (1.3) and Lemma 1.1 of
 [BEL1997]_.
 
+Automatic differential evaluation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The general Baker basis is retained internally as numerator monomials over
+one common :math:`F_y` denominator. All automatic forms are evaluated
+together at each lifted quadrature node, sharing that denominator. Supplied
+callables retain the fully general one-callable-per-form path.
+
+The corresponding records are ``CurveFirstKindPeriods`` and
+``CurveSecondKindPeriods``. Their ``differentials`` field is ``None`` for an
+automatic hyperelliptic basis. For the general engine it contains either the
+supplied callables or callable adapters for the selected Baker forms. An
+automatic adapter exposes its ``numerator`` powers for inspection.
+
+Period quadrature policy
+~~~~~~~~~~~~~~~~~~~~~~~~
+
 For general curves, period integration chooses a Gauss--Legendre order for
 each continued path segment from its distance to the finite branch values.
 This is an accuracy estimate for holomorphic differentials, not a rigorous
-quadrature error bound. Iterated integrals used for Riemann constants retain
+quadrature error bound. Poles of supplied meromorphic differentials are not
+part of that estimate. Iterated integrals used for Riemann constants retain
 their separate fixed-order rule.
 
 Automatic hyperelliptic calculations use the deterministic Baker cycle
@@ -124,13 +142,6 @@ rather than vary continuously. For real ordered roots, the square-root sheet
 is continued from the interval to the right of every branch point. Moving
 left across a root multiplies it by :math:`i`; it is therefore incorrect to
 choose the positive principal square root independently on every real oval.
-
-The corresponding records are ``CurveFirstKindPeriods`` and
-``CurveSecondKindPeriods``. Their ``differentials`` field is ``None`` for an
-automatic hyperelliptic basis. For the general engine it contains either the
-supplied callables or the selected Baker forms. Each selected form retains
-its lattice point, numerator powers and denominator terms.
-
 
 Places, paths and integration
 .............................

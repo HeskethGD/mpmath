@@ -69,28 +69,36 @@ def _check_newton_edges(ctx, curve, polygon):
                 "supply first-kind differentials")
 
 
-class _BakerDifferential:
-    """Callable monomial numerator over the shared polynomial F_y."""
+def _evaluate_baker_basis(ctx, basis, x, y):
+    """Evaluate all ``h/F_y`` forms in a structured Baker basis."""
+    numerators, denominator_terms = basis
+    denominator = ctx.fsum(
+        coefficient * x**x_power * y**y_power
+        for x_power, y_power, coefficient in denominator_terms)
+    return tuple(
+        x**x_power * y**y_power / denominator
+        for x_power, y_power in numerators)
 
-    def __init__(self, ctx, curve, lattice_point):
-        self.ctx = ctx
-        self.lattice_point = lattice_point
-        self.numerator = (lattice_point[0] - 1, lattice_point[1] - 1)
-        self.denominator = tuple(
-            (x, y - 1, y * coefficient)
-            for x, y, coefficient in curve.terms if y)
 
-    def __call__(self, x, y):
-        ctx = self.ctx
+def _baker_callable(ctx, basis, index):
+    """Adapt one structured Baker form to the public callable convention."""
+    numerator = basis[0][index]
+
+    def differential(x, y):
         denominator = ctx.fsum(
             coefficient * x**x_power * y**y_power
-            for x_power, y_power, coefficient in self.denominator)
-        return (x**self.numerator[0] * y**self.numerator[1]
-                / denominator)
+            for x_power, y_power, coefficient in basis[1])
+        return x**numerator[0] * y**numerator[1] / denominator
+
+    # Automatic forms are returned in result records alongside supplied
+    # callables.  Retain the useful description without exposing a private
+    # implementation class.
+    differential.numerator = numerator
+    return differential
 
 
-def _baker_differentials(ctx, curve, genus):
-    """Construct Baker forms when Newton nondegeneracy and genus agree."""
+def _baker_basis(ctx, curve, genus):
+    """Construct numerator exponents and common ``F_y`` denominator terms."""
     if genus == 0:
         raise ValueError("a genus-zero curve has no first-kind periods")
     polygon = _newton_polygon(curve)
@@ -100,4 +108,16 @@ def _baker_differentials(ctx, curve, genus):
         raise ValueError(
             "Newton interior-point count differs from the curve genus; "
             "supply first-kind differentials")
-    return tuple(_BakerDifferential(ctx, curve, point) for point in points)
+    numerators = tuple((x - 1, y - 1) for x, y in points)
+    denominator_terms = tuple(
+        (x, y - 1, y * coefficient)
+        for x, y, coefficient in curve.terms if y)
+    return numerators, denominator_terms
+
+
+def _baker_differentials(ctx, curve, genus):
+    """Return callable adapters for a validated structured Baker basis."""
+    basis = _baker_basis(ctx, curve, genus)
+    return tuple(
+        _baker_callable(ctx, basis, index)
+        for index in range(len(basis[0])))

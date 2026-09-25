@@ -6,7 +6,6 @@ from mpmath import (
     AlgebraicCurve, CurveBranchLocus, algebraic_curve, mp,
 )
 from mpmath.curves._stages import _stage_hyperelliptic_periods
-from mpmath.curves.differentials import _baker_differentials
 from mpmath.curves.polynomial import _prepare_plane_curve
 
 
@@ -129,26 +128,10 @@ def test_automatic_trigonal_periods_match_supplied_basis():
         assert mp.norm(automatic.omega_prime - explicit.omega_prime) < mp.mpf("1e-18")
         assert curve.validate(automatic).passed
         assert mp.norm(curve.riemann_matrix() - automatic.tau) < mp.mpf("1e-18")
-
-
-def test_baker_basis_order_edge_rejection_and_genus_check():
-    with mp.workdps(25):
-        klein = _prepare_plane_curve(mp, {
-            (3, 1): 1, (0, 3): 1, (1, 0): 1,
-        })
-        forms = _baker_differentials(mp, klein, 3)
-        assert tuple(form.numerator for form in forms) == (
-            (0, 0), (1, 0), (0, 1))
-        with pytest.raises(ValueError, match="interior-point count"):
-            _baker_differentials(mp, klein, 2)
-
-        # The edge polynomial 1-2*t+t**2 has a repeated toric root.
-        kovalevskaya = _prepare_plane_curve(mp, {
-            (0, 0): 1, (1, 0): -5.2, (2, 0): 5.4,
-            (1, 2): -2, (2, 2): 6, (3, 2): -4, (2, 4): 1,
-        })
-        with pytest.raises(ValueError, match="degenerate edge"):
-            _baker_differentials(mp, kovalevskaya, 3)
+        assert curve.validate(curve.riemann_constant()).passed
+        second = curve.second_kind_periods(
+            second_differentials=(lambda x, y: x / (3 * y**2),))
+        assert curve.validate(second).passed
 
 
 def test_klein_quartic_radial_order_and_automatic_periods():

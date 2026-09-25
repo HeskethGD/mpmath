@@ -8,6 +8,7 @@ from .polynomial import (
     _minimum_cost_assignment, _newton_plane_curve_sheet_with_derivatives,
     _plane_curve_sheets, _polynomial_multiply,
 )
+from .quadrature import _geometric_quadrature_order
 
 # Lifted-path integration
 # -----------------------
@@ -112,41 +113,19 @@ def _plane_curve_segment_samples(
         parameters, sheet)
 
 
-def _geometric_quadrature_order(ctx, left_x, right_x, branch_values):
-    """Estimate Gauss order from the nearest projected branch singularity.
-
-    A branch value maps to ``z`` in the standard interval [-1, 1].  The
-    Bernstein ellipse through ``z`` has parameter ``rho``; an analytic
-    integrand's Gauss error then decays approximately as ``rho**(-2*n)``.
-    The extra digits allow for the unknown prefactor and sums of segments.
-    """
-    midpoint = (left_x + right_x) / 2
-    half_width = (right_x - left_x) / 2
-    ellipse = min(
-        (abs((branch - midpoint) / half_width - 1)
-         + abs((branch - midpoint) / half_width + 1)) / 2
-        for branch in branch_values)
-    rho = ellipse + ctx.sqrt(ellipse * ellipse - 1)
-    if rho <= 1:
-        raise ValueError("integration segment meets a branch value")
-    estimate = int(ctx.ceil(
-        (ctx.dps + 5) * ctx.log(10) / (2 * ctx.log(rho))))
-    for order in (8, 12, 16, 24, 32, 48, 64, 96, 128):
-        if estimate <= order:
-            return order
-    return 32 * ((estimate + 31) // 32)
-
-
 def _integrate_plane_curve_path(
         ctx, curve, continuation, differentials, sheet=0,
-        quadrature_order=None, branch_values=None):
+        quadrature_order=None, branch_values=None,
+        differential_evaluator=None):
     """Integrate coefficients of dx along one continued sheet.
 
     Each differential is a callable ``differential(x, y)`` returning the
-    coefficient of ``dx``.  Ordered quadrature nodes use predictor-corrector
-    continuation of the selected sheet, certified against each segment's
-    known endpoint fibre. Unsafe segments fall back to independent full-fibre
-    solves matched against the interpolated endpoint fibres.
+    coefficient of ``dx``.  An internal ``differential_evaluator`` may return
+    all coefficients together when their algebraic structure permits shared
+    work.  Ordered quadrature nodes use predictor-corrector continuation of
+    the selected sheet, certified against each segment's known endpoint
+    fibre. Unsafe segments fall back to independent full-fibre solves matched
+    against the interpolated endpoint fibres.
     """
     try:
         differentials = tuple(differentials)
@@ -155,6 +134,9 @@ def _integrate_plane_curve_path(
     if not differentials or any(not callable(value)
                                 for value in differentials):
         raise ValueError("differentials must be a sequence of callables")
+    if (differential_evaluator is not None
+            and not callable(differential_evaluator)):
+        raise ValueError("differential_evaluator must be callable")
     if not isinstance(sheet, int) or not 0 <= sheet < curve.y_degree:
         raise ValueError("sheet must index the initial fibre")
     if len(continuation.path) != len(continuation.fibres):
@@ -180,32 +162,50 @@ def _integrate_plane_curve_path(
                 tuple(weights[index] / 2 for index in range(order)))
         return rules[order]
 
+    def integrate_segment(
+            left_x, right_x, left_fibre, right_fibre, order):
+        parameters, weights = rule(order)
+        contributions = [[] for unused in differentials]
+        samples = _plane_curve_segment_samples(
+            ctx, curve, left_x, right_x, left_fibre, right_fibre,
+            parameters, sheet)
+        residual = ctx.zero
+        for (x, y, sample_residual), weight in zip(samples, weights):
+            residual = max(residual, sample_residual)
+            sample_values = (tuple(differential(x, y)
+                                   for differential in differentials)
+                             if differential_evaluator is None else
+                             tuple(differential_evaluator(x, y)))
+            if len(sample_values) != len(differentials):
+                raise ValueError(
+                    "differential_evaluator returned the wrong number "
+                    "of values")
+            for index, value in enumerate(sample_values):
+                contributions[index].append(
+                    weight * value)
+        delta_x = right_x - left_x
+        return (tuple(delta_x * ctx.fsum(terms)
+                      for terms in contributions), residual)
+
     values = [ctx.zero] * len(differentials)
     max_sheet_residual = ctx.zero
     for segment in range(len(continuation.path) - 1):
         left_x = continuation.path[segment]
         right_x = continuation.path[segment + 1]
-        delta_x = right_x - left_x
-        if not delta_x:
+        if left_x == right_x:
             continue
         left_fibre = continuation.fibres[segment]
         right_fibre = continuation.fibres[segment + 1]
-        order = (_geometric_quadrature_order(
-            ctx, left_x, right_x, branch_values)
-            if geometric else quadrature_order)
-        parameters, weights = rule(order)
-
-        contributions = [[] for unused in differentials]
-        samples = _plane_curve_segment_samples(
-            ctx, curve, left_x, right_x, left_fibre, right_fibre,
-            parameters, sheet)
-        for (x, y, residual), weight in zip(samples, weights):
-            max_sheet_residual = max(max_sheet_residual, residual)
-            for index, differential in enumerate(differentials):
-                contributions[index].append(
-                    weight * differential(x, y))
-        for index, terms in enumerate(contributions):
-            values[index] += delta_x * ctx.fsum(terms)
+        if geometric:
+            order = _geometric_quadrature_order(
+                ctx, left_x, right_x, branch_values)
+        else:
+            order = quadrature_order
+        segment_values, residual = integrate_segment(
+            left_x, right_x, left_fibre, right_fibre, order)
+        max_sheet_residual = max(max_sheet_residual, residual)
+        for index, value in enumerate(segment_values):
+            values[index] += value
 
     return _PathIntegrals(
         values=tuple(values),
@@ -447,7 +447,8 @@ def _integrate_plane_curve_branch(
 
 def _integrate_lifted_path_chain(
         ctx, curve, chain, differentials, quadrature_order=None,
-        integral_cache=None, branch_values=None):
+        integral_cache=None, branch_values=None,
+        differential_evaluator=None):
     """Integrate supplied differentials termwise over a lifted-path chain.
 
     ``integral_cache`` may be a stage-local dictionary shared by chains that
@@ -475,7 +476,8 @@ def _integrate_lifted_path_chain(
             integral = _integrate_plane_curve_path(
                 ctx, curve, term.continuation, differentials,
                 sheet=term.sheet, quadrature_order=quadrature_order,
-                branch_values=branch_values)
+                branch_values=branch_values,
+                differential_evaluator=differential_evaluator)
             if integral_cache is not None:
                 # Retaining the continuation both guards against object-ID
                 # reuse and documents that identity, rather than structural

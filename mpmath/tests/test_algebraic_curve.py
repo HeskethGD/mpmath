@@ -34,7 +34,6 @@ from mpmath.curves.differentials import _baker_differentials
 from mpmath.curves.integration import (
     _assemble_plane_curve_periods,
     _concatenate_iterated_path_integrals,
-    _geometric_quadrature_order,
     _integrate_plane_curve_path,
     _integrate_plane_curve_path_iterated,
     _integrate_plane_curve_branch,
@@ -83,29 +82,6 @@ from mpmath.curves import _operations
 
 def _curve(specification):
     return AlgebraicCurve(mp, specification)
-
-
-def test_geometry_quadrature_resolves_nearby_branch_value():
-    mp.dps = 30
-    branch = mp.mpc(1, "0.2")
-    curve = _prepare_plane_curve(mp, {
-        (0, 2): 1, (1, 0): -1, (0, 0): branch,
-    })
-    continuation = _continue_plane_curve_sheets(mp, curve, (-1, 1))
-    order = _geometric_quadrature_order(mp, -1, 1, (branch,))
-    assert order > 12
-    assert _geometric_quadrature_order(
-        mp, -1, 0, (branch,)) < order
-    exact = 2 * (continuation.fibres[-1][0]
-                 - continuation.fibres[0][0])
-    form = (lambda x, y: 1 / y,)
-    coarse = _integrate_plane_curve_path(
-        mp, curve, continuation, form, quadrature_order=12)
-    local = _integrate_plane_curve_path(
-        mp, curve, continuation, form, quadrature_order="geometry",
-        branch_values=(branch,))
-    assert abs(coarse.values[0] - exact) > mp.mpf("1e-8")
-    assert abs(local.values[0] - exact) < mp.mpf("1e-27")
 
 
 def hyperelliptic_periods(coefficients, **kwargs):

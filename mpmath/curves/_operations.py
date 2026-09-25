@@ -45,8 +45,8 @@ def _general_first_kind_forms(ctx, prepared, differentials, monodromy):
     if differentials is None:
         return _stage_baker_differentials(
             ctx, (prepared, monodromy.genus))
-    return _curve_differential_sequence(
-        differentials, "differentials")
+    return (_curve_differential_sequence(
+        differentials, "differentials"), None)
 
 
 def branch_locus(ctx, curve):
@@ -312,7 +312,7 @@ def periods(ctx, curve, differentials=None, *, second_kind=False,
             second_differentials, "second_differentials")
     monodromy = _stage_monodromy(ctx, prepared)
     genus = monodromy.genus
-    first_kind = _general_first_kind_forms(
+    first_kind, baker_basis = _general_first_kind_forms(
         ctx, prepared, differentials, monodromy)
     if len(first_kind) != genus:
         raise ValueError(
@@ -323,7 +323,7 @@ def periods(ctx, curve, differentials=None, *, second_kind=False,
     forms = first_kind + second_forms
     quadrature_order = "geometry"
     columns, max_sheet_residual = _stage_cycle_integrals(
-        ctx, (prepared, forms, quadrature_order))
+        ctx, (prepared, forms, quadrature_order, baker_basis))
 
     periods = _period_matrix_from_columns(
         ctx, columns, 0, genus, genus)
@@ -437,13 +437,14 @@ def riemann_constant(ctx, curve, differentials=None, *,
             value, characteristic, base_place, None,
             "hyperelliptic", "baker")
 
-    forms = (_general_first_kind_forms(
-        ctx, prepared, differentials, _stage_monodromy(ctx, prepared)))
-    periods_data = periods(ctx, curve, forms)
+    forms, baker_basis = _general_first_kind_forms(
+        ctx, prepared, differentials, _stage_monodromy(ctx, prepared))
+    periods_data = periods(
+        ctx, curve, None if baker_basis is not None else forms)
     genus = periods_data.genus
     quadrature_order = "geometry"
     value, cycle_integrals, unused_normalised = _stage_riemann_constant(
-        ctx, (prepared, forms, quadrature_order))
+        ctx, (prepared, forms, quadrature_order, baker_basis))
     if base_place is not None:
         displacement = abel_map(
             ctx, curve, base_place, forms)
@@ -908,7 +909,7 @@ def abel_map(ctx, curve, target, differentials=None, *, second_kind=False,
             "general engine")
     monodromy = _stage_monodromy(ctx, prepared)
     genus = monodromy.genus
-    forms = _general_first_kind_forms(
+    forms, unused_baker_basis = _general_first_kind_forms(
         ctx, prepared, differentials, monodromy)
     if len(forms) != genus:
         raise ValueError(
