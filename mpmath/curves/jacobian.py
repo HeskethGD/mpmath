@@ -306,7 +306,9 @@ def _finite_base_abel_value(
             ctx, connector, continuation)
     integral = _integrate_plane_curve_path(
         ctx, curve, continuation, normalised_differentials, sheet=0,
-        quadrature_order=quadrature_order)
+        quadrature_order=quadrature_order,
+        branch_values=(branch_points
+                       if quadrature_order == "geometry" else None))
     return ctx.matrix(integral.values)
 
 

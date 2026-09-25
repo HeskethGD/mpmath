@@ -156,6 +156,11 @@ Places over a finite regular value are labelled by ``fibre``. A ``CurvePath``
 is bound to its curve and numerical context, and can be passed to ``integral``
 with either one differential or a sequence of differentials.
 
+General first-kind Abel maps use the same branch-geometry quadrature policy
+as first-kind periods. Supplied second-kind differentials may introduce poles
+that are not visible in the curve's branch locus, so their open integrals
+retain a separate fixed-order path pending a checked meromorphic rule.
+
 
 Explicit local charts
 .....................

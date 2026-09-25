@@ -1,3 +1,4 @@
+import mpmath.curves.jacobian as curve_jacobian
 from mpmath import mp
 from mpmath.curves.continuation import _continue_plane_curve_sheets
 from mpmath.curves.integration import _integrate_plane_curve_path
@@ -26,3 +27,51 @@ def test_path_integration_accepts_a_shared_differential_evaluator():
         assert len(calls) == 24
         assert abs(result.values[0] - 2) < mp.mpf("1e-22")
         assert abs(result.values[1] - mp.mpf("14") / 3) < mp.mpf("1e-22")
+
+
+def test_first_kind_abel_map_uses_geometry_quadrature(monkeypatch):
+    with mp.workdps(20):
+        curve = mp.algebraic_curve({
+            (0, 3): 1, (2, 0): -1, (1, 0): 1,
+        })
+        target = curve.fibre(2)[0]
+        integrate = curve_jacobian._integrate_plane_curve_path
+        calls = []
+
+        def recording_integral(*args, **kwargs):
+            calls.append((kwargs.get("quadrature_order"),
+                          kwargs.get("branch_values")))
+            return integrate(*args, **kwargs)
+
+        monkeypatch.setattr(
+            curve_jacobian, "_integrate_plane_curve_path",
+            recording_integral)
+        curve.abel_map(target)
+        assert calls
+        assert all(order == "geometry" and branches
+                   for order, branches in calls)
+
+
+def test_second_kind_abel_map_retains_fixed_quadrature(monkeypatch):
+    with mp.workdps(20):
+        curve = mp.algebraic_curve({
+            (0, 3): 1, (2, 0): -1, (1, 0): 1,
+        })
+        target = curve.fibre(2)[0]
+        integrate = curve_jacobian._integrate_plane_curve_path
+        calls = []
+
+        def recording_integral(*args, **kwargs):
+            calls.append((kwargs.get("quadrature_order"),
+                          kwargs.get("branch_values")))
+            return integrate(*args, **kwargs)
+
+        monkeypatch.setattr(
+            curve_jacobian, "_integrate_plane_curve_path",
+            recording_integral)
+        curve.second_kind_abel_map(
+            target,
+            second_differentials=(lambda x, y: x / (3 * y**2),))
+        assert calls
+        assert all(isinstance(order, int) and branches is None
+                   for order, branches in calls)
