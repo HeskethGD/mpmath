@@ -6,7 +6,22 @@ from mpmath.curves.continuation import _continue_plane_curve_sheets
 from mpmath.curves.integration import (
     _integrate_plane_curve_path, _integrate_plane_curve_path_iterated,
 )
-from mpmath.curves.polynomial import _prepare_plane_curve
+from mpmath.curves.polynomial import (
+    _newton_polynomial_root, _prepare_plane_curve,
+)
+
+
+def test_sparse_fibre_newton_reaches_working_precision():
+    with mp.workdps(50):
+        coefficients = (mp.mpc(-2, 1), mp.zero, mp.zero, mp.one)
+        target = mp.root(-coefficients[0], 3)
+        root, residual, derivative, scale, converged = (
+            _newton_polynomial_root(
+                mp, coefficients, target * mp.mpf("1.01"), 20))
+        assert converged
+        assert abs(root - target) < mp.mpf("1e-48")
+        assert abs(residual) <= 100 * mp.eps * scale
+        assert abs(derivative - 3 * root**2) < mp.mpf("1e-48")
 
 
 def test_path_integration_accepts_a_shared_differential_evaluator():

@@ -314,15 +314,39 @@ def _newton_polynomial_root(ctx, coefficients, prediction, maxsteps):
     candidate = ctx.convert(prediction)
     residual = derivative = ctx.zero
     scale = ctx.one
+    # Pure covers y**degree = q(x) have only two nonzero fibre
+    # coefficients.  Avoid the zero-filled Horner recurrence at every
+    # Newton step, while retaining its residual and scale criterion.
+    if len(coefficients) > 2 and not any(coefficients[1:-1]):
+        constant, leading = coefficients[0], coefficients[-1]
+        degree = len(coefficients) - 1
+        constant_magnitude = abs(constant)
+        leading_magnitude = abs(leading)
+        for unused in range(maxsteps):
+            power = candidate ** (degree - 1)
+            residual = leading * power * candidate + constant
+            derivative = degree * leading * power
+            scale = max(ctx.one, leading_magnitude * abs(candidate)**degree
+                        + constant_magnitude)
+            if abs(residual) <= 100 * ctx.eps * scale:
+                return candidate, residual, derivative, scale, True
+            if abs(derivative) <= ctx.eps * scale:
+                break
+            candidate -= residual / derivative
+        return candidate, residual, derivative, scale, False
+
+    coefficient_magnitudes = tuple(abs(value) for value in coefficients)
     for unused in range(maxsteps):
         residual = coefficients[-1]
         derivative = ctx.zero
-        scale = abs(coefficients[-1])
+        scale = coefficient_magnitudes[-1]
         magnitude = abs(candidate)
-        for coefficient in reversed(coefficients[:-1]):
+        for coefficient, coefficient_magnitude in zip(
+                reversed(coefficients[:-1]),
+                reversed(coefficient_magnitudes[:-1])):
             derivative = derivative * candidate + residual
             residual = residual * candidate + coefficient
-            scale = scale * magnitude + abs(coefficient)
+            scale = scale * magnitude + coefficient_magnitude
         scale = max(ctx.one, scale)
         if abs(residual) <= 100 * ctx.eps * scale:
             return candidate, residual, derivative, scale, True
