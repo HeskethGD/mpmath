@@ -144,6 +144,7 @@ def _stage_cycle_integrals(ctx, key):
     columns = []
     max_sheet_residual = ctx.zero
     integral_cache = {}
+    quadrature_cache = {}
     evaluator = None
     if baker_basis is not None:
         automatic_count = len(baker_basis[0])
@@ -160,7 +161,8 @@ def _stage_cycle_integrals(ctx, key):
         integral = _integrate_lifted_path_chain(
             ctx, curve, chain, forms, quadrature_order=quadrature_order,
             integral_cache=integral_cache, branch_values=branch_values,
-            differential_evaluator=evaluator)
+            differential_evaluator=evaluator,
+            quadrature_cache=quadrature_cache)
         columns.append(integral.values)
         max_sheet_residual = max(
             max_sheet_residual, integral.max_sheet_residual)
@@ -184,10 +186,11 @@ def _stage_riemann_constant(ctx, key):
     raw_tau = a_periods ** -1 * periods[:, genus:]
     tau = (raw_tau + raw_tau.T) / 2
     polygon = _stage_canonical_polygon(ctx, curve)
+    branch_values = (_stage_branch_locus(ctx, curve)[0]
+                     if quadrature_order == "geometry" else None)
     return _canonical_polygon_riemann_constant(
         ctx, curve, polygon, forms, a_periods, tau,
-        max(12, ctx.dps // 2) if quadrature_order == "geometry"
-        else quadrature_order)
+        quadrature_order, branch_values=branch_values)
 
 
 def _curve_differential_sequence(differentials, name):

@@ -1,7 +1,11 @@
+import pytest
+
 import mpmath.curves.jacobian as curve_jacobian
 from mpmath import mp
 from mpmath.curves.continuation import _continue_plane_curve_sheets
-from mpmath.curves.integration import _integrate_plane_curve_path
+from mpmath.curves.integration import (
+    _integrate_plane_curve_path, _integrate_plane_curve_path_iterated,
+)
 from mpmath.curves.polynomial import _prepare_plane_curve
 
 
@@ -29,6 +33,32 @@ def test_path_integration_accepts_a_shared_differential_evaluator():
         assert abs(result.values[1] - mp.mpf("14") / 3) < mp.mpf("1e-22")
 
 
+def test_iterated_path_integration_accepts_geometry_quadrature():
+    with mp.workdps(30):
+        curve = _prepare_plane_curve(
+            mp, {(0, 2): 1, (1, 0): -1})
+        continuation = _continue_plane_curve_sheets(mp, curve, (1, 4))
+        result = _integrate_plane_curve_path_iterated(
+            mp, curve, continuation, (lambda x, y: 1 / y,), sheet=1,
+            quadrature_order="geometry", branch_values=(0,))
+        assert abs(result.values[0] - 2) < mp.mpf("1e-28")
+        assert abs(result.iterated[0][0] - 2) < mp.mpf("1e-28")
+
+
+def test_checked_path_quadrature_detects_an_unmodelled_nearby_pole():
+    with mp.workdps(30):
+        curve = _prepare_plane_curve(
+            mp, {(0, 2): 1, (1, 0): -1})
+        continuation = _continue_plane_curve_sheets(mp, curve, (1, 4))
+        pole = mp.mpc("2.5", "0.01")
+        with pytest.raises(mp.NoConvergence):
+            _integrate_plane_curve_path(
+                mp, curve, continuation,
+                (lambda x, y: 1 / (x - pole),), sheet=1,
+                quadrature_order="geometry", branch_values=(0,),
+                check_convergence=True)
+
+
 def test_first_kind_abel_map_uses_geometry_quadrature(monkeypatch):
     with mp.workdps(20):
         curve = mp.algebraic_curve({
@@ -52,7 +82,7 @@ def test_first_kind_abel_map_uses_geometry_quadrature(monkeypatch):
                    for order, branches in calls)
 
 
-def test_second_kind_abel_map_retains_fixed_quadrature(monkeypatch):
+def test_second_kind_abel_map_checks_geometry_quadrature(monkeypatch):
     with mp.workdps(20):
         curve = mp.algebraic_curve({
             (0, 3): 1, (2, 0): -1, (1, 0): 1,
@@ -63,7 +93,8 @@ def test_second_kind_abel_map_retains_fixed_quadrature(monkeypatch):
 
         def recording_integral(*args, **kwargs):
             calls.append((kwargs.get("quadrature_order"),
-                          kwargs.get("branch_values")))
+                          kwargs.get("branch_values"),
+                          kwargs.get("check_convergence")))
             return integrate(*args, **kwargs)
 
         monkeypatch.setattr(
@@ -73,5 +104,5 @@ def test_second_kind_abel_map_retains_fixed_quadrature(monkeypatch):
             target,
             second_differentials=(lambda x, y: x / (3 * y**2),))
         assert calls
-        assert all(isinstance(order, int) and branches is None
-                   for order, branches in calls)
+        assert all(order == "geometry" and branches and checked
+                   for order, branches, checked in calls)

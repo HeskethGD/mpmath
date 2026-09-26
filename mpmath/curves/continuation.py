@@ -107,7 +107,17 @@ def _radial_branch_geometry(ctx, branch_points, base_point=None):
                 2j * ctx.pi * (2 * index + 1) / 32)
             for index in range(16)
         )
-        base_point = max(candidates, key=clearance)
+        clearances = tuple(clearance(candidate) for candidate in candidates)
+        best_clearance = max(clearances)
+        # Symmetric branch configurations can give two or more equally good
+        # exterior points.  Tiny precision-dependent differences must not
+        # choose a different radial marking, so retain candidate order for
+        # scores indistinguishable at the working precision.
+        tie_tolerance = (100 * ctx.sqrt(ctx.eps)
+                         * max(ctx.one, best_clearance))
+        base_point = next(
+            candidate for candidate, value in zip(candidates, clearances)
+            if best_clearance - value <= tie_tolerance)
     else:
         base_point = ctx.convert(base_point)
         if not ctx.isfinite(base_point):

@@ -146,7 +146,7 @@ def _normalised_differentials(ctx, differentials, a_periods):
 
 def _canonical_polygon_riemann_constant(
         ctx, curve, numerical_polygon, differentials,
-        a_periods, tau, quadrature_order):
+        a_periods, tau, quadrature_order, branch_values=None):
     """Evaluate the vector of Riemann constants from a canonical polygon.
 
     This is equation (81) in Deconinck--Patterson, *Computing with plane
@@ -167,11 +167,14 @@ def _canonical_polygon_riemann_constant(
             "canonical polygon, differentials and periods disagree")
     normalised = _normalised_differentials(
         ctx, differentials, a_periods)
+    quadrature_cache = {}
     cycle_integrals = tuple(
         _integrate_plane_curve_path_iterated(
             ctx, curve, continuation, normalised,
             sheet=numerical_polygon.polygon.root[1],
-            quadrature_order=quadrature_order)
+            quadrature_order=quadrature_order,
+            branch_values=branch_values,
+            quadrature_cache=quadrature_cache)
         for continuation in numerical_polygon.a_continuations)
     value = ctx.matrix(genus, 1)
     for row in range(genus):
@@ -280,7 +283,8 @@ def _guarded_open_path(ctx, start, end, branch_points):
 
 def _finite_base_abel_value(
         ctx, curve, monodromy, branch_points, base_place,
-        normalised_differentials, quadrature_order):
+        normalised_differentials, quadrature_order,
+        check_convergence=False, quadrature_cache=None):
     path = _guarded_open_path(
         ctx, monodromy.base_point, base_place.x, branch_points)
     continuation = _continue_plane_curve_sheets_adaptive(
@@ -308,7 +312,9 @@ def _finite_base_abel_value(
         ctx, curve, continuation, normalised_differentials, sheet=0,
         quadrature_order=quadrature_order,
         branch_values=(branch_points
-                       if quadrature_order == "geometry" else None))
+                       if quadrature_order == "geometry" else None),
+        check_convergence=check_convergence,
+        quadrature_cache=quadrature_cache)
     return ctx.matrix(integral.values)
 
 
@@ -351,6 +357,7 @@ def _theta_divisor_samples(
     center = monodromy.center
     radius = max(abs(point - center) for point in branch_points)
     point_values = []
+    quadrature_cache = {}
     for index in range(count):
         angle = 2 * ctx.pi * (index + ctx.mpf("0.173")) / count
         x = center + ctx.mpf("0.35") * radius * ctx.exp(ctx.j * angle)
@@ -358,7 +365,8 @@ def _theta_divisor_samples(
         place = _PlaneCurvePlace(x, sheets[index % curve.y_degree])
         point_values.append(_finite_base_abel_value(
             ctx, curve, monodromy, branch_points, place,
-            normalised_differentials, quadrature_order))
+            normalised_differentials, quadrature_order,
+            quadrature_cache=quadrature_cache))
     samples = []
     for index in range(2 * genus):
         value = ctx.matrix(genus, 1)

@@ -929,11 +929,11 @@ def abel_map(ctx, curve, target, differentials=None, *, second_kind=False,
     branch_values, unused_resultant = _stage_branch_locus(ctx, prepared)
     # Holomorphic Abel integrals have the same projected branch
     # singularities as period integrals, so use the same precision-scaled
-    # geometry policy.  Supplied second-kind forms may have additional poles
-    # that are not represented by the branch locus and retain their separate
-    # path until checked meromorphic quadrature is implemented.
-    quadrature_order = ("geometry" if not second_forms
-                        else max(12, ctx.dps // 2))
+    # geometry policy. Supplied second-kind forms may have additional poles
+    # that are not represented by the branch locus; their less-common path
+    # therefore also checks successive quadrature orders.
+    quadrature_order = "geometry"
+    quadrature_cache = {}
 
     def place_value(junction, tail):
         if _same_numerical_place(
@@ -943,7 +943,8 @@ def abel_map(ctx, curve, target, differentials=None, *, second_kind=False,
         else:
             affine_value = _finite_base_abel_value(
                 ctx, prepared, monodromy, branch_values, junction, all_forms,
-                quadrature_order)
+                quadrature_order, check_convergence=bool(second_forms),
+                quadrature_cache=quadrature_cache)
         if tail is None:
             return affine_value
         pullbacks = _pullback_plane_curve_differentials(

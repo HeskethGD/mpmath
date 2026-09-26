@@ -27,6 +27,7 @@ from mpmath.curves.continuation import (
     _lift_plane_curve_path,
     _lifted_path_chain_boundary,
     _prepare_lifted_path_chain,
+    _radial_branch_geometry,
     _reverse_plane_curve_branch,
     _reverse_plane_curve_continuation,
 )
@@ -572,6 +573,17 @@ def test_even_degree_hyperelliptic_graph_has_primitive_periods():
     assert max(abs(value) for value in
                numerical_change - integer_change) < mp.mpf("1e-22")
     assert abs(mp.det(integer_change)) == 1
+
+
+def test_symmetric_radial_geometry_has_stable_base_point():
+    branch_points = (-2, -1, 0, 1, 2)
+    with mp.workdps(30):
+        base_30 = +_radial_branch_geometry(mp, branch_points)[0]
+    with mp.workdps(50):
+        base_50 = +_radial_branch_geometry(mp, branch_points)[0]
+    assert mp.im(base_30) > 0
+    assert mp.im(base_50) > 0
+    assert abs(base_30 - base_50) < mp.mpf("1e-28")
 
 
 def test_complex_radial_monodromy_and_periods():

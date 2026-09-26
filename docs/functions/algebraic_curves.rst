@@ -126,8 +126,9 @@ For general curves, period integration chooses a Gauss--Legendre order for
 each continued path segment from its distance to the finite branch values.
 This is an accuracy estimate for holomorphic differentials, not a rigorous
 quadrature error bound. Poles of supplied meromorphic differentials are not
-part of that estimate. Iterated integrals used for Riemann constants retain
-their separate fixed-order rule.
+part of that estimate. Iterated integrals used for Riemann constants use the
+same per-segment geometry policy with a stable Legendre-basis integration
+matrix.
 
 Automatic hyperelliptic calculations use the deterministic Baker cycle
 marking. Supplying a callable first-kind basis is an explicit request for the
@@ -158,8 +159,9 @@ with either one differential or a sequence of differentials.
 
 General first-kind Abel maps use the same branch-geometry quadrature policy
 as first-kind periods. Supplied second-kind differentials may introduce poles
-that are not visible in the curve's branch locus, so their open integrals
-retain a separate fixed-order path pending a checked meromorphic rule.
+that are not visible in the curve's branch locus, so their open integrals also
+compare successive quadrature orders and fail if working-precision agreement
+is not reached.
 
 
 Explicit local charts
