@@ -10,10 +10,11 @@ from ._context import _curve_cache_state
 from .differentials import (
     _baker_basis, _baker_callable, _evaluate_baker_basis,
 )
-from .integration import _integrate_lifted_path_chain
+from .integration import _integrate_plane_curve_path
 from .jacobian import _canonical_polygon_riemann_constant
 from .monodromy import (
-    _numerical_ordered_canonical_polygon, _ordered_monodromy_graph,
+    _graph_cycle_word, _numerical_ordered_canonical_polygon,
+    _ordered_monodromy_graph,
     _radial_plane_curve_monodromy, _symplectic_reduce_intersection,
 )
 from .polynomial import _plane_curve_critical_values
@@ -133,17 +134,29 @@ def _stage_cycle_integrals(ctx, key):
 
     ``key`` is ``(curve, forms, quadrature_order, baker_basis)``.  The
     result is ``(columns, max_sheet_residual)`` with one column of form
-    values per canonical cycle.
+    values per canonical cycle.  Ordinary periods are additive, so integrate
+    each generator on each required sheet once and apply the polygon's
+    integer cycle transformation.  Iterated integrals still use the full
+    based paths retained by the polygon.
     """
     curve, forms, quadrature_order, baker_basis = key
     forms = tuple(forms)
     genus = _stage_monodromy(ctx, curve).genus
     branch_values = (_stage_branch_locus(ctx, curve)[0]
                      if quadrature_order == "geometry" else None)
-    chains = _stage_canonical_cycles(ctx, curve)
-    columns = []
+    graph, unused_reduction = _stage_monodromy_graph(ctx, curve)
+    polygon = _stage_canonical_polygon(ctx, curve)
+    monodromy = _stage_monodromy(ctx, curve)
+    identity = tuple(range(curve.y_degree))
+    generators = tuple(
+        generator for generator in monodromy.ribbon_generators
+        if generator.permutation != identity)
+    if (tuple(generator.permutation for generator in generators)
+            != graph.permutations or
+            any(orientation != 1 for orientation in graph.branch_orientations)):
+        raise ValueError("ordered graph and numerical generators differ")
     max_sheet_residual = ctx.zero
-    integral_cache = {}
+    generator_integrals = {}
     quadrature_cache = {}
     evaluator = None
     if baker_basis is not None:
@@ -157,15 +170,44 @@ def _stage_cycle_integrals(ctx, key):
                 for differential in forms[automatic_count:])
             return automatic + supplied
 
-    for chain in chains[:2 * genus]:
-        integral = _integrate_lifted_path_chain(
-            ctx, curve, chain, forms, quadrature_order=quadrature_order,
-            integral_cache=integral_cache, branch_values=branch_values,
-            differential_evaluator=evaluator,
-            quadrature_cache=quadrature_cache)
-        columns.append(integral.values)
-        max_sheet_residual = max(
-            max_sheet_residual, integral.max_sheet_residual)
+    canonical_rows = polygon.transformation[:2 * genus]
+    needed_cycles = {
+        index for row in canonical_rows
+        for index, coefficient in enumerate(row) if coefficient}
+    graph_columns = [None] * len(graph.cycles)
+    for cycle_index in sorted(needed_cycles):
+        cycle = graph.cycles[cycle_index]
+        word = _graph_cycle_word(graph, cycle)
+        sheet = word.start_sheet
+        pieces = []
+        for step in word.steps:
+            generator = generators[step.branch_index]
+            for unused in range(step.turns):
+                cache_key = step.branch_index, sheet
+                integral = generator_integrals.get(cache_key)
+                if integral is None:
+                    integral = _integrate_plane_curve_path(
+                        ctx, curve, generator.continuation, forms,
+                        sheet=sheet, quadrature_order=quadrature_order,
+                        branch_values=branch_values,
+                        differential_evaluator=evaluator,
+                        quadrature_cache=quadrature_cache)
+                    generator_integrals[cache_key] = integral
+                    max_sheet_residual = max(
+                        max_sheet_residual, integral.max_sheet_residual)
+                pieces.append(integral.values)
+                sheet = generator.permutation[sheet]
+        if sheet != word.start_sheet:
+            raise ValueError("numerical graph cycle did not close")
+        graph_columns[cycle_index] = tuple(
+            ctx.fsum(piece[index] for piece in pieces)
+            for index in range(len(forms)))
+
+    columns = tuple(tuple(ctx.fsum(
+        coefficient * graph_columns[index][form_index]
+        for index, coefficient in enumerate(row) if coefficient)
+        for form_index in range(len(forms)))
+        for row in canonical_rows)
     return tuple(columns), max_sheet_residual
 
 

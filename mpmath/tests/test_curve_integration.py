@@ -1,10 +1,12 @@
 import pytest
 
+import mpmath.curves._stages as curve_stages
 import mpmath.curves.jacobian as curve_jacobian
 from mpmath import mp
 from mpmath.curves.continuation import _continue_plane_curve_sheets
 from mpmath.curves.integration import (
-    _integrate_plane_curve_path, _integrate_plane_curve_path_iterated,
+    _integrate_lifted_path_chain, _integrate_plane_curve_path,
+    _integrate_plane_curve_path_iterated,
 )
 from mpmath.curves.polynomial import (
     _newton_polynomial_root, _prepare_plane_curve,
@@ -22,6 +24,38 @@ def test_sparse_fibre_newton_reaches_working_precision():
         assert abs(root - target) < mp.mpf("1e-48")
         assert abs(residual) <= 100 * mp.eps * scale
         assert abs(derivative - 3 * root**2) < mp.mpf("1e-48")
+
+
+def test_generator_period_integrals_match_whole_cycle_paths():
+    # The optimized period stage integrates short generator lifts and then
+    # applies the polygon transformation.  Compare that result with direct
+    # integration of the original long lifted cycles on a genus-three curve.
+    with mp.workdps(20):
+        curve = _prepare_plane_curve(mp, {
+            (0, 3): 1, (4, 0): -1, (3, 0): -2,
+            (2, 0): -3, (1, 0): -5, (0, 0): -7,
+        })
+
+        def denominator(x, y):
+            return 3 * y**2
+
+        forms = (lambda x, y: 1 / denominator(x, y),
+                 lambda x, y: x / denominator(x, y),
+                 lambda x, y: y / denominator(x, y))
+        branches = curve_stages._stage_branch_locus(mp, curve)[0]
+        optimized, unused_residual = curve_stages._stage_cycle_integrals(
+            mp, (curve, forms, "geometry", None))
+        cache = {}
+        rules = {}
+        original = tuple(_integrate_lifted_path_chain(
+            mp, curve, chain, forms, quadrature_order="geometry",
+            branch_values=branches, integral_cache=cache,
+            quadrature_cache=rules).values
+            for chain in curve_stages._stage_canonical_cycles(mp, curve))
+        assert max(abs(left - right)
+                   for left_column, right_column in zip(optimized, original)
+                   for left, right in zip(left_column, right_column)
+                   ) < mp.mpf("1e-17")
 
 
 def test_path_integration_accepts_a_shared_differential_evaluator():
