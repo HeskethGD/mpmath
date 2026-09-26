@@ -22,7 +22,7 @@ from .polynomial import _plane_curve_critical_values
 # Cached computational stages
 # ---------------------------
 
-_MONODROMY_CIRCLE_STEPS = 12
+_MONODROMY_CIRCLE_STEPS = 8
 _MONODROMY_MAX_REFINEMENTS = 20
 
 

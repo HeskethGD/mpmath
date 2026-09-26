@@ -2,6 +2,12 @@
 
 
 _REUSABLE_GAUSS_ORDERS = (8, 12, 16, 24, 32, 48, 64, 96, 128)
+# Geometry-selected panels can use finer buckets without changing the
+# faster-growing refinement ladder used to check opaque differentials.
+_GEOMETRIC_GAUSS_ORDERS = (
+    8, 10, 12, 14, 16, 20, 24, 28, 32, 40, 48, 56, 64,
+    80, 96, 112, 128,
+)
 
 
 def _geometric_quadrature_order(ctx, left, right, singularities):
@@ -28,7 +34,7 @@ def _geometric_quadrature_order(ctx, left, right, singularities):
         raise ValueError("integration segment meets a known singularity")
     estimate = int(ctx.ceil(
         (ctx.dps + 5) * ctx.log(10) / (2 * ctx.log(rho))))
-    for order in _REUSABLE_GAUSS_ORDERS:
+    for order in _GEOMETRIC_GAUSS_ORDERS:
         if estimate <= order:
             return order
     return 32 * ((estimate + 31) // 32)

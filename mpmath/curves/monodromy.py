@@ -1285,7 +1285,9 @@ def _radial_plane_curve_monodromy(
             radius=radius,
         ))
 
-    outer_steps = 4 * circle_steps
+    # The exterior circle has greater clearance than the finite loops.
+    # Adaptive continuation inserts additional points if a chord is unsafe.
+    outer_steps = circle_steps
     outer_vector = base_point - center
     infinity_path = tuple(
         center + outer_vector * ctx.exp(
