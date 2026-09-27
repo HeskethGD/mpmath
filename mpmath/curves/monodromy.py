@@ -1,12 +1,14 @@
 """Monodromy, ribbon graphs, and canonical homology bases."""
 
 from fractions import Fraction
+from collections import deque
 
 from ._records import (
     _BranchGenerator, _BranchLoopStep, _CanonicalPolygon, _GraphCycleWord,
     _LiftedGraphEdge, _LiftedMonodromyGraph, _LiftedPathTerm, _MonodromyData,
     _NumericalCanonicalPolygon, _NumericalGraphCycles, _OrderedMonodromyData,
     _RibbonCutSystem, _SymplecticReduction,
+    _GeometricEdge, _GeometricPolygon, _GeometricRibbonGraph,
 )
 from .continuation import (
     _align_closed_continuation_base_fibre,
@@ -17,6 +19,115 @@ from .continuation import (
     _reverse_plane_curve_continuation, _same_numerical_place,
 )
 from .polynomial import _ordered_plane_curve_sheets
+
+
+def _geometric_ribbon_graph(ctx, cover):
+    """Build the covering graph with the geometric local rotations."""
+    geometry = cover.geometry
+    degree = len(cover.fibres[0])
+    rotation = {(v, s): [] for v in range(len(geometry.vertices))
+                for s in range(degree)}
+    edges = []
+    for base_edge, ((a, b), permutation) in enumerate(
+            zip(geometry.edges, cover.permutations)):
+        for sheet, target in enumerate(permutation):
+            index = len(edges)
+            edge = _GeometricEdge((a, sheet), (b, target), base_edge, sheet)
+            edges.append(edge)
+            rotation[edge.tail].append((index, 0))
+            rotation[edge.head].append((index, 1))
+    for vertex, half_edges in rotation.items():
+        def direction(half_edge):
+            index, endpoint = half_edge
+            other = edges[index].head if endpoint == 0 else edges[index].tail
+            return ctx.arg(geometry.vertices[other[0]] - geometry.vertices[vertex[0]])
+        half_edges.sort(key=direction, reverse=True)
+        rotation[vertex] = tuple(half_edges)
+    vertices = tuple(sorted(rotation))
+    adjacency = {vertex: [] for vertex in vertices}
+    for index, edge in enumerate(edges):
+        adjacency[edge.tail].append((edge.head, index))
+        adjacency[edge.head].append((edge.tail, index))
+    seen, queue, tree = {vertices[0]}, deque([vertices[0]]), []
+    while queue:
+        vertex = queue.popleft()
+        for other, edge in adjacency[vertex]:
+            if other not in seen:
+                seen.add(other)
+                queue.append(other)
+                tree.append(edge)
+    if len(seen) != len(vertices):
+        raise ValueError("lifted geometric graph is disconnected")
+    faces = _ribbon_boundary_orbits(edges, rotation)
+    twice_genus = 2 - len(vertices) + len(edges) - len(faces)
+    if twice_genus < 0 or twice_genus % 2:
+        raise ValueError("geometric graph has an invalid Euler characteristic")
+    return _GeometricRibbonGraph(vertices, tuple(edges), rotation, tuple(tree),
+                                 twice_genus // 2, faces)
+
+
+def _geometric_canonical_polygon(ctx, cover, graph):
+    """Retain based canonical words and their additive lifted edge chains."""
+    polygon = _canonical_ribbon_polygon(graph)
+    chains = []
+    for loop in polygon.a_loops + polygon.b_loops:
+        current = polygon.root
+        coefficients = {}
+        for index, orientation in loop:
+            edge = graph.edges[index]
+            left, right = ((edge.tail, edge.head) if orientation == 1
+                           else (edge.head, edge.tail))
+            if left != current:
+                raise ValueError("geometric canonical path is discontinuous")
+            current = right
+            coefficients[index] = coefficients.get(index, 0) + orientation
+        if current != polygon.root:
+            raise ValueError("geometric canonical path is not closed")
+        terms = []
+        for index, coefficient in sorted(coefficients.items()):
+            edge = graph.edges[index]
+            if coefficient:
+                terms.append((coefficient,
+                              cover.continuations[edge.base_edge], edge.sheet))
+        chain = _prepare_lifted_path_chain(terms)
+        if _lifted_path_chain_boundary(ctx, chain):
+            raise ValueError("geometric canonical chain has nonzero boundary")
+        chains.append(chain)
+    return _GeometricPolygon(polygon, tuple(chains))
+
+
+def _geometric_sheet_connector(graph, root, sheet):
+    """Return a tree path to another sheet over the polygon's base vertex."""
+    adjacency = {vertex: [] for vertex in graph.vertices}
+    for index in graph.tree_edges:
+        edge = graph.edges[index]
+        adjacency[edge.tail].append((edge.head, index, 1))
+        adjacency[edge.head].append((edge.tail, index, -1))
+    return _tree_path(adjacency, root, (root[0], sheet))
+
+
+def _geometric_based_continuation(ctx, cover, graph, polygon, loop):
+    """Materialize an ordered polygon loop only when a path consumer needs it.
+
+    Additive period chains discard connectors; iterated integrals must use
+    these full based words. The fibre ordering is aligned to the same root
+    as the polygon, including when the first edge is traversed backwards.
+    """
+    pieces = []
+    for index, orientation in loop:
+        edge = graph.edges[index]
+        piece = cover.continuations[edge.base_edge]
+        if orientation == -1:
+            piece = _reverse_plane_curve_continuation(ctx, piece)
+        pieces.append(piece)
+    if not pieces:
+        raise ValueError("a based polygon loop must contain an edge")
+    result = _concatenate_continuation_sequence(ctx, pieces)
+    result = _align_closed_continuation_base_fibre(
+        ctx, result, cover.fibres[polygon.root[0]])
+    if result.permutation[polygon.root[1]] != polygon.root[1]:
+        raise ValueError("geometric based lift is not closed")
+    return result
 
 # Monodromy invariants
 # --------------------

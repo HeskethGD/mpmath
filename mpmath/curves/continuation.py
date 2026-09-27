@@ -1,9 +1,14 @@
 """Path construction and continuation on plane algebraic curves."""
 
+from bisect import bisect_right
+
+from ._context import _curve_cache_state
 from ._records import (
-    _BoundaryPlace, _BranchContinuation, _LiftedPathChain, _LiftedPathTerm,
+    _BoundaryPlace, _BranchContinuation, _GeometricCover,
+    _LiftedPathChain, _LiftedPathTerm,
     _LiftedPlaneCurvePath, _PlaneCurvePlace, _SheetContinuation,
 )
+from .geometry import _stable_complex_order
 from .polynomial import (
     _evaluate_plane_derivative, _evaluate_plane_polynomial,
     _minimum_cost_assignment, _minimum_root_separation,
@@ -677,3 +682,97 @@ def _close_monodromy_lift(ctx, continuation, sheet):
         image = permutation[image]
         repeats += 1
     return result
+
+
+def _lift_plane_graph(ctx, curve, geometry):
+    """Continue every base edge once, retaining its endpoint permutation."""
+    fibres = []
+    for x in geometry.vertices:
+        roots = _plane_curve_sheets(ctx, curve, x)
+        tolerance = 100 * ctx.sqrt(ctx.eps) * max(ctx.one, *map(abs, roots))
+        if _minimum_root_separation(ctx, roots) <= tolerance:
+            raise ctx.NoConvergence("graph vertex has unresolved fibre separation")
+        fibres.append(_stable_complex_order(ctx, roots, tolerance))
+    continuations, permutations = [], []
+    for left, right in geometry.edges:
+        lift = _continue_plane_curve_sheets_adaptive(
+            ctx, curve, (geometry.vertices[left], geometry.vertices[right]),
+            initial_sheets=fibres[left], max_refinements=20)
+        permutation = _minimum_cost_assignment(ctx, lift.fibres[-1], fibres[right])
+        scale = max(ctx.one, *map(abs, fibres[right]))
+        if any(abs(y - fibres[right][j]) > 10000 * ctx.eps * scale
+               for y, j in zip(lift.fibres[-1], permutation)):
+            raise ctx.NoConvergence("graph edge endpoint fibre did not match")
+        continuations.append(lift)
+        permutations.append(tuple(permutation))
+    return _GeometricCover(geometry, tuple(fibres), tuple(continuations),
+                           tuple(permutations))
+
+
+class _LiftedEdgeSampler:
+    """Stage-local sheet queries on one straight, already continued edge.
+
+    Continuation knots are independent of quadrature panels. An ambiguous
+    correction refines its bracket, rather than accepting the nearest root
+    of an independently solved fibre. Refinement is bounded; the separation
+    checks are numerical consistency tests, not a certification theorem.
+    """
+
+    def __init__(self, ctx, curve, continuation):
+        self.ctx = ctx
+        self.curve = curve
+        self.state = _curve_cache_state(ctx)
+        self.left = continuation.path[0]
+        self.delta = continuation.path[-1] - self.left
+        if not self.delta:
+            raise ValueError("a lifted edge must have distinct endpoints")
+        parameters = tuple((x - self.left) / self.delta
+                           for x in continuation.path)
+        tolerance = 100 * ctx.eps
+        if (any(abs(ctx.im(t)) > tolerance for t in parameters)
+                or any(ctx.re(a) >= ctx.re(b)
+                       for a, b in zip(parameters, parameters[1:]))):
+            raise ValueError("a lifted edge must follow a straight ordered path")
+        self.positions = [ctx.re(t) for t in parameters]
+        self.fibres = list(continuation.fibres)
+        self.refinements = 0
+
+    def sample(self, parameter, sheet):
+        ctx = self.ctx
+        if _curve_cache_state(ctx) != self.state:
+            raise ValueError("lifted edge sampler cannot cross precision contexts")
+        if not 0 <= parameter <= 1 or not 0 <= sheet < self.curve.y_degree:
+            raise ValueError("invalid edge parameter or sheet")
+        x = self.left + parameter * self.delta
+        for unused in range(21):
+            index = min(len(self.positions) - 2,
+                        max(0, bisect_right(self.positions, parameter) - 1))
+            a, b = self.positions[index:index + 2]
+            fraction = (parameter - a) / (b - a)
+            predictions = tuple(
+                u + fraction * (v - u)
+                for u, v in zip(self.fibres[index], self.fibres[index + 1]))
+            candidate, residual, unused_derivative, unused_scale, converged = (
+                _newton_plane_curve_sheet(ctx, self.curve, x, predictions[sheet]))
+            separation = min((abs(predictions[sheet] - y)
+                              for j, y in enumerate(predictions) if j != sheet),
+                             default=ctx.inf)
+            if converged and abs(candidate - predictions[sheet]) < separation / 4:
+                return x, candidate, abs(residual)
+            midpoint = (a + b) / 2
+            if midpoint == a or midpoint == b:
+                break
+            lift = _continue_plane_curve_sheets_adaptive(
+                ctx, self.curve,
+                tuple(self.left + t * self.delta for t in (a, midpoint, b)),
+                initial_sheets=self.fibres[index], max_refinements=12)
+            expected = self.fibres[index + 1]
+            scale = max(ctx.one, *map(abs, expected))
+            if any(abs(u - v) > 10000 * ctx.eps * scale
+                   for u, v in zip(lift.fibres[-1], expected)):
+                raise ctx.NoConvergence("edge refinement changed the sheet labels")
+            positions = [ctx.re((z - self.left) / self.delta) for z in lift.path[1:-1]]
+            self.positions[index + 1:index + 1] = positions
+            self.fibres[index + 1:index + 1] = lift.fibres[1:-1]
+            self.refinements += 1
+        raise ctx.NoConvergence("lifted edge query did not resolve its sheet")

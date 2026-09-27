@@ -17,7 +17,11 @@ from ._stages import (
     _stage_hyperelliptic_homology, _stage_hyperelliptic_periods,
     _stage_monodromy_graph, _stage_riemann_constant,
     _tau_imaginary_eigenvalues,
+    _stage_geometric_periods, _stage_geometric_polygon,
+    _stage_geometric_riemann_constant, _geometric_abel_divisor,
+    _GEOMETRIC_GUARD_BITS,
 )
+from .differentials import _baker_callable
 from .charts import _validated_chart_coordinate_map
 from .continuation import (
     _lift_plane_curve_path, _same_numerical_place,
@@ -38,6 +42,35 @@ from .polynomial import _ordered_plane_curve_sheets
 
 # Curve operations
 # ----------------
+
+
+def _uses_geometric_backend(curve):
+    return (getattr(curve, "general_backend", "radial") == "geometric"
+            and curve.hyperelliptic is None)
+
+
+def _check_geometric_forms(differentials, second_kind=False,
+                           second_differentials=None):
+    if differentials is not None or second_kind or second_differentials is not None:
+        raise NotImplementedError(
+            "the geometric backend currently supports only automatic first-kind "
+            "forms; construct a separate radial curve for custom or second-kind forms")
+
+
+def _geometric_first_kind_periods(ctx, prepared):
+    data = _stage_geometric_periods(ctx, prepared)
+    genus = data.genus
+    full = _period_matrix_from_columns(ctx, data.columns, 0, genus, genus)
+    omega, omega_prime = full[:, :genus] / 2, full[:, genus:] / 2
+    raw_tau = omega ** -1 * omega_prime
+    tau = (raw_tau + raw_tau.T) / 2
+    eigenvalues = _tau_imaginary_eigenvalues(ctx, tau)
+    if min(eigenvalues) <= 0:
+        raise ValueError("normalized period matrix is not positive definite")
+    forms = tuple(_baker_callable(ctx, data.basis, i) for i in range(genus))
+    return CurveFirstKindPeriods(
+        genus, forms, omega, omega_prime, tau, ctx.norm(raw_tau - raw_tau.T),
+        eigenvalues, data.max_sheet_residual, "general", "geometric-polygon")
 
 
 def _general_first_kind_forms(ctx, prepared, differentials, monodromy):
@@ -136,7 +169,7 @@ def monodromy(ctx, curve):
 
 
 def genus_data(ctx, curve):
-    r"""Return the genus of a plane algebraic curve by monodromy.
+    r"""Return the genus of a plane algebraic curve.
 
     The genus is obtained from the Riemann--Hurwitz formula applied to
     the monodromy of the ``x`` projection, including the permutation at
@@ -147,9 +180,17 @@ def genus_data(ctx, curve):
         >>> from mpmath import algebraic_curve
         >>> algebraic_curve((0, -1, 0, 1)).genus_data
         CurveGenus(genus=1, degree=2, ramification=4)
+
+    The private geometric backend instead obtains genus from the compact
+    covering graph's Euler characteristic and infers total ramification.
     """
     prepared, unused_hyperelliptic = _normalise_algebraic_curve_input(
         ctx, curve)
+    if _uses_geometric_backend(curve):
+        with ctx.extraprec(_GEOMETRIC_GUARD_BITS):
+            graph, unused_polygon = _stage_geometric_polygon(ctx, prepared)
+        return CurveGenus(graph.genus, prepared.y_degree,
+                          2 * graph.genus - 2 + 2 * prepared.y_degree)
     monodromy = _stage_monodromy(ctx, prepared)
     return CurveGenus(
         monodromy.genus, prepared.y_degree, monodromy.ramification)
@@ -168,6 +209,9 @@ def homology(ctx, curve):
     is reduced to a primitive symplectic basis.  In that case the record also
     reports the graph's boundary and radical counts and the integer
     transformation from graph cycles to the canonical-polygon marking.
+
+    The private geometric backend reports its compact canonical basis
+    directly, with no auxiliary boundary cycles and identity transformation.
 
     The lemniscatic curve :math:`y^2 = x^3 - x` uses its Baker marking::
 
@@ -203,6 +247,18 @@ def homology(ctx, curve):
             transformation=transformation,
             engine="hyperelliptic",
             marking="baker")
+
+    if _uses_geometric_backend(curve):
+        with ctx.extraprec(_GEOMETRIC_GUARD_BITS):
+            graph, polygon = _stage_geometric_polygon(ctx, prepared)
+        count = 2 * graph.genus
+        identity = tuple(tuple(int(i == j) for j in range(count))
+                         for i in range(count))
+        # Report the compact canonical basis itself, not the punctured
+        # graph's redundant cycles. Its transformation is the identity.
+        return CurveHomology(graph.genus, count, 0, count, 0,
+                             polygon.polygon.intersection, identity,
+                             "general", "geometric-polygon")
 
     graph, reduction = _stage_monodromy_graph(ctx, prepared)
     polygon = _stage_canonical_polygon(ctx, prepared)
@@ -299,6 +355,10 @@ def periods(ctx, curve, differentials=None, *, second_kind=False,
                 return first_record, second_record
             return second_record
         return first_record
+
+    if _uses_geometric_backend(curve):
+        _check_geometric_forms(differentials, second_kind, second_differentials)
+        return _geometric_first_kind_periods(ctx, prepared)
 
     if second_kind and second_differentials is None:
         raise ValueError(
@@ -436,6 +496,19 @@ def riemann_constant(ctx, curve, differentials=None, *,
         return CurveRiemannConstant(
             value, characteristic, base_place, None,
             "hyperelliptic", "baker")
+
+    if _uses_geometric_backend(curve):
+        _check_geometric_forms(differentials)
+        data = _geometric_first_kind_periods(ctx, prepared)
+        entries, cycles = _stage_geometric_riemann_constant(ctx, prepared)
+        value = ctx.matrix(entries)
+        if base_place is not None:
+            displacement = abel_map(ctx, curve, base_place)
+            value += (data.genus - 1) * ((2 * data.omega) ** -1 * displacement)
+        return CurveRiemannConstant(
+            value, _jacobian_characteristic(ctx, value, data.tau), base_place,
+            max((cycle.max_sheet_residual for cycle in cycles), default=ctx.zero),
+            "general", "geometric-polygon")
 
     forms, baker_basis = _general_first_kind_forms(
         ctx, prepared, differentials, _stage_monodromy(ctx, prepared))
@@ -896,6 +969,16 @@ def abel_map(ctx, curve, target, differentials=None, *, second_kind=False,
         if reduce:
             result = lattice_reduce(
                 ctx, result, periods(ctx, curve)).value
+        return result
+
+    if _uses_geometric_backend(curve):
+        _check_geometric_forms(differentials, second_kind, second_differentials)
+        places = _normalise_curve_places(ctx, prepared, target)
+        result = ctx.matrix(_geometric_abel_divisor(
+            ctx, prepared, tuple(place for junction, tail, place in places),
+            base_place=base_place))
+        if reduce:
+            result = lattice_reduce(ctx, result, periods(ctx, curve)).value
         return result
 
     if second_differentials is None:

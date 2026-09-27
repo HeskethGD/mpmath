@@ -7,7 +7,20 @@ _PlaneCurve = namedtuple(
 _HyperellipticModel = namedtuple(
     "_HyperellipticModel", "coefficients y_shift")
 _ClassifiedCurve = namedtuple(
-    "_ClassifiedCurve", "curve hyperelliptic")
+    "_ClassifiedCurve", "curve hyperelliptic general_backend", defaults=("radial",))
+_PlaneGraph = namedtuple(
+    "_PlaneGraph", "vertices edges cells branch_values vertex_sites")
+_GeometricCover = namedtuple(
+    "_GeometricCover", "geometry fibres continuations permutations")
+_GeometricRibbonGraph = namedtuple(
+    "_GeometricRibbonGraph", "vertices edges rotation tree_edges genus faces")
+_GeometricEdge = namedtuple(
+    "_GeometricEdge", "tail head base_edge sheet")
+_GeometricPolygon = namedtuple(
+    "_GeometricPolygon", "polygon chains")
+_GeometricPeriodData = namedtuple(
+    "_GeometricPeriodData",
+    "genus basis columns max_sheet_residual cover graph polygon working_precision")
 _SheetContinuation = namedtuple(
     "_SheetContinuation",
     "sheets permutation max_residual min_separation "

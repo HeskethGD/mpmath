@@ -1,5 +1,7 @@
 """Numerical integration along lifted algebraic-curve paths."""
 
+from .continuation import _LiftedEdgeSampler
+from .differentials import _evaluate_baker_basis
 from ._records import (
     _IteratedPathIntegrals, _PathIntegrals, _PlaneCurvePeriods,
 )
@@ -10,7 +12,55 @@ from .polynomial import (
 )
 from .quadrature import (
     _REUSABLE_GAUSS_ORDERS, _geometric_quadrature_order,
+    _geometric_edge_panels, _legendre_edge_rule,
 )
+
+
+def _integrate_geometric_chains(ctx, curve, chains, basis, branch_values):
+    """Integrate structured holomorphic forms on shared lifted graph edges.
+
+    Rules, plans, samplers and edge integrals belong to this one numerical
+    stage. Only additive chains are combined here; based words remain with
+    their polygon for iterated integrals. Opaque callable differentials are
+    deliberately not admitted by this branch-locus-only quadrature policy.
+    """
+    count = len(basis[0])
+    rules, plans, samplers, integrals = {}, {}, {}, {}
+    residual = ctx.zero
+    columns = []
+    for chain in chains:
+        pieces = []
+        for term in chain.terms:
+            continuation = term.continuation
+            key = id(continuation)
+            integral_key = key, term.sheet
+            if integral_key not in integrals:
+                if key not in samplers:
+                    samplers[key] = _LiftedEdgeSampler(ctx, curve, continuation)
+                    plans[key] = _geometric_edge_panels(
+                        ctx, continuation.path[0], continuation.path[-1], branch_values)
+                sampler = samplers[key]
+                panel_values = []
+                for lower, upper, order in plans[key]:
+                    if order not in rules:
+                        rules[order] = _legendre_edge_rule(ctx, order)
+                    terms = [[] for unused in range(count)]
+                    width = upper - lower
+                    for node, weight in rules[order]:
+                        x, y, error = sampler.sample(lower + width * node, term.sheet)
+                        residual = max(residual, error)
+                        values = _evaluate_baker_basis(ctx, basis, x, y)
+                        for index, value in enumerate(values):
+                            terms[index].append(weight * value)
+                    panel_values.append(tuple(
+                        sampler.delta * width * ctx.fsum(row) for row in terms))
+                integrals[integral_key] = tuple(
+                    ctx.fsum(panel[index] for panel in panel_values)
+                    for index in range(count))
+            pieces.append((term.coefficient, integrals[integral_key]))
+        columns.append(tuple(ctx.fsum(c * values[i] for c, values in pieces)
+                             for i in range(count)))
+    return tuple(columns), residual
 
 # Lifted-path integration
 # -----------------------
@@ -373,6 +423,45 @@ def _integrate_plane_curve_path_iterated(
         max_sheet_residual=max_sheet_residual,
         segments=len(continuation.path) - 1,
     )
+
+
+def _integrate_geometric_loops_iterated(
+        ctx, curve, cover, graph, polygon, loops, differentials):
+    """Compose ordered based loops, integrating each lifted edge only once.
+
+    Connectors must remain in the words: their additive cancellation does
+    not imply cancellation of their contributions to iterated integrals.
+    Edge and quadrature caches are local to this precision and form basis.
+    """
+    differentials = tuple(differentials)
+    edges, rules, results = {}, {}, []
+    for loop in loops:
+        current, integral = polygon.root, None
+        for index, orientation in loop:
+            if orientation not in (-1, 1):
+                raise ValueError("geometric edge orientation must be +1 or -1")
+            edge = graph.edges[index]
+            left, right = ((edge.tail, edge.head) if orientation == 1
+                           else (edge.head, edge.tail))
+            if current != left:
+                raise ValueError("geometric iterated path is discontinuous")
+            current = right
+            if index not in edges:
+                edges[index] = _integrate_plane_curve_path_iterated(
+                    ctx, curve, cover.continuations[edge.base_edge],
+                    differentials, sheet=edge.sheet,
+                    quadrature_order="geometry",
+                    branch_values=cover.geometry.branch_values,
+                    quadrature_cache=rules)
+            piece = edges[index]
+            if orientation == -1:
+                piece = _reverse_iterated_path_integrals(ctx, piece)
+            integral = (piece if integral is None else
+                        _concatenate_iterated_path_integrals(ctx, integral, piece))
+        if current != polygon.root or integral is None:
+            raise ValueError("geometric iterated loop must be nonempty and closed")
+        results.append(integral)
+    return tuple(results)
 
 
 def _concatenate_iterated_path_integrals(ctx, left, right):

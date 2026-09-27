@@ -7,15 +7,27 @@ from ._hyperelliptic.model import (
     _hyperelliptic_coefficients, _hyperelliptic_roots,
 )
 from ._context import _curve_cache_state
+from ._records import _GeometricPeriodData
+from .geometry import _voronoi_plane_graph
+from .continuation import _lift_plane_graph
 from .differentials import (
     _baker_basis, _baker_callable, _evaluate_baker_basis,
 )
-from .integration import _integrate_plane_curve_path
-from .jacobian import _canonical_polygon_riemann_constant
+from .integration import (
+    _integrate_plane_curve_path, _integrate_geometric_chains,
+    _integrate_geometric_loops_iterated,
+    _integrate_plane_curve_branch, _pullback_plane_curve_differentials,
+)
+from .jacobian import (
+    _canonical_polygon_riemann_constant, _normalised_differentials,
+    _riemann_constant_from_iterated_cycles,
+    _finite_geometric_abel_value, _normalise_curve_endpoint,
+)
 from .monodromy import (
     _graph_cycle_word, _numerical_ordered_canonical_polygon,
     _ordered_monodromy_graph,
     _radial_plane_curve_monodromy, _symplectic_reduce_intersection,
+    _geometric_ribbon_graph, _geometric_canonical_polygon,
 )
 from .polynomial import _plane_curve_critical_values
 
@@ -24,6 +36,7 @@ from .polynomial import _plane_curve_critical_values
 
 _MONODROMY_CIRCLE_STEPS = 8
 _MONODROMY_MAX_REFINEMENTS = 20
+_GEOMETRIC_GUARD_BITS = 10
 
 
 def _curve_stage_cache(maxsize):
@@ -60,6 +73,136 @@ def _curve_stage_cache(maxsize):
 def _stage_branch_locus(ctx, curve):
     """Return ``(branch_values, resultant)`` for a prepared plane curve."""
     return _plane_curve_critical_values(ctx, curve)
+
+
+@_curve_stage_cache(8)
+def _stage_geometric_cover(ctx, curve):
+    """Construct and lift a native base-plane graph at the current precision."""
+    values, unused_resultant = _stage_branch_locus(ctx, curve)
+    geometry = _voronoi_plane_graph(ctx, values)
+    return _lift_plane_graph(ctx, curve, geometry)
+
+
+@_curve_stage_cache(8)
+def _stage_geometric_polygon(ctx, curve):
+    """Return a covering graph and its canonical based polygon together."""
+    cover = _stage_geometric_cover(ctx, curve)
+    graph = _geometric_ribbon_graph(ctx, cover)
+    polygon = _geometric_canonical_polygon(ctx, cover, graph)
+    return graph, polygon
+
+
+@_curve_stage_cache(8)
+def _stage_geometric_periods_working(ctx, curve):
+    """Unrounded period data shared by guarded dependent computations."""
+    cover = _stage_geometric_cover(ctx, curve)
+    graph, polygon = _stage_geometric_polygon(ctx, curve)
+    if graph.genus == 0:
+        raise ValueError("a genus-zero curve has no first-kind periods")
+    basis = _baker_basis(ctx, curve, graph.genus)
+    columns, residual = _integrate_geometric_chains(
+        ctx, curve, polygon.chains, basis, cover.geometry.branch_values)
+    return _GeometricPeriodData(
+        graph.genus, basis, columns, residual, cover, graph, polygon, ctx.prec)
+
+
+@_curve_stage_cache(8)
+def _stage_geometric_periods(ctx, curve):
+    """Private native-graph backend for automatic first-kind periods.
+
+    ``curve`` is a prepared polynomial. Columns contain full periods in the
+    returned polygon's marking, with numerator order recorded in ``basis``.
+    Columns are rounded to the caller's precision; the cover and based words
+    retain their guarded working precision for later path operations.
+
+    This entry point does not select or replace the public radial backend.
+    In particular, these periods must not be paired with a radial polygon's
+    Abel coordinates or Riemann constants. Supplied callable forms require a
+    separate policy for additional poles and are not accepted here.
+    """
+    with ctx.extraprec(_GEOMETRIC_GUARD_BITS):
+        data = _stage_geometric_periods_working(ctx, curve)
+    return data._replace(
+        columns=tuple(tuple(+value for value in column) for column in data.columns),
+        max_sheet_residual=+data.max_sheet_residual)
+
+
+@_curve_stage_cache(8)
+def _stage_geometric_riemann_constant(ctx, curve):
+    """Return immutable (K, based a-loop integrals) in the geometric marking.
+
+    K is rounded to the caller's precision. Loop integrals retain working
+    precision and use forms normalized by the unrounded full a-periods.
+    The base place is the root of the matching geometric period polygon.
+    """
+    with ctx.extraprec(_GEOMETRIC_GUARD_BITS):
+        data = _stage_geometric_periods_working(ctx, curve)
+        genus = data.genus
+        periods = ctx.matrix([[column[row] for column in data.columns]
+                              for row in range(genus)])
+        a_periods = periods[:, :genus]
+        raw_tau = a_periods ** -1 * periods[:, genus:]
+        tau = (raw_tau + raw_tau.T) / 2
+        forms = tuple(_baker_callable(ctx, data.basis, i) for i in range(genus))
+        normalised = _normalised_differentials(ctx, forms, a_periods)
+        polygon = data.polygon.polygon
+        cycles = _integrate_geometric_loops_iterated(
+            ctx, curve, data.cover, data.graph, polygon,
+            polygon.a_loops, normalised)
+        value = _riemann_constant_from_iterated_cycles(ctx, tau, cycles)
+    return tuple(+entry for entry in value), cycles
+
+
+def _geometric_abel_value(ctx, curve, place, base_place=None):
+    """Private single-place wrapper for geometric Abel integration."""
+    return _geometric_abel_divisor(ctx, curve, (place,), base_place)
+
+
+def _geometric_abel_divisor(ctx, curve, places, base_place=None):
+    """Integrate a divisor with shared operation-local edge and rule caches.
+
+    Ownership is checked at caller precision before entering the guarded
+    computation. A chart tail runs from the represented place to its affine
+    junction, so its pulled-back integral is subtracted from the open value.
+    """
+    # Charts depend on the stage validators; import here to avoid a cycle.
+    from .charts import _validated_chart_coordinate_map
+
+    def endpoint(place, name):
+        junction, tail, unused_place = _normalise_curve_endpoint(
+            ctx, curve, place, name)
+        coordinate_map = (None if tail is None else
+                          _validated_chart_coordinate_map(ctx, tail.chart))
+        return junction, tail, coordinate_map
+
+    targets = tuple(endpoint(place, "place") for place in places)
+    base = None if base_place is None else endpoint(base_place, "base_place")
+    with ctx.extraprec(_GEOMETRIC_GUARD_BITS):
+        data = _stage_geometric_periods_working(ctx, curve)
+        forms = tuple(_baker_callable(ctx, data.basis, i)
+                      for i in range(data.genus))
+
+        rules, edges = {}, {}
+
+        def value_at(endpoint):
+            junction, tail, coordinate_map = endpoint
+            value = _finite_geometric_abel_value(
+                ctx, curve, data, junction, forms,
+                quadrature_cache=rules, edge_cache=edges)
+            if tail is not None:
+                pullbacks = _pullback_plane_curve_differentials(forms, coordinate_map)
+                local = _integrate_plane_curve_branch(
+                    ctx, tail.chart.curve, tail.branch, pullbacks)
+                value = tuple(a - b for a, b in zip(value, local.values))
+            return value
+
+        values = tuple(value_at(target) for target in targets)
+        value = tuple(ctx.fsum(item[i] for item in values)
+                      for i in range(data.genus))
+        if base is not None and targets:
+            origin = value_at(base)
+            value = tuple(a - len(targets) * b for a, b in zip(value, origin))
+    return tuple(+entry for entry in value)
 
 
 @_curve_stage_cache(16)

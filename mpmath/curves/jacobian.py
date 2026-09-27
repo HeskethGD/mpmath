@@ -14,6 +14,7 @@ from .integration import (
 )
 from .monodromy import (
     _concatenate_continuation_sequence, _shortest_monodromy_word,
+    _geometric_sheet_connector,
 )
 from .polynomial import (
     _evaluate_plane_derivative, _evaluate_plane_polynomial,
@@ -176,13 +177,22 @@ def _canonical_polygon_riemann_constant(
             branch_values=branch_values,
             quadrature_cache=quadrature_cache)
         for continuation in numerical_polygon.a_continuations)
+    value = _riemann_constant_from_iterated_cycles(ctx, tau, cycle_integrals)
+    return value, cycle_integrals, normalised
+
+
+def _riemann_constant_from_iterated_cycles(ctx, tau, cycle_integrals):
+    """Apply the canonical-polygon formula to normalized based a-loops."""
+    genus = tau.rows
+    if tau.cols != genus or len(cycle_integrals) != genus:
+        raise ValueError("canonical cycles and period matrix disagree")
     value = ctx.matrix(genus, 1)
     for row in range(genus):
         correction = ctx.fsum(
             cycle_integrals[cycle].iterated[row][cycle]
             for cycle in range(genus) if cycle != row)
         value[row] = (1 + tau[row, row]) / 2 + correction
-    return value, cycle_integrals, normalised
+    return value
 
 
 def _jacobian_characteristic(ctx, value, tau):
@@ -316,6 +326,50 @@ def _finite_base_abel_value(
         check_convergence=check_convergence,
         quadrature_cache=quadrature_cache)
     return ctx.matrix(integral.values)
+
+
+def _finite_geometric_abel_value(ctx, curve, data, place, differentials,
+                                 quadrature_cache=None, edge_cache=None):
+    """Integrate from the geometric root to a validated regular finite place.
+
+    The open lift starts with all sheets in the root fibre. A tree connector
+    first reaches the sheet whose open lift ends at the requested place.
+    Integrals are additive here, so reversed connector edges contribute with
+    a minus sign in their original sheet labelling. Supplied caches must
+    belong to this same cover, differential basis and numerical state.
+    """
+    cover, graph = data.cover, data.graph
+    root = data.polygon.polygon.root
+    start = cover.geometry.vertices[root[0]]
+    branch_points = cover.geometry.branch_values
+    path = ((start, start) if place.x == start else
+            _guarded_open_path(ctx, start, place.x, branch_points))
+    continuation = _continue_plane_curve_sheets_adaptive(
+        ctx, curve, path, initial_sheets=cover.fibres[root[0]],
+        max_refinements=20)
+    target_sheet = min(range(curve.y_degree), key=lambda sheet:
+                       abs(continuation.fibres[-1][sheet] - place.y))
+    if abs(continuation.fibres[-1][target_sheet] - place.y) > (
+            100 * ctx.sqrt(ctx.eps) * max(ctx.one, abs(place.y))):
+        raise ValueError("place could not be matched to a geometric sheet")
+    connector = _geometric_sheet_connector(graph, root, target_sheet)
+    rules = {} if quadrature_cache is None else quadrature_cache
+    edges = {} if edge_cache is None else edge_cache
+
+    def integrate(lift, sheet):
+        return _integrate_plane_curve_path(
+            ctx, curve, lift, differentials, sheet=sheet,
+            quadrature_order="geometry", branch_values=branch_points,
+            quadrature_cache=rules).values
+
+    pieces = [integrate(continuation, target_sheet)]
+    for index, orientation in connector:
+        edge = graph.edges[index]
+        if index not in edges:
+            edges[index] = integrate(cover.continuations[edge.base_edge], edge.sheet)
+        pieces.append(tuple(orientation * value for value in edges[index]))
+    return tuple(ctx.fsum(piece[i] for piece in pieces)
+                 for i in range(len(differentials)))
 
 
 def _jacobian_lattice_matrix(ctx, tau):
