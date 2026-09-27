@@ -108,7 +108,11 @@ def _stage_geometric_periods_working(ctx, curve):
 
 @_curve_stage_cache(8)
 def _stage_geometric_custom_periods_working(ctx, key):
-    """Unrounded periods for a supplied holomorphic basis, without Baker checks."""
+    """Unrounded g-form periods with order checks, without Baker checks.
+
+    The caller selects the interpretation as first or second kind and is
+    responsible for the forms being regular on the integration paths.
+    """
     curve, forms = key
     cover = _stage_geometric_cover(ctx, curve)
     graph, polygon = _stage_geometric_polygon(ctx, curve)
@@ -197,7 +201,8 @@ def _geometric_abel_value(ctx, curve, place, base_place=None):
     return _geometric_abel_divisor(ctx, curve, (place,), base_place)
 
 
-def _geometric_abel_divisor(ctx, curve, places, base_place=None, forms=None):
+def _geometric_abel_divisor(ctx, curve, places, base_place=None, forms=None,
+                            second_forms=()):
     """Integrate a divisor with shared operation-local edge and rule caches.
 
     Ownership is checked at caller precision before entering the guarded
@@ -210,6 +215,9 @@ def _geometric_abel_divisor(ctx, curve, places, base_place=None, forms=None):
     def endpoint(place, name):
         junction, tail, unused_place = _normalise_curve_endpoint(
             ctx, curve, place, name)
+        if tail is not None and second_forms:
+            raise NotImplementedError(
+                "geometric second-kind chart endpoints require a pole-aware policy")
         coordinate_map = (None if tail is None else
                           _validated_chart_coordinate_map(ctx, tail.chart))
         return junction, tail, coordinate_map
@@ -217,12 +225,15 @@ def _geometric_abel_divisor(ctx, curve, places, base_place=None, forms=None):
     targets = tuple(endpoint(place, "place") for place in places)
     base = None if base_place is None else endpoint(base_place, "base_place")
     with ctx.extraprec(_GEOMETRIC_GUARD_BITS):
-        supplied = forms is not None
+        supplied = forms is not None or bool(second_forms)
         data = _geometric_period_data_working(ctx, curve, forms)
         if forms is None:
             forms = tuple(_baker_callable(ctx, data.basis, i)
                           for i in range(data.genus))
 
+        if second_forms and len(second_forms) != data.genus:
+            raise ValueError("second_differentials must contain one form per genus")
+        forms = forms + tuple(second_forms)
         rules, edges = {}, {}
 
         def value_at(endpoint):
@@ -240,7 +251,7 @@ def _geometric_abel_divisor(ctx, curve, places, base_place=None, forms=None):
 
         values = tuple(value_at(target) for target in targets)
         value = tuple(ctx.fsum(item[i] for item in values)
-                      for i in range(data.genus))
+                      for i in range(len(forms)))
         if base is not None and targets:
             origin = value_at(base)
             value = tuple(a - len(targets) * b for a, b in zip(value, origin))

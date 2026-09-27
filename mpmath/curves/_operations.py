@@ -50,12 +50,24 @@ def _uses_geometric_backend(curve):
             and curve.hyperelliptic is None)
 
 
-def _check_geometric_forms(differentials, second_kind=False,
-                           second_differentials=None):
-    if second_kind or second_differentials is not None:
-        raise NotImplementedError(
-            "the geometric backend currently supports only first-kind forms; "
-            "construct a separate radial curve for second-kind forms")
+def _geometric_second_forms(second_kind, second_differentials):
+    if second_kind and second_differentials is None:
+        raise ValueError("second-kind operations require second_differentials")
+    return (() if second_differentials is None else
+            _curve_differential_sequence(second_differentials, "second_differentials"))
+
+
+def _geometric_second_kind_periods(ctx, prepared, first, forms):
+    if len(forms) != first.genus:
+        raise ValueError("second_differentials must contain one form per genus")
+    data = _stage_geometric_custom_periods(ctx, (prepared, forms))
+    full = _period_matrix_from_columns(ctx, data.columns, 0, first.genus, first.genus)
+    eta, eta_prime = -full[:, :first.genus]/2, -full[:, first.genus:]/2
+    raw_kappa = eta * first.omega**-1
+    return CurveSecondKindPeriods(
+        first.genus, forms, eta, eta_prime, (raw_kappa+raw_kappa.T)/2,
+        ctx.norm(raw_kappa-raw_kappa.T), data.max_sheet_residual,
+        "general", "geometric-polygon")
 
 
 def _geometric_first_kind_periods(ctx, prepared, forms=None):
@@ -360,10 +372,14 @@ def periods(ctx, curve, differentials=None, *, second_kind=False,
         return first_record
 
     if _uses_geometric_backend(curve):
-        _check_geometric_forms(differentials, second_kind, second_differentials)
+        second_forms = _geometric_second_forms(second_kind, second_differentials)
         forms = (None if differentials is None else
                  _curve_differential_sequence(differentials, "differentials"))
-        return _geometric_first_kind_periods(ctx, prepared, forms)
+        first = _geometric_first_kind_periods(ctx, prepared, forms)
+        if second_forms:
+            second = _geometric_second_kind_periods(ctx, prepared, first, second_forms)
+            return (first, second) if _return_first else second
+        return first
 
     if second_kind and second_differentials is None:
         raise ValueError(
@@ -503,7 +519,6 @@ def riemann_constant(ctx, curve, differentials=None, *,
             "hyperelliptic", "baker")
 
     if _uses_geometric_backend(curve):
-        _check_geometric_forms(differentials)
         forms = (None if differentials is None else
                  _curve_differential_sequence(differentials, "differentials"))
         data = _geometric_first_kind_periods(ctx, prepared, forms)
@@ -981,13 +996,24 @@ def abel_map(ctx, curve, target, differentials=None, *, second_kind=False,
         return result
 
     if _uses_geometric_backend(curve):
-        _check_geometric_forms(differentials, second_kind, second_differentials)
+        second_forms = _geometric_second_forms(second_kind, second_differentials)
         forms = (None if differentials is None else
                  _curve_differential_sequence(differentials, "differentials"))
         places = _normalise_curve_places(ctx, prepared, target)
         result = ctx.matrix(_geometric_abel_divisor(
             ctx, prepared, tuple(place for junction, tail, place in places),
-            base_place=base_place, forms=forms))
+            base_place=base_place, forms=forms, second_forms=second_forms))
+        if second_forms:
+            genus = len(second_forms)
+            first, second = result[:genus, :], result[genus:, :]
+            shift = None
+            if reduce:
+                first_periods = _geometric_first_kind_periods(ctx, prepared, forms)
+                second_periods = _geometric_second_kind_periods(
+                    ctx, prepared, first_periods, second_forms)
+                second, shift = _reduce_second_kind_abel(
+                    ctx, first, second, first_periods, second_periods)
+            return CurveSecondKindAbelMap(second, shift, "general", "geometric-polygon")
         if reduce:
             result = lattice_reduce(ctx, result, periods(ctx, curve, forms)).value
         return result

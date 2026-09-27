@@ -63,9 +63,9 @@ def _integrate_geometric_chains(ctx, curve, chains, basis, branch_values):
     return tuple(columns), residual
 
 def _integrate_geometric_callable_chains(ctx, curve, chains, forms, branch_values):
-    """Integrate supplied holomorphic forms on shared geometric edges.
+    """Integrate supplied forms on shared geometric edges.
 
-    Callers are responsible for holomorphicity, as in the radial API. Use
+    Callers must exclude poles on these paths, as in the radial API. Use
     successive-order checks for opaque callables rather than the structured
     automatic-basis fast path. These checks do not certify absence of poles.
     """

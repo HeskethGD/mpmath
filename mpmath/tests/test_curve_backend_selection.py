@@ -68,7 +68,7 @@ def test_geometric_unsupported_operations_are_explicit():
         lambda: curve.second_kind_periods(),
         lambda: curve.second_kind_abel_map([]),
     ):
-        with pytest.raises(NotImplementedError, match='only first-kind'):
+        with pytest.raises(ValueError, match='require second_differentials'):
             operation()
     chart_place = CurvePlace(0, 1, object())
     for operation in (
