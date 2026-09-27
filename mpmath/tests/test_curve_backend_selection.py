@@ -111,9 +111,9 @@ def test_radial_default_and_monodromy_diagnostic():
     default = ctx.algebraic_curve(terms)
     radial = ctx.algebraic_curve(terms, _general_backend='radial')
     geometric = ctx.algebraic_curve(terms, _general_backend='geometric')
-    assert default.first_kind_periods().marking == 'canonical-polygon'
-    assert ctx.norm(default.riemann_matrix()-radial.riemann_matrix()) == 0
-    assert geometric.first_kind_periods().marking == 'geometric-polygon'
+    assert default.first_kind_periods().marking == 'geometric-polygon'
+    assert ctx.norm(default.riemann_matrix()-geometric.riemann_matrix()) == 0
+    assert radial.first_kind_periods().marking == 'canonical-polygon'
     assert geometric.monodromy == radial.monodromy
     assert geometric.validate(geometric.monodromy).passed
 

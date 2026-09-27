@@ -31,7 +31,7 @@ class AlgebraicCurve:
     are not regularized.
     """
 
-    def __init__(self, ctx, specification, *, _general_backend="radial"):
+    def __init__(self, ctx, specification, *, _general_backend="geometric"):
         if _general_backend not in ("radial", "geometric"):
             raise ValueError("_general_backend must be 'radial' or 'geometric'")
         self.__general_backend = _general_backend
