@@ -155,3 +155,26 @@ def test_second_kind_abel_map_checks_geometry_quadrature(monkeypatch):
         assert calls
         assert all(order == "geometry" and branches and checked
                    for order, branches, checked in calls)
+
+
+def test_checked_chart_tail_checks_each_component_and_bounds_work(monkeypatch):
+    from mpmath.curves.continuation import _continue_plane_curve_branch
+    from mpmath.curves.integration import _integrate_plane_curve_branch
+    ctx = mp.clone()
+    ctx.dps = 20
+    curve = _prepare_plane_curve(ctx, {(0, 1): 1, (0, 0): -1})
+    branch = _continue_plane_curve_branch(ctx, curve, (0, 1), 1)
+    original = ctx.gauss_quadrature
+    orders = []
+
+    def counted(order, *args, **kwargs):
+        orders.append(order)
+        return original(order, *args, **kwargs)
+
+    monkeypatch.setattr(ctx, 'gauss_quadrature', counted)
+    # A large convergent component must not hide a smaller divergent one.
+    forms = (lambda t, w: ctx.mpf('1e100'), lambda t, w: 1/t**2)
+    with pytest.raises(ctx.NoConvergence, match='endpoint may be a pole'):
+        _integrate_plane_curve_branch(ctx, curve, branch, forms, check_convergence=True)
+    assert orders == [40, 56, 72, 88]
+    assert ctx.dps == 20

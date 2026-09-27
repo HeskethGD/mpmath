@@ -27,7 +27,8 @@ class AlgebraicCurve:
     are supported. Supplied callables must be holomorphic on the curve;
     numerical checks cannot certify that they have no poles. Supplied
     second-kind forms must have zero residues and no poles on integration
-    paths. Second-kind chart endpoints are not yet supported.
+    paths. Chart endpoints use ordinary convergent integrals; pole values
+    are not regularized.
     """
 
     def __init__(self, ctx, specification, *, _general_backend="radial"):
@@ -228,7 +229,9 @@ class AlgebraicCurve:
         The result is a ``CurveSecondKindAbelMap`` record. Recognized
         hyperelliptic curves use their automatic BEL basis; the general
         engine requires ``second_differentials`` and can select first-kind
-        forms automatically where Baker's construction applies.
+        forms automatically where Baker's construction applies. Geometric
+        chart tails are checked for numerical convergence; endpoint poles
+        do not define regularized values.
         """
         return self._call(
             _operations.abel_map,
@@ -290,7 +293,8 @@ class CurveMethods:
         ``geometric`` selects a common compact marking for
         first-kind general-curve operations, with automatic or supplied
         holomorphic bases. Supplied second-kind forms support periods and
-        finite-endpoint Abel maps; second-kind chart endpoints are unsupported.
+        Abel maps, including convergent chart tails. Divergent pole values
+        are not regularized.
         Recognized hyperelliptic models retain their existing dispatch.
         Monodromy remains a radial diagnostic with its own base fibre.
         """

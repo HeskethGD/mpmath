@@ -560,8 +560,13 @@ def _pullback_plane_curve_differentials(differentials, coordinate_map):
 
 
 def _integrate_plane_curve_branch(
-        ctx, curve, continuation, differentials, quadrature_order=None):
-    """Integrate coefficients of ``dt`` along one continued chart branch."""
+        ctx, curve, continuation, differentials, quadrature_order=None,
+        check_convergence=False):
+    """Integrate coefficients of ``dt`` along one continued chart branch.
+
+    Optional bounded order refinement checks each component separately.
+    It does not certify absence of poles or regularize divergent integrals.
+    """
     try:
         differentials = tuple(differentials)
     except TypeError:
@@ -575,6 +580,24 @@ def _integrate_plane_curve_branch(
         quadrature_order = max(16, 2 * ctx.dps)
     if not isinstance(quadrature_order, int) or quadrature_order < 2:
         raise ValueError("quadrature_order must be an integer at least 2")
+    if not isinstance(check_convergence, bool):
+        raise ValueError("check_convergence must be boolean")
+    if check_convergence:
+        previous = _integrate_plane_curve_branch(
+            ctx, curve, continuation, differentials, quadrature_order)
+        residual = previous.max_sheet_residual
+        for unused in range(3):
+            quadrature_order += 16
+            current = _integrate_plane_curve_branch(
+                ctx, curve, continuation, differentials, quadrature_order)
+            residual = max(residual, current.max_sheet_residual)
+            if all(ctx.isfinite(a) and ctx.isfinite(b)
+                   and abs(a-b) <= 100*ctx.eps*max(ctx.one, abs(b))
+                   for a, b in zip(previous.values, current.values)):
+                return current._replace(max_sheet_residual=residual)
+            previous = current
+        raise ctx.NoConvergence(
+            "chart quadrature did not converge; the endpoint may be a pole")
     nodes, weights = ctx.gauss_quadrature(quadrature_order, "legendre")
     parameters = tuple((nodes[index] + 1) / 2
                        for index in range(quadrature_order))

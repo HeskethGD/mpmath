@@ -46,9 +46,9 @@ def test_geometric_exact_second_kind_integrals_and_failures(monkeypatch):
         curve.second_kind_abel_map(target, second_differentials=forms[:1])
     chart = curve.monomial_chart(-3, -4)
     infinity = curve.chart_place(chart, 1, ctx.mpf('.3'))
-    with pytest.raises(NotImplementedError, match='pole-aware'):
+    with pytest.raises(ctx.NoConvergence, match='endpoint may be a pole'):
         curve.second_kind_abel_map(infinity, second_differentials=forms)
-    with pytest.raises(NotImplementedError, match='pole-aware'):
+    with pytest.raises(ctx.NoConvergence, match='endpoint may be a pole'):
         curve.second_kind_abel_map(target, second_differentials=forms, base_place=infinity)
 
 
@@ -91,3 +91,49 @@ def test_geometric_second_kind_periods_match_radial_and_shared_reduction():
     assert any(shift)
     assert reduced.reduction_shift == shift
     assert ctx.norm(reduced.value-(value.value-new_second*ctx.matrix(shift))) < ctx.mpf('1e-14')
+
+
+def test_second_kind_regular_chart_endpoints_match_exact_and_radial():
+    ctx = mp.clone()
+    ctx.dps = 18
+    terms = {(0, 3): 1, (4, 0): -1, (0, 0): 1}
+    curve = ctx.algebraic_curve(terms, _general_backend='geometric')
+    branch = curve.chart(
+        {(0, 3): 1, (0, 0): -4, (3, 0): -6, (6, 0): -4, (9, 0): -1},
+        lambda t, w: (1+t**3, t*w, 3*t**2))
+    infinity = curve.monomial_chart(-3, -4)
+    base = curve.fibre(ctx.mpc('.3', '.7'))[0]
+    for chart, seed, forms, powers, endpoint_x, offset in (
+        (branch, ctx.root(4, 3),
+         (lambda x, y: 1, lambda x, y: 2*x, lambda x, y: 3*x*x), (1, 2, 3), 1, 0),
+        (infinity, ctx.one,
+         (lambda x, y: -1/(x-1000j)**2, lambda x, y: -2/(x-1000j)**3,
+          lambda x, y: -3/(x-1000j)**4),
+         (-1, -2, -3), None, 1000j),
+    ):
+        values = []
+        for cutoff in ('.3', '.25'):
+            place = curve.chart_place(chart, seed, ctx.mpf(cutoff))
+            value = curve.second_kind_abel_map(place, second_differentials=forms, base_place=base)
+            expected = ctx.matrix([(0 if endpoint_x is None else (endpoint_x-offset)**k)-(base.x-offset)**k
+                                   for k in powers])
+            assert ctx.norm(value.value-expected) < ctx.mpf('1e-14')
+            values.append(value.value)
+        assert ctx.norm(values[0]-values[1]) < ctx.mpf('1e-14')
+        # The radial chart tail uses a fixed order; compare at higher
+        # precision rather than treating its 18-digit output as exact.
+        with ctx.workdps(25):
+            reference = ctx.algebraic_curve(terms)
+            reference_chart = reference.chart(chart.curve.terms, chart.coordinate_map)
+            reference_seed = ctx.one if endpoint_x is None else ctx.root(4, 3)
+            reference_place = reference.chart_place(reference_chart, reference_seed, ctx.mpf('.25'))
+            old = reference.second_kind_abel_map(
+                reference_place, second_differentials=forms, base_place=base)
+            assert ctx.norm(old.value-values[-1]) < ctx.mpf('1e-16')
+        reverse = curve.second_kind_abel_map(base, second_differentials=forms, base_place=place)
+        assert ctx.norm(reverse.value+values[-1]) < ctx.mpf('1e-14')
+        reduced = curve.second_kind_abel_map(place, second_differentials=forms,
+                                            base_place=base, reduce=True)
+        assert ctx.norm(reduced.value-values[-1]) < ctx.mpf('1e-14')
+        assert reduced.reduction_shift == curve.lattice_reduce(
+            curve.abel_map(place, base_place=base), curve.first_kind_periods()).shift

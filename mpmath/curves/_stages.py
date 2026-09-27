@@ -215,9 +215,6 @@ def _geometric_abel_divisor(ctx, curve, places, base_place=None, forms=None,
     def endpoint(place, name):
         junction, tail, unused_place = _normalise_curve_endpoint(
             ctx, curve, place, name)
-        if tail is not None and second_forms:
-            raise NotImplementedError(
-                "geometric second-kind chart endpoints require a pole-aware policy")
         coordinate_map = (None if tail is None else
                           _validated_chart_coordinate_map(ctx, tail.chart))
         return junction, tail, coordinate_map
@@ -245,7 +242,8 @@ def _geometric_abel_divisor(ctx, curve, places, base_place=None, forms=None,
             if tail is not None:
                 pullbacks = _pullback_plane_curve_differentials(forms, coordinate_map)
                 local = _integrate_plane_curve_branch(
-                    ctx, tail.chart.curve, tail.branch, pullbacks)
+                    ctx, tail.chart.curve, tail.branch, pullbacks,
+                    check_convergence=bool(second_forms))
                 value = tuple(a - b for a, b in zip(value, local.values))
             return value
 
