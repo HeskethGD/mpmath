@@ -62,6 +62,32 @@ def _integrate_geometric_chains(ctx, curve, chains, basis, branch_values):
                              for i in range(count)))
     return tuple(columns), residual
 
+def _integrate_geometric_callable_chains(ctx, curve, chains, forms, branch_values):
+    """Integrate supplied holomorphic forms on shared geometric edges.
+
+    Callers are responsible for holomorphicity, as in the radial API. Use
+    successive-order checks for opaque callables rather than the structured
+    automatic-basis fast path. These checks do not certify absence of poles.
+    """
+    rules, edges, columns = {}, {}, []
+    residual = ctx.zero
+    for chain in chains:
+        pieces = []
+        for term in chain.terms:
+            key = id(term.continuation), term.sheet
+            if key not in edges:
+                integral = _integrate_plane_curve_path(
+                    ctx, curve, term.continuation, forms, sheet=term.sheet,
+                    quadrature_order="geometry", branch_values=branch_values,
+                    check_convergence=True, quadrature_cache=rules)
+                edges[key] = integral.values
+                residual = max(residual, integral.max_sheet_residual)
+            pieces.append((term.coefficient, edges[key]))
+        columns.append(tuple(ctx.fsum(c * values[i] for c, values in pieces)
+                             for i in range(len(forms))))
+    return tuple(columns), residual
+
+
 # Lifted-path integration
 # -----------------------
 

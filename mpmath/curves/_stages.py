@@ -15,7 +15,7 @@ from .differentials import (
 )
 from .integration import (
     _integrate_plane_curve_path, _integrate_geometric_chains,
-    _integrate_geometric_loops_iterated,
+    _integrate_geometric_loops_iterated, _integrate_geometric_callable_chains,
     _integrate_plane_curve_branch, _pullback_plane_curve_differentials,
 )
 from .jacobian import (
@@ -107,6 +107,35 @@ def _stage_geometric_periods_working(ctx, curve):
 
 
 @_curve_stage_cache(8)
+def _stage_geometric_custom_periods_working(ctx, key):
+    """Unrounded periods for a supplied holomorphic basis, without Baker checks."""
+    curve, forms = key
+    cover = _stage_geometric_cover(ctx, curve)
+    graph, polygon = _stage_geometric_polygon(ctx, curve)
+    if not graph.genus or len(forms) != graph.genus:
+        raise ValueError("differentials must contain one form per positive genus")
+    columns, residual = _integrate_geometric_callable_chains(
+        ctx, curve, polygon.chains, forms, cover.geometry.branch_values)
+    return _GeometricPeriodData(
+        graph.genus, None, columns, residual, cover, graph, polygon, ctx.prec)
+
+
+def _geometric_period_data_working(ctx, curve, forms):
+    if forms is None:
+        return _stage_geometric_periods_working(ctx, curve)
+    return _stage_geometric_custom_periods_working(ctx, (curve, forms))
+
+
+@_curve_stage_cache(8)
+def _stage_geometric_custom_periods(ctx, key):
+    with ctx.extraprec(_GEOMETRIC_GUARD_BITS):
+        data = _stage_geometric_custom_periods_working(ctx, key)
+    return data._replace(
+        columns=tuple(tuple(+v for v in column) for column in data.columns),
+        max_sheet_residual=+data.max_sheet_residual)
+
+
+@_curve_stage_cache(8)
 def _stage_geometric_periods(ctx, curve):
     """Private native-graph backend for automatic first-kind periods.
 
@@ -117,8 +146,8 @@ def _stage_geometric_periods(ctx, curve):
 
     This entry point does not select or replace the public radial backend.
     In particular, these periods must not be paired with a radial polygon's
-    Abel coordinates or Riemann constants. Supplied callable forms require a
-    separate policy for additional poles and are not accepted here.
+    Abel coordinates or Riemann constants. Supplied holomorphic callables
+    use the separate custom-period stage with successive-order checks.
     """
     with ctx.extraprec(_GEOMETRIC_GUARD_BITS):
         data = _stage_geometric_periods_working(ctx, curve)
@@ -135,15 +164,25 @@ def _stage_geometric_riemann_constant(ctx, curve):
     precision and use forms normalized by the unrounded full a-periods.
     The base place is the root of the matching geometric period polygon.
     """
+    return _geometric_riemann_constant(ctx, curve)
+
+
+@_curve_stage_cache(8)
+def _stage_geometric_custom_riemann_constant(ctx, key):
+    return _geometric_riemann_constant(ctx, *key)
+
+
+def _geometric_riemann_constant(ctx, curve, forms=None):
     with ctx.extraprec(_GEOMETRIC_GUARD_BITS):
-        data = _stage_geometric_periods_working(ctx, curve)
+        data = _geometric_period_data_working(ctx, curve, forms)
         genus = data.genus
         periods = ctx.matrix([[column[row] for column in data.columns]
                               for row in range(genus)])
         a_periods = periods[:, :genus]
         raw_tau = a_periods ** -1 * periods[:, genus:]
         tau = (raw_tau + raw_tau.T) / 2
-        forms = tuple(_baker_callable(ctx, data.basis, i) for i in range(genus))
+        if forms is None:
+            forms = tuple(_baker_callable(ctx, data.basis, i) for i in range(genus))
         normalised = _normalised_differentials(ctx, forms, a_periods)
         polygon = data.polygon.polygon
         cycles = _integrate_geometric_loops_iterated(
@@ -158,7 +197,7 @@ def _geometric_abel_value(ctx, curve, place, base_place=None):
     return _geometric_abel_divisor(ctx, curve, (place,), base_place)
 
 
-def _geometric_abel_divisor(ctx, curve, places, base_place=None):
+def _geometric_abel_divisor(ctx, curve, places, base_place=None, forms=None):
     """Integrate a divisor with shared operation-local edge and rule caches.
 
     Ownership is checked at caller precision before entering the guarded
@@ -178,9 +217,11 @@ def _geometric_abel_divisor(ctx, curve, places, base_place=None):
     targets = tuple(endpoint(place, "place") for place in places)
     base = None if base_place is None else endpoint(base_place, "base_place")
     with ctx.extraprec(_GEOMETRIC_GUARD_BITS):
-        data = _stage_geometric_periods_working(ctx, curve)
-        forms = tuple(_baker_callable(ctx, data.basis, i)
-                      for i in range(data.genus))
+        supplied = forms is not None
+        data = _geometric_period_data_working(ctx, curve, forms)
+        if forms is None:
+            forms = tuple(_baker_callable(ctx, data.basis, i)
+                          for i in range(data.genus))
 
         rules, edges = {}, {}
 
@@ -188,7 +229,8 @@ def _geometric_abel_divisor(ctx, curve, places, base_place=None):
             junction, tail, coordinate_map = endpoint
             value = _finite_geometric_abel_value(
                 ctx, curve, data, junction, forms,
-                quadrature_cache=rules, edge_cache=edges)
+                quadrature_cache=rules, edge_cache=edges,
+                check_convergence=supplied)
             if tail is not None:
                 pullbacks = _pullback_plane_curve_differentials(forms, coordinate_map)
                 local = _integrate_plane_curve_branch(

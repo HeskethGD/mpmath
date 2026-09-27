@@ -108,6 +108,11 @@ def _matrix(ctx, columns):
     ({(0, 2): 1, (5, 0): -1, (1, 0): 1, (0, 0): -1}, 2),
     ({(3, 1): 1, (0, 3): 1, (1, 0): 1}, 3),
     ({(4, 0): 1, (0, 4): 1, (0, 0): -1}, 3),
+    # General-mu trigonal: a close conjugate branch pair requires more
+    # than twelve local bisections, but only a small total panel count.
+    ({(0, 3): 1, (1, 2): 1, (0, 2): 4, (2, 1): 2,
+      (1, 1): -5, (0, 1): -7, (4, 0): -1, (3, 0): 3,
+      (2, 0): -6, (1, 0): -8, (0, 0): 9}, 3),
 ])
 def test_geometric_periods_agree_with_radial_lattice(terms, genus):
     with mp.workdps(20):

@@ -329,7 +329,8 @@ def _finite_base_abel_value(
 
 
 def _finite_geometric_abel_value(ctx, curve, data, place, differentials,
-                                 quadrature_cache=None, edge_cache=None):
+                                 quadrature_cache=None, edge_cache=None,
+                                 check_convergence=False):
     """Integrate from the geometric root to a validated regular finite place.
 
     The open lift starts with all sheets in the root fibre. A tree connector
@@ -360,7 +361,7 @@ def _finite_geometric_abel_value(ctx, curve, data, place, differentials,
         return _integrate_plane_curve_path(
             ctx, curve, lift, differentials, sheet=sheet,
             quadrature_order="geometry", branch_values=branch_points,
-            quadrature_cache=rules).values
+            quadrature_cache=rules, check_convergence=check_convergence).values
 
     pieces = [integrate(continuation, target_sheet)]
     for index, orientation in connector:

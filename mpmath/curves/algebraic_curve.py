@@ -20,11 +20,13 @@ class AlgebraicCurve:
     recognized after normalization, independently of their input syntax.
 
     The experimental ``_general_backend="geometric"`` option selects a
-    common geometric polygon for automatic first-kind general-curve
+    common geometric polygon for first-kind general-curve
     operations. The default remains ``"radial"``. The choice is fixed at
     construction and does not change recognized hyperelliptic dispatch.
-    Regular finite and chart-backed Abel endpoints are supported. Custom
-    forms and second-kind operations are not yet supported by this backend.
+    Automatic or supplied holomorphic bases and chart-backed Abel endpoints
+    are supported. Supplied callables must be holomorphic on the curve;
+    numerical checks cannot certify that they have no poles. Second-kind
+    operations are not yet supported by this backend.
     """
 
     def __init__(self, ctx, specification, *, _general_backend="radial"):
@@ -137,7 +139,7 @@ class AlgebraicCurve:
         marking. Other Newton-nondegenerate plane curves use an automatic
         basis indexed by interior lattice points. Supplying ``differentials``
         overrides either basis and selects the general canonical-polygon
-        engine.
+        engine (using the selected backend for non-hyperelliptic models).
         """
         state = _operations._curve_cache_state(self.ctx)
         if differentials is None:
@@ -282,9 +284,9 @@ class CurveMethods:
     def algebraic_curve(ctx, specification, *, _general_backend="radial"):
         """Construct a curve; the private backend option is experimental.
 
-        ``geometric`` selects a common compact marking for automatic
-        first-kind general-curve operations. Custom forms and second-kind
-        operations are not yet supported.
+        ``geometric`` selects a common compact marking for
+        first-kind general-curve operations, with automatic or supplied
+        holomorphic bases. Second-kind operations are not yet supported.
         Recognized hyperelliptic models retain their existing dispatch.
         Monodromy remains a radial diagnostic with its own base fibre.
         """

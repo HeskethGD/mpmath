@@ -61,10 +61,14 @@ def test_geometric_unsupported_operations_are_explicit():
         lambda: curve.riemann_matrix(forms),
         lambda: curve.riemann_constant(forms),
         lambda: curve.abel_map([], forms),
+    ):
+        with pytest.raises(ValueError, match="one form per positive genus"):
+            operation()
+    for operation in (
         lambda: curve.second_kind_periods(),
         lambda: curve.second_kind_abel_map([]),
     ):
-        with pytest.raises(NotImplementedError, match='automatic first-kind'):
+        with pytest.raises(NotImplementedError, match='only first-kind'):
             operation()
     chart_place = CurvePlace(0, 1, object())
     for operation in (
@@ -159,3 +163,54 @@ def test_geometric_chart_endpoints_cutoffs_and_theta():
             with pytest.raises(ValueError, match='different curve or precision'):
                 curve.abel_map(places[0])
     assert ctx.dps == 18
+
+
+def test_geometric_supplied_basis_is_coherent_and_uncached_if_unhashable(monkeypatch):
+    from mpmath.curves import _stages
+    ctx = mp.clone()
+    ctx.dps = 18
+    curve = ctx.algebraic_curve(TERMS, _general_backend='geometric')
+    automatic = curve.first_kind_periods()
+    constant = curve.riemann_constant()
+    point = curve.fibre(ctx.mpc('.3', '.7'))[0]
+    automatic_value = curve.abel_map(point)
+    chart = curve.monomial_chart(-3, -4)
+    infinity = curve.chart_place(chart, 1, ctx.mpf('.3'))
+    automatic_infinity = curve.abel_map(infinity)
+    change = ctx.matrix([[2, 1, 0], [0, 1, 1], [1, 0, 1]])
+
+    class Form:
+        __hash__ = None
+
+        def __init__(self, row):
+            self.row = row
+
+        def __call__(self, x, y):
+            return ctx.fsum(change[self.row, j]*f(x, y)
+                            for j, f in enumerate(automatic.differentials))
+
+    forms = tuple(Form(i) for i in range(3))
+
+    def automatic_forbidden(*args, **kwargs):
+        raise AssertionError('custom forms require no automatic Baker basis')
+
+    monkeypatch.setattr(_stages, '_stage_geometric_periods_working', automatic_forbidden)
+    monkeypatch.setattr(_operations, '_stage_monodromy', automatic_forbidden)
+    supplied = curve.first_kind_periods(forms)
+    assert supplied.differentials == forms
+    assert supplied.marking == 'geometric-polygon'
+    assert ctx.norm(supplied.omega-change*automatic.omega) < ctx.mpf('1e-15')
+    assert ctx.norm(supplied.omega_prime-change*automatic.omega_prime) < ctx.mpf('1e-15')
+    assert ctx.norm(supplied.tau-automatic.tau) < ctx.mpf('1e-15')
+    assert ctx.norm(curve.riemann_constant(forms).value-constant.value) < ctx.mpf('1e-14')
+    value = curve.abel_map(point, forms)
+    assert ctx.norm(value-change*automatic_value) < ctx.mpf('1e-15')
+    chart_value = curve.abel_map(infinity, forms)
+    assert ctx.norm(chart_value-change*automatic_infinity) < ctx.mpf('1e-14')
+    based = curve.abel_map(point, forms, base_place=infinity)
+    assert ctx.norm(based-(value-chart_value)) < ctx.mpf('1e-14')
+    shifted = curve.riemann_constant(forms, base_place=infinity)
+    expected = constant.value+2*((2*supplied.omega)**-1*chart_value)
+    assert ctx.norm(shifted.value-expected) < ctx.mpf('1e-14')
+    reduced = curve.abel_map(point, forms, reduce=True)
+    assert ctx.norm(reduced-curve.lattice_reduce(value, supplied).value) < ctx.mpf('1e-14')

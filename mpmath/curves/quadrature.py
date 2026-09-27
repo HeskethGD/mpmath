@@ -40,25 +40,41 @@ def _geometric_quadrature_order(ctx, left, right, singularities):
     return 32 * ((estimate + 31) // 32)
 
 
-def _geometric_edge_panels(ctx, left, right, singularities, max_order=64):
-    """Plan geometric Gauss panels independently of continuation knots."""
+def _geometric_edge_panels(ctx, left, right, singularities, max_order=64,
+                           max_panels=1024):
+    """Plan geometric Gauss panels with bounded work, not bounded depth.
+
+    A nearby branch value can require deep but highly localized refinement.
+    Limit the total leaf panels instead; reject subdivisions whose parameter
+    or mapped midpoint can no longer be distinguished at working precision.
+    The order estimate and its accuracy margin remain unchanged.
+    """
     if max_order < 8:
         raise ValueError("maximum geometric order must be at least eight")
-    pending = [(ctx.zero, ctx.one, 0)]
+    if not isinstance(max_panels, int) or max_panels < 1:
+        raise ValueError("maximum geometric panel count must be a positive integer")
+    singularities = tuple(singularities)
+    pending = [(ctx.zero, ctx.one)]
     panels = []
     delta = right - left
     while pending:
-        lower, upper, depth = pending.pop()
+        lower, upper = pending.pop()
+        start, end = left + lower * delta, left + upper * delta
+        if start == end:
+            raise ctx.NoConvergence("geometric panel endpoints are unresolved")
         order = _geometric_quadrature_order(
-            ctx, left + lower * delta, left + upper * delta, singularities)
+            ctx, start, end, singularities)
         if order <= max_order:
             panels.append((lower, upper, order))
         else:
-            if depth >= 12:
+            if len(panels) + len(pending) + 2 > max_panels:
                 raise ctx.NoConvergence(
-                    "geometric quadrature exceeded its subdivision limit")
+                    "geometric quadrature exceeded its panel budget")
             midpoint = (lower + upper) / 2
-            pending.extend(((midpoint, upper, depth + 1), (lower, midpoint, depth + 1)))
+            mapped_midpoint = left + midpoint * delta
+            if midpoint in (lower, upper) or mapped_midpoint in (start, end):
+                raise ctx.NoConvergence("geometric panel midpoint is unresolved")
+            pending.extend(((midpoint, upper), (lower, midpoint)))
     return tuple(panels)
 
 

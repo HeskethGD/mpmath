@@ -19,6 +19,7 @@ from ._stages import (
     _tau_imaginary_eigenvalues,
     _stage_geometric_periods, _stage_geometric_polygon,
     _stage_geometric_riemann_constant, _geometric_abel_divisor,
+    _stage_geometric_custom_periods, _stage_geometric_custom_riemann_constant,
     _GEOMETRIC_GUARD_BITS,
 )
 from .differentials import _baker_callable
@@ -51,14 +52,15 @@ def _uses_geometric_backend(curve):
 
 def _check_geometric_forms(differentials, second_kind=False,
                            second_differentials=None):
-    if differentials is not None or second_kind or second_differentials is not None:
+    if second_kind or second_differentials is not None:
         raise NotImplementedError(
-            "the geometric backend currently supports only automatic first-kind "
-            "forms; construct a separate radial curve for custom or second-kind forms")
+            "the geometric backend currently supports only first-kind forms; "
+            "construct a separate radial curve for second-kind forms")
 
 
-def _geometric_first_kind_periods(ctx, prepared):
-    data = _stage_geometric_periods(ctx, prepared)
+def _geometric_first_kind_periods(ctx, prepared, forms=None):
+    data = (_stage_geometric_periods(ctx, prepared) if forms is None else
+            _stage_geometric_custom_periods(ctx, (prepared, forms)))
     genus = data.genus
     full = _period_matrix_from_columns(ctx, data.columns, 0, genus, genus)
     omega, omega_prime = full[:, :genus] / 2, full[:, genus:] / 2
@@ -67,7 +69,8 @@ def _geometric_first_kind_periods(ctx, prepared):
     eigenvalues = _tau_imaginary_eigenvalues(ctx, tau)
     if min(eigenvalues) <= 0:
         raise ValueError("normalized period matrix is not positive definite")
-    forms = tuple(_baker_callable(ctx, data.basis, i) for i in range(genus))
+    if forms is None:
+        forms = tuple(_baker_callable(ctx, data.basis, i) for i in range(genus))
     return CurveFirstKindPeriods(
         genus, forms, omega, omega_prime, tau, ctx.norm(raw_tau - raw_tau.T),
         eigenvalues, data.max_sheet_residual, "general", "geometric-polygon")
@@ -358,7 +361,9 @@ def periods(ctx, curve, differentials=None, *, second_kind=False,
 
     if _uses_geometric_backend(curve):
         _check_geometric_forms(differentials, second_kind, second_differentials)
-        return _geometric_first_kind_periods(ctx, prepared)
+        forms = (None if differentials is None else
+                 _curve_differential_sequence(differentials, "differentials"))
+        return _geometric_first_kind_periods(ctx, prepared, forms)
 
     if second_kind and second_differentials is None:
         raise ValueError(
@@ -499,11 +504,15 @@ def riemann_constant(ctx, curve, differentials=None, *,
 
     if _uses_geometric_backend(curve):
         _check_geometric_forms(differentials)
-        data = _geometric_first_kind_periods(ctx, prepared)
-        entries, cycles = _stage_geometric_riemann_constant(ctx, prepared)
+        forms = (None if differentials is None else
+                 _curve_differential_sequence(differentials, "differentials"))
+        data = _geometric_first_kind_periods(ctx, prepared, forms)
+        entries, cycles = (_stage_geometric_riemann_constant(ctx, prepared)
+                          if forms is None else
+                          _stage_geometric_custom_riemann_constant(ctx, (prepared, forms)))
         value = ctx.matrix(entries)
         if base_place is not None:
-            displacement = abel_map(ctx, curve, base_place)
+            displacement = abel_map(ctx, curve, base_place, forms)
             value += (data.genus - 1) * ((2 * data.omega) ** -1 * displacement)
         return CurveRiemannConstant(
             value, _jacobian_characteristic(ctx, value, data.tau), base_place,
@@ -973,12 +982,14 @@ def abel_map(ctx, curve, target, differentials=None, *, second_kind=False,
 
     if _uses_geometric_backend(curve):
         _check_geometric_forms(differentials, second_kind, second_differentials)
+        forms = (None if differentials is None else
+                 _curve_differential_sequence(differentials, "differentials"))
         places = _normalise_curve_places(ctx, prepared, target)
         result = ctx.matrix(_geometric_abel_divisor(
             ctx, prepared, tuple(place for junction, tail, place in places),
-            base_place=base_place))
+            base_place=base_place, forms=forms))
         if reduce:
-            result = lattice_reduce(ctx, result, periods(ctx, curve)).value
+            result = lattice_reduce(ctx, result, periods(ctx, curve, forms)).value
         return result
 
     if second_differentials is None:
