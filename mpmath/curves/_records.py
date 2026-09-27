@@ -7,7 +7,7 @@ _PlaneCurve = namedtuple(
 _HyperellipticModel = namedtuple(
     "_HyperellipticModel", "coefficients y_shift")
 _ClassifiedCurve = namedtuple(
-    "_ClassifiedCurve", "curve hyperelliptic general_backend", defaults=("radial",))
+    "_ClassifiedCurve", "curve hyperelliptic")
 _PlaneGraph = namedtuple(
     "_PlaneGraph", "vertices edges cells branch_values vertex_sites")
 _GeometricCover = namedtuple(

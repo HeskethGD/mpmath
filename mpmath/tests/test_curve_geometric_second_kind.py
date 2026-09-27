@@ -14,7 +14,7 @@ def full(ctx, left, right):
 def test_geometric_exact_second_kind_integrals_and_failures(monkeypatch):
     ctx = mp.clone()
     ctx.dps = 18
-    curve = ctx.algebraic_curve(TERMS, _general_backend='geometric')
+    curve = ctx.algebraic_curve(TERMS)
 
     def radial_forbidden(*args, **kwargs):
         raise AssertionError('radial fallback')
@@ -52,17 +52,19 @@ def test_geometric_exact_second_kind_integrals_and_failures(monkeypatch):
         curve.second_kind_abel_map(target, second_differentials=forms, base_place=infinity)
 
 
-def test_geometric_second_kind_periods_match_radial_and_shared_reduction():
+def test_geometric_second_kind_periods_precision_and_shared_reduction():
     ctx = mp.clone()
     ctx.dps = 18
-    geometric = ctx.algebraic_curve(TERMS, _general_backend='geometric')
-    radial = ctx.algebraic_curve(TERMS)
+    geometric = ctx.algebraic_curve(TERMS)
     # These forms have zero residues, with their poles confined to infinity.
     forms = (lambda x, y: x*x/(3*y*y), lambda x, y: x/(3*y),
              lambda x, y: x**3/(3*y*y))
-    pnew, pold = geometric.first_kind_periods(), radial.first_kind_periods()
+    pnew = geometric.first_kind_periods()
     snew = geometric.second_kind_periods(second_differentials=forms)
-    sold = radial.second_kind_periods(second_differentials=forms)
+    with ctx.workdps(25):
+        reference = ctx.algebraic_curve(TERMS)
+        pold = reference.first_kind_periods()
+        sold = reference.second_kind_periods(second_differentials=forms)
     new = full(ctx, 2*pnew.omega, 2*pnew.omega_prime)
     old = full(ctx, 2*pold.omega, 2*pold.omega_prime)
 
@@ -93,11 +95,11 @@ def test_geometric_second_kind_periods_match_radial_and_shared_reduction():
     assert ctx.norm(reduced.value-(value.value-new_second*ctx.matrix(shift))) < ctx.mpf('1e-14')
 
 
-def test_second_kind_regular_chart_endpoints_match_exact_and_radial():
+def test_second_kind_regular_chart_endpoints_match_exact_and_higher_precision():
     ctx = mp.clone()
     ctx.dps = 18
     terms = {(0, 3): 1, (4, 0): -1, (0, 0): 1}
-    curve = ctx.algebraic_curve(terms, _general_backend='geometric')
+    curve = ctx.algebraic_curve(terms)
     branch = curve.chart(
         {(0, 3): 1, (0, 0): -4, (3, 0): -6, (6, 0): -4, (9, 0): -1},
         lambda t, w: (1+t**3, t*w, 3*t**2))
@@ -120,8 +122,7 @@ def test_second_kind_regular_chart_endpoints_match_exact_and_radial():
             assert ctx.norm(value.value-expected) < ctx.mpf('1e-14')
             values.append(value.value)
         assert ctx.norm(values[0]-values[1]) < ctx.mpf('1e-14')
-        # The radial chart tail uses a fixed order; compare at higher
-        # precision rather than treating its 18-digit output as exact.
+        # Independently recompute the chart tail at higher precision.
         with ctx.workdps(25):
             reference = ctx.algebraic_curve(terms)
             reference_chart = reference.chart(chart.curve.terms, chart.coordinate_map)

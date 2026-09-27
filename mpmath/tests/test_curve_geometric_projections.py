@@ -27,7 +27,7 @@ def test_geometric_nonmonic_elliptic_matches_monic_model():
     # w=x*y identifies x*y^2=x^2+1 with w^2=x^3+x. The automatic
     # form dx/(2*x*y) becomes dx/(2*w); x=0 is a projection singular value.
     terms = {(1, 2): 1, (2, 0): -1, (0, 0): -1}
-    curve = ctx.algebraic_curve(terms, _general_backend='geometric')
+    curve = ctx.algebraic_curve(terms)
     periods = curve.first_kind_periods()
     assert curve.genus_data == (1, 2, 4)
     assert curve.validate(periods).passed
@@ -36,7 +36,7 @@ def test_geometric_nonmonic_elliptic_matches_monic_model():
     _same_lattice(ctx, _full(ctx, periods), _full(ctx, reference))
 
 
-def test_geometric_kovalevskaya_supplied_basis_matches_radial():
+def test_geometric_kovalevskaya_supplied_basis_converges_with_precision():
     ctx = mp.clone()
     ctx.dps = 18
     terms = {(2, 4): 1, (3, 2): -4, (2, 2): 6, (1, 2): -2,
@@ -45,8 +45,9 @@ def test_geometric_kovalevskaya_supplied_basis_matches_radial():
              lambda x, y: 1/(4*x*y*y-8*x*x+12*x-4),
              lambda x, y: (x*y*y-1)/(4*x*x*y**3-8*x**3*y+12*x*x*y-4*x*y))
     records = []
-    for backend in ('geometric', 'radial'):
-        curve = ctx.algebraic_curve(terms, _general_backend=backend)
+    for digits in (18, 25):
+        ctx.dps = digits
+        curve = ctx.algebraic_curve(terms)
         periods = curve.first_kind_periods(forms)
         assert curve.genus_data == (3, 4, 12)
         assert curve.validate(periods).passed

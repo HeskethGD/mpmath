@@ -817,7 +817,7 @@ def test_curve_homology_general_curve_uses_polygon_marking():
     })
     assert homology.genus == 1
     assert homology.engine == "general"
-    assert homology.marking == "canonical-polygon"
+    assert homology.marking == "geometric-polygon"
     assert homology.cycle_count == (
         homology.intersection_rank + homology.radical_rank)
     assert curve_validate(homology).passed
@@ -949,7 +949,7 @@ def test_curve_periods_general_plane_curve():
     assert validation.maximum_residual < mp.mpf("1e-23")
     assert not curve_validate(data._replace(
         symmetry_residual=mp.one)).passed
-    with pytest.raises(ValueError, match="one form per genus"):
+    with pytest.raises(ValueError, match="one form per (positive )?genus"):
         curve_periods(curve, (lambda x, y: 1 / y,) * 2)
     automatic = curve_periods(
         {(0, 3): 1, (3, 0): 1, (0, 0): -1})
@@ -982,9 +982,9 @@ def test_curve_stage_caching_and_input_forms():
     mp.dps = 20
     from mpmath.curves import _stages as stages
     for stage in (stages._stage_branch_locus, stages._stage_monodromy,
-                  stages._stage_monodromy_graph,
-                  stages._stage_canonical_cycles,
-                  stages._stage_cycle_integrals):
+                  stages._stage_geometric_cover,
+                  stages._stage_geometric_polygon,
+                  stages._stage_geometric_periods):
         stage.cache_clear()
     misses = stages._stage_monodromy.cache_info().misses
     curve_monodromy((0, -1, 0, 1))
@@ -1150,7 +1150,7 @@ def test_curve_abel_map_general_plane_curve():
         second_differentials=(lambda x, y: x / y,))
     assert isinstance(paired, CurveSecondKindAbelMap)
     assert paired.engine == "general"
-    assert paired.marking == "canonical-polygon"
+    assert paired.marking == "geometric-polygon"
     based_pair = curve_abel_map(
         curve, place1, forms, base_place=place1, second_kind=True,
         second_differentials=(lambda x, y: x / y,))
@@ -1158,7 +1158,7 @@ def test_curve_abel_map_general_plane_curve():
     curve_place = curve_fibre(curve, 2)[1]
     assert mp.norm(
         curve_abel_map(curve, curve_place, forms) - first) < mp.mpf("1e-18")
-    with pytest.raises(ValueError, match="one form per genus"):
+    with pytest.raises(ValueError, match="one form per (positive )?genus"):
         curve_abel_map(curve, place1, forms * 2)
     with pytest.raises(ValueError, match="lie on the curve"):
         curve_abel_map(curve, (2, 1), forms)

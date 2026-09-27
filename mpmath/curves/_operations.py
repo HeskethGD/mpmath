@@ -8,14 +8,13 @@ from ._records import (
     CurveBranchLocus, CurveCheck, CurveFirstKindPeriods, CurveGenus,
     CurveHomology, CurveIntegral, CurveLatticeReduction, CurveMonodromy,
     CurvePath, CurvePlace, CurveRiemannConstant, CurveSecondKindAbelMap,
-    CurveSecondKindPeriods, CurveValidation, _PlaneCurvePlace,
+    CurveSecondKindPeriods, CurveValidation,
 )
 from ._stages import (
-    _curve_differential_sequence, _stage_baker_differentials,
+    _curve_differential_sequence,
     _stage_branch_locus,
-    _stage_canonical_polygon, _stage_cycle_integrals, _stage_monodromy,
+    _stage_monodromy,
     _stage_hyperelliptic_homology, _stage_hyperelliptic_periods,
-    _stage_monodromy_graph, _stage_riemann_constant,
     _tau_imaginary_eigenvalues,
     _stage_geometric_periods, _stage_geometric_polygon,
     _stage_geometric_riemann_constant, _geometric_abel_divisor,
@@ -25,14 +24,14 @@ from ._stages import (
 from .differentials import _baker_callable
 from .charts import _validated_chart_coordinate_map
 from .continuation import (
-    _lift_plane_curve_path, _same_numerical_place,
+    _lift_plane_curve_path,
 )
 from .integration import (
     _integrate_plane_curve_branch, _integrate_plane_curve_path,
     _pullback_plane_curve_differentials,
 )
 from .jacobian import (
-    _finite_base_abel_value, _guarded_open_path, _jacobian_characteristic,
+    _guarded_open_path, _jacobian_characteristic,
     _normalise_algebraic_curve_input, _normalise_curve_endpoint,
     _period_matrix_from_columns, _to_hyperelliptic_points,
 )
@@ -43,11 +42,6 @@ from .polynomial import _ordered_plane_curve_sheets
 
 # Curve operations
 # ----------------
-
-
-def _uses_geometric_backend(curve):
-    return (getattr(curve, "general_backend", "radial") == "geometric"
-            and curve.hyperelliptic is None)
 
 
 def _geometric_second_forms(second_kind, second_differentials):
@@ -86,15 +80,6 @@ def _geometric_first_kind_periods(ctx, prepared, forms=None):
     return CurveFirstKindPeriods(
         genus, forms, omega, omega_prime, tau, ctx.norm(raw_tau - raw_tau.T),
         eigenvalues, data.max_sheet_residual, "general", "geometric-polygon")
-
-
-def _general_first_kind_forms(ctx, prepared, differentials, monodromy):
-    """Select automatic Baker forms or validate a supplied basis."""
-    if differentials is None:
-        return _stage_baker_differentials(
-            ctx, (prepared, monodromy.genus))
-    return (_curve_differential_sequence(
-        differentials, "differentials"), None)
 
 
 def branch_locus(ctx, curve):
@@ -196,12 +181,12 @@ def genus_data(ctx, curve):
         >>> algebraic_curve((0, -1, 0, 1)).genus_data
         CurveGenus(genus=1, degree=2, ramification=4)
 
-    The private geometric backend instead obtains genus from the compact
+    General curves obtain genus from the compact
     covering graph's Euler characteristic and infers total ramification.
     """
     prepared, unused_hyperelliptic = _normalise_algebraic_curve_input(
         ctx, curve)
-    if _uses_geometric_backend(curve):
+    if unused_hyperelliptic is None:
         with ctx.extraprec(_GEOMETRIC_GUARD_BITS):
             graph, unused_polygon = _stage_geometric_polygon(ctx, prepared)
         return CurveGenus(graph.genus, prepared.y_degree,
@@ -220,13 +205,8 @@ def homology(ctx, curve):
     boundary or radical cycles.  Its transformation is therefore the
     identity.
 
-    For a general curve, the lifted monodromy graph of the ``x`` projection
-    is reduced to a primitive symplectic basis.  In that case the record also
-    reports the graph's boundary and radical counts and the integer
-    transformation from graph cycles to the canonical-polygon marking.
-
-    The private geometric backend reports its compact canonical basis
-    directly, with no auxiliary boundary cycles and identity transformation.
+    General curves use a compact geometric polygon with a canonical
+    symplectic basis, no auxiliary boundary cycles and identity transformation.
 
     The lemniscatic curve :math:`y^2 = x^3 - x` uses its Baker marking::
 
@@ -263,30 +243,17 @@ def homology(ctx, curve):
             engine="hyperelliptic",
             marking="baker")
 
-    if _uses_geometric_backend(curve):
-        with ctx.extraprec(_GEOMETRIC_GUARD_BITS):
-            graph, polygon = _stage_geometric_polygon(ctx, prepared)
-        count = 2 * graph.genus
-        identity = tuple(tuple(int(i == j) for j in range(count))
-                         for i in range(count))
-        # Report the compact canonical basis itself, not the punctured
-        # graph's redundant cycles. Its transformation is the identity.
-        return CurveHomology(graph.genus, count, 0, count, 0,
-                             polygon.polygon.intersection, identity,
-                             "general", "geometric-polygon")
 
-    graph, reduction = _stage_monodromy_graph(ctx, prepared)
-    polygon = _stage_canonical_polygon(ctx, prepared)
-    return CurveHomology(
-        genus=reduction.genus,
-        cycle_count=len(graph.cycles),
-        boundary_components=graph.boundary_components,
-        intersection_rank=graph.intersection_rank,
-        radical_rank=reduction.radical_rank,
-        intersection_form=polygon.intersection_form,
-        transformation=polygon.transformation,
-        engine="general",
-        marking="canonical-polygon")
+    with ctx.extraprec(_GEOMETRIC_GUARD_BITS):
+        graph, polygon = _stage_geometric_polygon(ctx, prepared)
+    count = 2 * graph.genus
+    identity = tuple(tuple(int(i == j) for j in range(count))
+                     for i in range(count))
+    # Report the compact canonical basis itself, not the punctured
+    # graph's redundant cycles. Its transformation is the identity.
+    return CurveHomology(graph.genus, count, 0, count, 0,
+                         polygon.polygon.intersection, identity,
+                         "general", "geometric-polygon")
 
 
 def periods(ctx, curve, differentials=None, *, second_kind=False,
@@ -316,7 +283,7 @@ def periods(ctx, curve, differentials=None, *, second_kind=False,
     ``omega``, ``omega_prime`` and ``tau``. ``second_kind_periods`` returns a
     separate ``CurveSecondKindPeriods`` record with ``eta``, ``eta_prime``
     and ``kappa``. Their ``engine`` and ``marking`` fields distinguish
-    the specialized Baker homology marking from the general canonical-polygon
+    the specialized Baker homology marking from the general geometric-polygon
     marking. A
     non-positive-definite normalized period matrix raises ``ValueError``,
     because it always indicates an invalid differential count or basis.
@@ -371,75 +338,15 @@ def periods(ctx, curve, differentials=None, *, second_kind=False,
             return second_record
         return first_record
 
-    if _uses_geometric_backend(curve):
-        second_forms = _geometric_second_forms(second_kind, second_differentials)
-        forms = (None if differentials is None else
-                 _curve_differential_sequence(differentials, "differentials"))
-        first = _geometric_first_kind_periods(ctx, prepared, forms)
-        if second_forms:
-            second = _geometric_second_kind_periods(ctx, prepared, first, second_forms)
-            return (first, second) if _return_first else second
-        return first
 
-    if second_kind and second_differentials is None:
-        raise ValueError(
-            "second_kind_periods requires second_differentials with the "
-            "general engine")
-
-    if second_differentials is None:
-        second_forms = ()
-    else:
-        second_forms = _curve_differential_sequence(
-            second_differentials, "second_differentials")
-    monodromy = _stage_monodromy(ctx, prepared)
-    genus = monodromy.genus
-    first_kind, baker_basis = _general_first_kind_forms(
-        ctx, prepared, differentials, monodromy)
-    if len(first_kind) != genus:
-        raise ValueError(
-            "differentials must contain one form per genus")
-    if second_forms and len(second_forms) != genus:
-        raise ValueError(
-            "second_differentials must contain one form per genus")
-    forms = first_kind + second_forms
-    quadrature_order = "geometry"
-    columns, max_sheet_residual = _stage_cycle_integrals(
-        ctx, (prepared, forms, quadrature_order, baker_basis))
-
-    periods = _period_matrix_from_columns(
-        ctx, columns, 0, genus, genus)
-    omega = periods[:, :genus] / 2
-    omega_prime = periods[:, genus:] / 2
-    raw_tau = omega**-1 * omega_prime
-    symmetry_residual = ctx.norm(raw_tau - raw_tau.T)
-    tau = (raw_tau + raw_tau.T) / 2
-    imaginary_eigenvalues = _tau_imaginary_eigenvalues(ctx, tau)
-    if min(imaginary_eigenvalues) <= 0:
-        raise ValueError("normalized period matrix is not positive definite")
-
-    eta = eta_prime = kappa = None
-    kappa_symmetry_residual = None
+    second_forms = _geometric_second_forms(second_kind, second_differentials)
+    forms = (None if differentials is None else
+             _curve_differential_sequence(differentials, "differentials"))
+    first = _geometric_first_kind_periods(ctx, prepared, forms)
     if second_forms:
-        second_periods = _period_matrix_from_columns(
-            ctx, columns, genus, genus, genus)
-        eta = -second_periods[:, :genus] / 2
-        eta_prime = -second_periods[:, genus:] / 2
-        raw_kappa = eta * omega**-1
-        kappa_symmetry_residual = ctx.norm(raw_kappa - raw_kappa.T)
-        kappa = (raw_kappa + raw_kappa.T) / 2
-    first_record = CurveFirstKindPeriods(
-        genus, first_kind, omega, omega_prime, tau, symmetry_residual,
-        imaginary_eigenvalues, max_sheet_residual,
-        "general", "canonical-polygon")
-    if second_forms:
-        second_record = CurveSecondKindPeriods(
-            genus, second_forms, eta, eta_prime, kappa,
-            kappa_symmetry_residual, max_sheet_residual,
-            "general", "canonical-polygon")
-        if _return_first:
-            return first_record, second_record
-        return second_record
-    return first_record
+        second = _geometric_second_kind_periods(ctx, prepared, first, second_forms)
+        return (first, second) if _return_first else second
+    return first
 
 
 def riemann_matrix(ctx, curve, differentials=None):
@@ -518,43 +425,21 @@ def riemann_constant(ctx, curve, differentials=None, *,
             value, characteristic, base_place, None,
             "hyperelliptic", "baker")
 
-    if _uses_geometric_backend(curve):
-        forms = (None if differentials is None else
-                 _curve_differential_sequence(differentials, "differentials"))
-        data = _geometric_first_kind_periods(ctx, prepared, forms)
-        entries, cycles = (_stage_geometric_riemann_constant(ctx, prepared)
-                          if forms is None else
-                          _stage_geometric_custom_riemann_constant(ctx, (prepared, forms)))
-        value = ctx.matrix(entries)
-        if base_place is not None:
-            displacement = abel_map(ctx, curve, base_place, forms)
-            value += (data.genus - 1) * ((2 * data.omega) ** -1 * displacement)
-        return CurveRiemannConstant(
-            value, _jacobian_characteristic(ctx, value, data.tau), base_place,
-            max((cycle.max_sheet_residual for cycle in cycles), default=ctx.zero),
-            "general", "geometric-polygon")
 
-    forms, baker_basis = _general_first_kind_forms(
-        ctx, prepared, differentials, _stage_monodromy(ctx, prepared))
-    periods_data = periods(
-        ctx, curve, None if baker_basis is not None else forms)
-    genus = periods_data.genus
-    quadrature_order = "geometry"
-    value, cycle_integrals, unused_normalised = _stage_riemann_constant(
-        ctx, (prepared, forms, quadrature_order, baker_basis))
+    forms = (None if differentials is None else
+             _curve_differential_sequence(differentials, "differentials"))
+    data = _geometric_first_kind_periods(ctx, prepared, forms)
+    entries, cycles = (_stage_geometric_riemann_constant(ctx, prepared)
+                      if forms is None else
+                      _stage_geometric_custom_riemann_constant(ctx, (prepared, forms)))
+    value = ctx.matrix(entries)
     if base_place is not None:
-        displacement = abel_map(
-            ctx, curve, base_place, forms)
-        value += (genus - 1) * (
-            (2 * periods_data.omega) ** -1 * displacement)
-    characteristic = _jacobian_characteristic(
-        ctx, value, periods_data.tau)
-    max_sheet_residual = max(
-        (integral.max_sheet_residual for integral in cycle_integrals),
-        default=ctx.zero)
+        displacement = abel_map(ctx, curve, base_place, forms)
+        value += (data.genus - 1) * ((2 * data.omega) ** -1 * displacement)
     return CurveRiemannConstant(
-        value, characteristic, base_place, max_sheet_residual,
-        "general", "canonical-polygon")
+        value, _jacobian_characteristic(ctx, value, data.tau), base_place,
+        max((cycle.max_sheet_residual for cycle in cycles), default=ctx.zero),
+        "general", "geometric-polygon")
 
 
 def validate(ctx, result):
@@ -995,106 +880,28 @@ def abel_map(ctx, curve, target, differentials=None, *, second_kind=False,
                 ctx, result, periods(ctx, curve)).value
         return result
 
-    if _uses_geometric_backend(curve):
-        second_forms = _geometric_second_forms(second_kind, second_differentials)
-        forms = (None if differentials is None else
-                 _curve_differential_sequence(differentials, "differentials"))
-        places = _normalise_curve_places(ctx, prepared, target)
-        result = ctx.matrix(_geometric_abel_divisor(
-            ctx, prepared, tuple(place for junction, tail, place in places),
-            base_place=base_place, forms=forms, second_forms=second_forms))
-        if second_forms:
-            genus = len(second_forms)
-            first, second = result[:genus, :], result[genus:, :]
-            shift = None
-            if reduce:
-                first_periods = _geometric_first_kind_periods(ctx, prepared, forms)
-                second_periods = _geometric_second_kind_periods(
-                    ctx, prepared, first_periods, second_forms)
-                second, shift = _reduce_second_kind_abel(
-                    ctx, first, second, first_periods, second_periods)
-            return CurveSecondKindAbelMap(second, shift, "general", "geometric-polygon")
-        if reduce:
-            result = lattice_reduce(ctx, result, periods(ctx, curve, forms)).value
-        return result
 
-    if second_differentials is None:
-        second_forms = ()
-    else:
-        second_forms = _curve_differential_sequence(
-            second_differentials, "second_differentials")
-    if second_kind and not second_forms:
-        raise ValueError(
-            "second_kind_abel_map requires second_differentials with the "
-            "general engine")
-    monodromy = _stage_monodromy(ctx, prepared)
-    genus = monodromy.genus
-    forms, unused_baker_basis = _general_first_kind_forms(
-        ctx, prepared, differentials, monodromy)
-    if len(forms) != genus:
-        raise ValueError(
-            "differentials must contain one form per genus")
-    if second_forms and len(second_forms) != genus:
-        raise ValueError(
-            "second_differentials must contain one form per genus")
-    all_forms = forms + second_forms
-    if base_place is None:
-        base_junction = _PlaneCurvePlace(
-            monodromy.base_point, monodromy.base_sheets[0])
-        base_tail = None
-    else:
-        base_junction, base_tail, unused_base = (
-            _normalise_curve_endpoint(
-                ctx, prepared, base_place, "base_place"))
-    branch_values, unused_resultant = _stage_branch_locus(ctx, prepared)
-    # Holomorphic Abel integrals have the same projected branch
-    # singularities as period integrals, so use the same precision-scaled
-    # geometry policy. Supplied second-kind forms may have additional poles
-    # that are not represented by the branch locus; their less-common path
-    # therefore also checks successive quadrature orders.
-    quadrature_order = "geometry"
-    quadrature_cache = {}
-
-    def place_value(junction, tail):
-        if _same_numerical_place(
-                ctx, (junction.x, junction.y),
-                (monodromy.base_point, monodromy.base_sheets[0])):
-            affine_value = ctx.zeros(len(all_forms), 1)
-        else:
-            affine_value = _finite_base_abel_value(
-                ctx, prepared, monodromy, branch_values, junction, all_forms,
-                quadrature_order, check_convergence=bool(second_forms),
-                quadrature_cache=quadrature_cache)
-        if tail is None:
-            return affine_value
-        pullbacks = _pullback_plane_curve_differentials(
-            all_forms, _validated_chart_coordinate_map(ctx, tail.chart))
-        local = _integrate_plane_curve_branch(
-            ctx, tail.chart.curve, tail.branch, pullbacks)
-        return affine_value - ctx.matrix(local.values)
-
+    second_forms = _geometric_second_forms(second_kind, second_differentials)
+    forms = (None if differentials is None else
+             _curve_differential_sequence(differentials, "differentials"))
     places = _normalise_curve_places(ctx, prepared, target)
-    result = ctx.zeros(len(all_forms), 1)
-    for junction, tail, unused_place in places:
-        result += place_value(junction, tail)
-    result -= len(places) * place_value(base_junction, base_tail)
-    first = result[:genus, :]
+    result = ctx.matrix(_geometric_abel_divisor(
+        ctx, prepared, tuple(place for junction, tail, place in places),
+        base_place=base_place, forms=forms, second_forms=second_forms))
     if second_forms:
-        second = result[genus:, :]
+        genus = len(second_forms)
+        first, second = result[:genus, :], result[genus:, :]
         shift = None
         if reduce:
-            first_periods = periods(ctx, curve, differentials)
-            second_periods = periods(
-                ctx, curve, differentials, second_kind=True,
-                second_differentials=second_forms)
+            first_periods = _geometric_first_kind_periods(ctx, prepared, forms)
+            second_periods = _geometric_second_kind_periods(
+                ctx, prepared, first_periods, second_forms)
             second, shift = _reduce_second_kind_abel(
                 ctx, first, second, first_periods, second_periods)
-        return CurveSecondKindAbelMap(
-            second, shift, "general", "canonical-polygon")
+        return CurveSecondKindAbelMap(second, shift, "general", "geometric-polygon")
     if reduce:
-        first = lattice_reduce(
-            ctx, first, periods(ctx, curve, differentials)).value
-    return first
+        result = lattice_reduce(ctx, result, periods(ctx, curve, forms)).value
+    return result
 
 
 def lattice_reduce(ctx, value, periods):

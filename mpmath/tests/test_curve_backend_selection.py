@@ -1,4 +1,4 @@
-"""Focused checks for the experimental per-curve backend choice."""
+"""Focused checks for the specialized and general curve dispatch."""
 import pytest
 from mpmath import mp
 from mpmath.curves import _operations
@@ -11,13 +11,12 @@ TERMS = {(0, 3): 1, (4, 0): -1, (1, 0): 1, (0, 0): -1}
 def test_geometric_interface_keeps_one_marking(monkeypatch):
     ctx = mp.clone()
     ctx.dps = 18
-    curve = ctx.algebraic_curve(TERMS, _general_backend='geometric')
+    curve = ctx.algebraic_curve(TERMS)
 
     def radial_forbidden(*args, **kwargs):
         raise AssertionError('unexpected radial fallback')
 
-    for name in ('_stage_monodromy', '_stage_monodromy_graph',
-                 '_stage_cycle_integrals', '_stage_riemann_constant'):
+    for name in ('_stage_monodromy',):
         monkeypatch.setattr(_operations, name, radial_forbidden)
     periods = curve.first_kind_periods()
     assert curve.genus == 3
@@ -54,7 +53,7 @@ def test_geometric_interface_keeps_one_marking(monkeypatch):
 
 def test_geometric_unsupported_operations_are_explicit():
     ctx = mp.clone()
-    curve = ctx.algebraic_curve(TERMS, _general_backend='geometric')
+    curve = ctx.algebraic_curve(TERMS)
     forms = (lambda x, y: 1,)
     for operation in (
         lambda: curve.first_kind_periods(forms),
@@ -78,11 +77,11 @@ def test_geometric_unsupported_operations_are_explicit():
     ):
         with pytest.raises(ValueError, match='invalid chart description'):
             operation()
-    with pytest.raises(ValueError, match='_general_backend'):
+    with pytest.raises(TypeError, match='_general_backend'):
         ctx.algebraic_curve(TERMS, _general_backend='unknown')
 
 
-def test_hyperelliptic_dispatch_ignores_general_backend(monkeypatch):
+def test_hyperelliptic_automatic_dispatch_stays_specialized(monkeypatch):
     ctx = mp.clone()
     ctx.dps = 18
 
@@ -92,8 +91,7 @@ def test_hyperelliptic_dispatch_ignores_general_backend(monkeypatch):
     for name in ('_stage_geometric_periods', '_stage_geometric_polygon',
                  '_stage_geometric_riemann_constant'):
         monkeypatch.setattr(_operations, name, geometric_forbidden)
-    curve = ctx.algebraic_curve({(0, 2): 1, (3, 0): -1, (1, 0): 1},
-                               _general_backend='geometric')
+    curve = ctx.algebraic_curve({(0, 2): 1, (3, 0): -1, (1, 0): 1})
     for result in (curve.first_kind_periods(), curve.second_kind_periods(),
                    curve.homology, curve.riemann_constant()):
         assert result.engine == 'hyperelliptic'
@@ -101,28 +99,29 @@ def test_hyperelliptic_dispatch_ignores_general_backend(monkeypatch):
     default = ctx.algebraic_curve((0, -1, 0, 1))
     point = (ctx.mpf(2), ctx.sqrt(6))
     assert ctx.norm(curve.abel_map(point)-default.abel_map(point)) == 0
-    assert curve.first_kind_periods((lambda x, y: 1/y,)).marking == 'canonical-polygon'
 
 
-def test_radial_default_and_monodromy_diagnostic():
+def test_constructors_agree_and_monodromy_remains_diagnostic():
+    from mpmath.curves.algebraic_curve import AlgebraicCurve
     ctx = mp.clone()
     ctx.dps = 18
     terms = {(0, 3): 1, (3, 0): 1, (0, 0): -1}
     default = ctx.algebraic_curve(terms)
-    radial = ctx.algebraic_curve(terms, _general_backend='radial')
-    geometric = ctx.algebraic_curve(terms, _general_backend='geometric')
+    direct = AlgebraicCurve(ctx, terms)
     assert default.first_kind_periods().marking == 'geometric-polygon'
-    assert ctx.norm(default.riemann_matrix()-geometric.riemann_matrix()) == 0
-    assert radial.first_kind_periods().marking == 'canonical-polygon'
-    assert geometric.monodromy == radial.monodromy
-    assert geometric.validate(geometric.monodromy).passed
+    assert ctx.norm(default.riemann_matrix()-direct.riemann_matrix()) == 0
+    assert default.monodromy == direct.monodromy
+    assert default.validate(default.monodromy).passed
+    for constructor in (ctx.algebraic_curve, lambda t, **kw: AlgebraicCurve(ctx,t,**kw)):
+        with pytest.raises(TypeError, match='_general_backend'):
+            constructor(terms, _general_backend='radial')
+
 
 
 def test_geometric_chart_endpoints_cutoffs_and_theta():
     ctx = mp.clone()
     ctx.dps = 18
-    curve = ctx.algebraic_curve({(0, 3): 1, (4, 0): -1, (0, 0): 1},
-                               _general_backend='geometric')
+    curve = ctx.algebraic_curve({(0, 3): 1, (4, 0): -1, (0, 0): 1})
     infinity = curve.monomial_chart(-3, -4)
     branch = curve.chart(
         {(0, 3): 1, (0, 0): -4, (3, 0): -6, (6, 0): -4, (9, 0): -1},
@@ -155,7 +154,7 @@ def test_geometric_chart_endpoints_cutoffs_and_theta():
     reduced = _reduce_jacobian_point(ctx, argument, tau, lattice_inverse)
     assert abs(ctx.rtheta(reduced, tau)) < ctx.mpf('1e-11')
     assert ctx.norm(curve.abel_map(places[0], base_place=places[0])) == 0
-    other = ctx.algebraic_curve(TERMS, _general_backend='geometric')
+    other = ctx.algebraic_curve(TERMS)
     with pytest.raises(ValueError, match='different curve or precision'):
         other.abel_map(places[0])
     with ctx.workdps(23):
@@ -169,7 +168,7 @@ def test_geometric_supplied_basis_is_coherent_and_uncached_if_unhashable(monkeyp
     from mpmath.curves import _stages
     ctx = mp.clone()
     ctx.dps = 18
-    curve = ctx.algebraic_curve(TERMS, _general_backend='geometric')
+    curve = ctx.algebraic_curve(TERMS)
     automatic = curve.first_kind_periods()
     constant = curve.riemann_constant()
     point = curve.fibre(ctx.mpc('.3', '.7'))[0]
@@ -214,3 +213,45 @@ def test_geometric_supplied_basis_is_coherent_and_uncached_if_unhashable(monkeyp
     assert ctx.norm(shifted.value-expected) < ctx.mpf('1e-14')
     reduced = curve.abel_map(point, forms, reduce=True)
     assert ctx.norm(reduced-curve.lattice_reduce(value, supplied).value) < ctx.mpf('1e-14')
+
+
+@pytest.mark.parametrize('linear_y', [False, True])
+def test_hyperelliptic_supplied_forms_use_geometric_marking(linear_y):
+    ctx = mp.clone()
+    ctx.dps = 20
+    terms = {(0,2):1, (3,0):-1, (1,0):1}
+    if linear_y:
+        terms.update({(1,1):2, (2,0):1})
+    curve = ctx.algebraic_curve(terms)
+    forms = (lambda x,y: 1/(y+x if linear_y else y),)
+    baker = curve.first_kind_periods()
+    general = curve.first_kind_periods(forms)
+    assert baker.marking == curve.homology.marking == 'baker'
+    assert general.marking == 'geometric-polygon'
+    assert curve.validate(general).passed
+    def full(p):
+        return ctx.matrix([[2*p.omega[0,0], 2*p.omega_prime[0,0]]])
+    def realify(p):
+        return ctx.matrix([[ctx.re(z) for z in p.tolist()[0]],
+                           [ctx.im(z) for z in p.tolist()[0]]])
+    a,b = full(general),full(baker)
+    change = (realify(a)**-1*realify(b)).apply(ctx.nint)
+    assert ctx.det(change) == 1
+    assert ctx.norm(a*change-b) < ctx.mpf('1e-17')
+    base = (ctx.mpf(2),ctx.sqrt(6)-(2 if linear_y else 0))
+    target = (ctx.mpf(3),ctx.sqrt(24)-(3 if linear_y else 0))
+    value = curve.abel_map(target,forms,base_place=base)
+    expected = ctx.quad(lambda x:1/ctx.sqrt(x**3-x),[2,3])
+    assert abs(value[0]-expected) < ctx.mpf('1e-17')
+    constant = curve.riemann_constant(forms,base_place=base)
+    assert constant.marking == general.marking
+    assert abs(ctx.rtheta(constant.value,general.tau)) < ctx.mpf('1e-16')
+    second = (lambda x,y: 1,)
+    periods = curve.second_kind_periods(forms,second_differentials=second)
+    assert periods.marking == general.marking
+    assert ctx.norm(periods.eta)+ctx.norm(periods.eta_prime) < ctx.mpf('1e-17')
+    integral = curve.second_kind_abel_map(target,forms,second_differentials=second,
+                                         base_place=base,reduce=True)
+    assert integral.marking == general.marking
+    assert abs(integral.value[0]-1) < ctx.mpf('1e-17')
+    assert curve.first_kind_periods().marking == 'baker'

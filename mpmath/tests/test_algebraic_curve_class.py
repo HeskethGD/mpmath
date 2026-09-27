@@ -122,7 +122,7 @@ def test_automatic_trigonal_periods_match_supplied_basis():
         explicit = curve.first_kind_periods(
             (lambda x, y: 1 / (3 * y**2),))
         assert automatic.engine == explicit.engine == "general"
-        assert automatic.marking == explicit.marking == "canonical-polygon"
+        assert automatic.marking == explicit.marking == "geometric-polygon"
         assert automatic.differentials[0].numerator == (0, 0)
         assert mp.norm(automatic.omega - explicit.omega) < mp.mpf("1e-18")
         assert mp.norm(automatic.omega_prime - explicit.omega_prime) < mp.mpf("1e-18")

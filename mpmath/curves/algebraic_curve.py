@@ -19,10 +19,9 @@ class AlgebraicCurve:
     accepted for compatibility.  Structurally hyperelliptic equations are
     recognized after normalization, independently of their input syntax.
 
-    The experimental ``_general_backend="geometric"`` option selects a
-    common geometric polygon for first-kind general-curve
-    operations. The default remains ``"radial"``. The choice is fixed at
-    construction and does not change recognized hyperelliptic dispatch.
+    General curves use a common geometric polygon. Recognized hyperelliptic
+    models retain their specialized Baker marking, unless supplied forms
+    explicitly select the general geometric integration pipeline.
     Automatic or supplied holomorphic bases and chart-backed Abel endpoints
     are supported. Supplied callables must be holomorphic on the curve;
     numerical checks cannot certify that they have no poles. Supplied
@@ -31,10 +30,7 @@ class AlgebraicCurve:
     are not regularized.
     """
 
-    def __init__(self, ctx, specification, *, _general_backend="geometric"):
-        if _general_backend not in ("radial", "geometric"):
-            raise ValueError("_general_backend must be 'radial' or 'geometric'")
-        self.__general_backend = _general_backend
+    def __init__(self, ctx, specification):
         self.ctx = ctx
         self._creation_state = _operations._curve_cache_state(ctx)
         self._warned_states = set()
@@ -51,7 +47,7 @@ class AlgebraicCurve:
             _operations._normalise_algebraic_curve_input(ctx, specification))
         self._classified_states = {
             self._creation_state: _records._ClassifiedCurve(
-                self._prepared, self._hyperelliptic_model, self.__general_backend)
+                self._prepared, self._hyperelliptic_model)
         }
         self._automatic_first_kind_periods = {}
 
@@ -87,7 +83,7 @@ class AlgebraicCurve:
                 _operations._normalise_algebraic_curve_input(
                     self.ctx, self._specification))
             classified = _records._ClassifiedCurve(
-                prepared, hyperelliptic, self.__general_backend)
+                prepared, hyperelliptic)
             self._classified_states[state] = classified
         return function(
             self.ctx, classified, *args, **kwargs)
@@ -140,7 +136,7 @@ class AlgebraicCurve:
         Recognized hyperelliptic curves use their automatic basis and Baker
         marking. Other Newton-nondegenerate plane curves use an automatic
         basis indexed by interior lattice points. Supplying ``differentials``
-        overrides either basis and selects the general canonical-polygon
+        overrides either basis and selects the general geometric-polygon
         engine (using the selected backend for non-hyperelliptic models).
         """
         state = _operations._curve_cache_state(self.ctx)
@@ -287,10 +283,10 @@ class AlgebraicCurve:
 class CurveMethods:
     """Context methods for constructing algebraic curves."""
 
-    def algebraic_curve(ctx, specification, *, _general_backend="radial"):
-        """Construct a curve; the private backend option is experimental.
+    def algebraic_curve(ctx, specification):
+        """Construct a curve with specialized hyperelliptic or general geometry.
 
-        ``geometric`` selects a common compact marking for
+        General curves use a common compact marking for
         first-kind general-curve operations, with automatic or supplied
         holomorphic bases. Supplied second-kind forms support periods and
         Abel maps, including convergent chart tails. Divergent pole values
@@ -298,7 +294,7 @@ class CurveMethods:
         Recognized hyperelliptic models retain their existing dispatch.
         Monodromy remains a radial diagnostic with its own base fibre.
         """
-        return AlgebraicCurve(ctx, specification, _general_backend=_general_backend)
+        return AlgebraicCurve(ctx, specification)
 
 
 CurveBranchLocus = _records.CurveBranchLocus

@@ -11,22 +11,20 @@ from ._records import _GeometricPeriodData
 from .geometry import _voronoi_plane_graph
 from .continuation import _lift_plane_graph
 from .differentials import (
-    _baker_basis, _baker_callable, _evaluate_baker_basis,
+    _baker_basis, _baker_callable,
 )
 from .integration import (
-    _integrate_plane_curve_path, _integrate_geometric_chains,
+    _integrate_geometric_chains,
     _integrate_geometric_loops_iterated, _integrate_geometric_callable_chains,
     _integrate_plane_curve_branch, _pullback_plane_curve_differentials,
 )
 from .jacobian import (
-    _canonical_polygon_riemann_constant, _normalised_differentials,
+    _normalised_differentials,
     _riemann_constant_from_iterated_cycles,
     _finite_geometric_abel_value, _normalise_curve_endpoint,
 )
 from .monodromy import (
-    _graph_cycle_word, _numerical_ordered_canonical_polygon,
-    _ordered_monodromy_graph,
-    _radial_plane_curve_monodromy, _symplectic_reduce_intersection,
+    _radial_plane_curve_monodromy,
     _geometric_ribbon_graph, _geometric_canonical_polygon,
 )
 from .polynomial import _plane_curve_critical_values
@@ -148,8 +146,7 @@ def _stage_geometric_periods(ctx, curve):
     Columns are rounded to the caller's precision; the cover and based words
     retain their guarded working precision for later path operations.
 
-    This entry point does not select or replace the public radial backend.
-    In particular, these periods must not be paired with a radial polygon's
+    These periods must not be paired with a radial diagnostic polygon's
     Abel coordinates or Riemann constants. Supplied holomorphic callables
     use the separate custom-period stage with successive-order checks.
     """
@@ -286,147 +283,6 @@ def _stage_monodromy(ctx, curve):
         ctx, curve, branch_values,
         circle_steps=_MONODROMY_CIRCLE_STEPS,
         max_refinements=_MONODROMY_MAX_REFINEMENTS)
-
-
-@_curve_stage_cache(16)
-def _stage_baker_differentials(ctx, key):
-    """Cache the structured Baker basis for the current numerical state."""
-    curve, genus = key
-    basis = _baker_basis(ctx, curve, genus)
-    forms = tuple(
-        _baker_callable(ctx, basis, index)
-        for index in range(len(basis[0])))
-    return forms, basis
-
-
-@_curve_stage_cache(8)
-def _stage_monodromy_graph(ctx, curve):
-    """Return ``(lifted_graph, symplectic_reduction)`` for a curve."""
-    monodromy = _stage_monodromy(ctx, curve)
-    graph = _ordered_monodromy_graph(monodromy)
-    reduction = _symplectic_reduce_intersection(graph.intersection)
-    return graph, reduction
-
-
-@_curve_stage_cache(8)
-def _stage_canonical_polygon(ctx, curve):
-    """Return the certified numerical canonical polygon for a curve."""
-    graph, unused_reduction = _stage_monodromy_graph(ctx, curve)
-    return _numerical_ordered_canonical_polygon(
-        ctx, graph, _stage_monodromy(ctx, curve))
-
-
-@_curve_stage_cache(8)
-def _stage_canonical_cycles(ctx, curve):
-    """Return polygon sides realizing the canonical compact homology basis."""
-    return _stage_canonical_polygon(ctx, curve).chains
-
-
-@_curve_stage_cache(16)
-def _stage_cycle_integrals(ctx, key):
-    """Integrate differential forms over the canonical cycles of a curve.
-
-    ``key`` is ``(curve, forms, quadrature_order, baker_basis)``.  The
-    result is ``(columns, max_sheet_residual)`` with one column of form
-    values per canonical cycle.  Ordinary periods are additive, so integrate
-    each generator on each required sheet once and apply the polygon's
-    integer cycle transformation.  Iterated integrals still use the full
-    based paths retained by the polygon.
-    """
-    curve, forms, quadrature_order, baker_basis = key
-    forms = tuple(forms)
-    genus = _stage_monodromy(ctx, curve).genus
-    branch_values = (_stage_branch_locus(ctx, curve)[0]
-                     if quadrature_order == "geometry" else None)
-    graph, unused_reduction = _stage_monodromy_graph(ctx, curve)
-    polygon = _stage_canonical_polygon(ctx, curve)
-    monodromy = _stage_monodromy(ctx, curve)
-    identity = tuple(range(curve.y_degree))
-    generators = tuple(
-        generator for generator in monodromy.ribbon_generators
-        if generator.permutation != identity)
-    if (tuple(generator.permutation for generator in generators)
-            != graph.permutations or
-            any(orientation != 1 for orientation in graph.branch_orientations)):
-        raise ValueError("ordered graph and numerical generators differ")
-    max_sheet_residual = ctx.zero
-    generator_integrals = {}
-    quadrature_cache = {}
-    evaluator = None
-    if baker_basis is not None:
-        automatic_count = len(baker_basis[0])
-
-        def evaluator(x, y):
-            automatic = _evaluate_baker_basis(
-                ctx, baker_basis, x, y)
-            supplied = tuple(
-                differential(x, y)
-                for differential in forms[automatic_count:])
-            return automatic + supplied
-
-    canonical_rows = polygon.transformation[:2 * genus]
-    needed_cycles = {
-        index for row in canonical_rows
-        for index, coefficient in enumerate(row) if coefficient}
-    graph_columns = [None] * len(graph.cycles)
-    for cycle_index in sorted(needed_cycles):
-        cycle = graph.cycles[cycle_index]
-        word = _graph_cycle_word(graph, cycle)
-        sheet = word.start_sheet
-        pieces = []
-        for step in word.steps:
-            generator = generators[step.branch_index]
-            for unused in range(step.turns):
-                cache_key = step.branch_index, sheet
-                integral = generator_integrals.get(cache_key)
-                if integral is None:
-                    integral = _integrate_plane_curve_path(
-                        ctx, curve, generator.continuation, forms,
-                        sheet=sheet, quadrature_order=quadrature_order,
-                        branch_values=branch_values,
-                        differential_evaluator=evaluator,
-                        quadrature_cache=quadrature_cache)
-                    generator_integrals[cache_key] = integral
-                    max_sheet_residual = max(
-                        max_sheet_residual, integral.max_sheet_residual)
-                pieces.append(integral.values)
-                sheet = generator.permutation[sheet]
-        if sheet != word.start_sheet:
-            raise ValueError("numerical graph cycle did not close")
-        graph_columns[cycle_index] = tuple(
-            ctx.fsum(piece[index] for piece in pieces)
-            for index in range(len(forms)))
-
-    columns = tuple(tuple(ctx.fsum(
-        coefficient * graph_columns[index][form_index]
-        for index, coefficient in enumerate(row) if coefficient)
-        for form_index in range(len(forms)))
-        for row in canonical_rows)
-    return tuple(columns), max_sheet_residual
-
-
-@_curve_stage_cache(8)
-def _stage_riemann_constant(ctx, key):
-    """Return the direct additive Riemann constant at the polygon base."""
-    curve, forms, quadrature_order, baker_basis = key
-    forms = tuple(forms)
-    genus = _stage_monodromy(ctx, curve).genus
-    if len(forms) != genus:
-        raise ValueError("one holomorphic differential is required per genus")
-    columns, unused_residual = _stage_cycle_integrals(
-        ctx, (curve, forms, quadrature_order, baker_basis))
-    periods = ctx.matrix([
-        [columns[column][row] for column in range(2 * genus)]
-        for row in range(genus)])
-    a_periods = periods[:, :genus]
-    raw_tau = a_periods ** -1 * periods[:, genus:]
-    tau = (raw_tau + raw_tau.T) / 2
-    polygon = _stage_canonical_polygon(ctx, curve)
-    branch_values = (_stage_branch_locus(ctx, curve)[0]
-                     if quadrature_order == "geometry" else None)
-    return _canonical_polygon_riemann_constant(
-        ctx, curve, polygon, forms, a_periods, tau,
-        quadrature_order, branch_values=branch_values)
 
 
 def _curve_differential_sequence(differentials, name):

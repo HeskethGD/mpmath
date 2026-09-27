@@ -80,7 +80,7 @@ Topology
 ``homology`` describes the marking used by the curve's default computational
 engine. For an automatically classified hyperelliptic curve this is the
 compact Baker basis used by its periods and Abel maps. For a general curve it
-is the canonical-polygon basis reduced from the lifted monodromy graph. The
+is the compact geometric-polygon basis. The
 ``engine`` and ``marking`` fields make the distinction explicit.
 
 
@@ -132,7 +132,7 @@ matrix.
 
 Automatic hyperelliptic calculations use the deterministic Baker cycle
 marking. Supplying a callable first-kind basis is an explicit request for the
-general canonical-polygon engine. The returned ``engine`` and ``marking``
+general geometric-polygon engine. The returned ``engine`` and ``marking``
 fields identify that choice; results carrying different markings must not be
 combined without a symplectic basis conversion.
 
@@ -220,3 +220,22 @@ plane-curve pipeline. Internally the hyperelliptic engine supplies automatic
 differential bases and specialized integration, while the general engine
 supports smooth plane projections with automatic Baker differentials or a
 caller-supplied basis.
+
+General-curve marking transition
+................................
+
+General integration now uses only the geometric polygon. Both constructors
+select it automatically; the experimental ``_general_backend`` keyword has
+been removed. Explicit supplied first-kind forms on recognized hyperelliptic
+models also use this pipeline. Automatic hyperelliptic operations retain the
+specialized Baker marking and fast path.
+
+The general period basis and computational Abel base may differ from the old
+radial implementation. Compare periods using an integral symplectic change of
+cycles, and Abel values with a common explicit base modulo the corresponding
+period lattice. Do not mix period or Riemann-constant records from different
+markings. ``curve.homology`` describes the automatic marking; supplied-form
+results expose their own marking on their result records.
+
+``curve.monodromy`` remains a radial-loop diagnostic with its own base fibre;
+it does not select the integration marking.

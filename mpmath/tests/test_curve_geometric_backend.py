@@ -11,7 +11,7 @@ from mpmath.curves.integration import _integrate_plane_curve_path
 from mpmath.curves.monodromy import _geometric_based_continuation
 from mpmath.curves.differentials import _baker_callable
 from mpmath.curves._stages import (
-    _stage_geometric_periods, _stage_cycle_integrals, _stage_baker_differentials,
+    _stage_geometric_periods,
 )
 
 
@@ -114,14 +114,19 @@ def _matrix(ctx, columns):
       (1, 1): -5, (0, 1): -7, (4, 0): -1, (3, 0): 3,
       (2, 0): -6, (1, 0): -8, (0, 0): 9}, 3),
 ])
-def test_geometric_periods_agree_with_radial_lattice(terms, genus):
+def test_geometric_periods_agree_with_frozen_radial_lattice(terms, genus):
     with mp.workdps(20):
         curve = _prepare_plane_curve(mp, terms)
         data = _stage_geometric_periods(mp, curve)
         assert data.genus == genus
-        forms, basis = _stage_baker_differentials(mp, (curve, genus))
-        columns, unused_residual = _stage_cycle_integrals(
-            mp, (curve, forms, 'geometry', basis))
+        import json
+        from pathlib import Path
+        references = json.loads(Path(__file__).with_name(
+            'curve_radial_period_reference.json').read_text())['cases']
+        reference = next(r for r in references
+                         if {(i,j):v for i,j,v in r['terms']} == terms)
+        columns = [[mp.mpc(a,b) for a,b in column]
+                   for column in reference['columns']]
         new, old = _matrix(mp, data.columns), _matrix(mp, columns)
 
         def realify(matrix):

@@ -226,6 +226,37 @@ def _plane_curve_resultant_y(ctx, curve):
     return _polynomial_determinant(ctx, matrix)
 
 
+def _critical_polynomial_roots(ctx, coefficients):
+    """Resolve a squarefree polynomial, conditioning a failed solve locally."""
+    try:
+        roots = ctx.polyroots(coefficients, maxsteps=1000, error=False)
+    except ctx.NoConvergence:
+        degree = len(coefficients) - 1
+        center = -coefficients[-2] / (degree * coefficients[-1])
+        # Horner composition forms p(center + z), in ascending order.
+        shifted = [coefficients[-1]]
+        for coefficient in reversed(coefficients[:-1]):
+            shifted = ([center * shifted[0] + coefficient] +
+                       [shifted[i-1] + center * shifted[i]
+                        for i in range(1, len(shifted))] + [shifted[-1]])
+        scale = max([ctx.one] + [
+            abs(shifted[i] / shifted[-1]) ** (ctx.one / (degree-i))
+            for i in range(degree)])
+        normalized = [value / shifted[-1] / scale ** (degree-i)
+                      for i, value in enumerate(shifted)]
+        roots = [center + scale * root for root in ctx.polyroots(
+            normalized, maxsteps=1000, error=False)]
+    # Check the original polynomial, not just the conditioned one. A failed
+    # check lets the caller rebuild the resultant with more guard precision.
+    for root in roots:
+        residual = abs(ctx.polyval(coefficients, root))
+        bound = ctx.fsum(abs(c) * abs(root)**i
+                         for i, c in enumerate(coefficients))
+        if not ctx.isfinite(root) or residual > 100 * ctx.eps * bound:
+            raise ctx.NoConvergence("critical polynomial root residual too large")
+    return tuple(roots)
+
+
 def _plane_curve_critical_values(ctx, curve):
     """Return distinct finite candidates from the y-resultant."""
     failure = None
@@ -238,8 +269,7 @@ def _plane_curve_critical_values(ctx, curve):
                     no_finite_polynomial = True
                 else:
                     squarefree = _polynomial_squarefree_part(ctx, resultant)
-                    roots = tuple(ctx.polyroots(
-                        squarefree, maxsteps=1000, error=False))
+                    roots = _critical_polynomial_roots(ctx, squarefree)
                     scale = max([ctx.one] + [abs(root) for root in roots])
                     tolerance = ctx.sqrt(ctx.eps) * scale
                     distinct = []
