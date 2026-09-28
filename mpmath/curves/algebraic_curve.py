@@ -316,12 +316,10 @@ CurveLatticeReduction = _records.CurveLatticeReduction
 
 __all__ = [
     "AlgebraicCurve",
-    "CurveFirstKindPeriods",
-    "CurveSecondKindPeriods",
-    "CurveSecondKindAbelMap",
     "CurveBranchLocus",
     "CurveChart",
     "CurveCheck",
+    "CurveFirstKindPeriods",
     "CurveGenus",
     "CurveHomology",
     "CurveIntegral",
@@ -330,5 +328,7 @@ __all__ = [
     "CurvePath",
     "CurvePlace",
     "CurveRiemannConstant",
+    "CurveSecondKindAbelMap",
+    "CurveSecondKindPeriods",
     "CurveValidation",
 ]

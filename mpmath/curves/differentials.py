@@ -113,11 +113,3 @@ def _baker_basis(ctx, curve, genus):
         (x, y - 1, y * coefficient)
         for x, y, coefficient in curve.terms if y)
     return numerators, denominator_terms
-
-
-def _baker_differentials(ctx, curve, genus):
-    """Return callable adapters for a validated structured Baker basis."""
-    basis = _baker_basis(ctx, curve, genus)
-    return tuple(
-        _baker_callable(ctx, basis, index)
-        for index in range(len(basis[0])))

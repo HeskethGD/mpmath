@@ -20,42 +20,41 @@ Example:
     3
 """
 
-from .algebraic_curve import AlgebraicCurve
-
 # Public namedtuples for result records
 from .algebraic_curve import (
-    CurveFirstKindPeriods,
-    CurveSecondKindPeriods,
-    CurveSecondKindAbelMap,
+    AlgebraicCurve,
     CurveBranchLocus,
-    CurveMonodromy,
+    CurveChart,
+    CurveCheck,
+    CurveFirstKindPeriods,
     CurveGenus,
     CurveHomology,
-    CurveRiemannConstant,
-    CurveValidation,
-    CurveCheck,
-    CurvePlace,
-    CurveChart,
-    CurvePath,
     CurveIntegral,
     CurveLatticeReduction,
+    CurveMonodromy,
+    CurvePath,
+    CurvePlace,
+    CurveRiemannConstant,
+    CurveSecondKindAbelMap,
+    CurveSecondKindPeriods,
+    CurveValidation,
 )
 
 __all__ = [
     'AlgebraicCurve',
-    'CurveFirstKindPeriods',
-    'CurveSecondKindPeriods',
-    'CurveSecondKindAbelMap',
     'CurveBranchLocus',
-    'CurveMonodromy',
+    'CurveChart',
+    'CurveCheck',
+    'CurveFirstKindPeriods',
     'CurveGenus',
     'CurveHomology',
-    'CurveRiemannConstant',
-    'CurveValidation',
-    'CurveCheck',
-    'CurvePlace',
-    'CurveChart',
-    'CurvePath',
     'CurveIntegral',
     'CurveLatticeReduction',
+    'CurveMonodromy',
+    'CurvePath',
+    'CurvePlace',
+    'CurveRiemannConstant',
+    'CurveSecondKindAbelMap',
+    'CurveSecondKindPeriods',
+    'CurveValidation',
 ]

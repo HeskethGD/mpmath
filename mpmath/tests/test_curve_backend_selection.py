@@ -3,7 +3,6 @@ import pytest
 from mpmath import mp
 from mpmath.curves import _operations
 from mpmath.curves.algebraic_curve import CurvePlace
-from mpmath.curves.jacobian import _reduce_jacobian_point, _jacobian_lattice_matrix
 
 TERMS = {(0, 3): 1, (4, 0): -1, (1, 0): 1, (0, 0): -1}
 
@@ -39,8 +38,7 @@ def test_geometric_interface_keeps_one_marking(monkeypatch):
     assert ctx.norm(reduced-curve.lattice_reduce(value, periods).value) < ctx.mpf('1e-16')
     constant = curve.riemann_constant(base_place=base)
     argument = (2*periods.omega)**-1 * value + constant.value
-    argument = _reduce_jacobian_point(
-        ctx, argument, periods.tau, _jacobian_lattice_matrix(ctx, periods.tau)**-1)
+    argument = curve.lattice_reduce(argument, periods.tau).value
     assert abs(ctx.rtheta(argument, periods.tau)) < ctx.mpf('1e-12')
     with ctx.workdps(23):
         with pytest.warns(UserWarning, match='context changed'):
@@ -117,7 +115,6 @@ def test_constructors_agree_and_monodromy_remains_diagnostic():
             constructor(terms, _general_backend='radial')
 
 
-
 def test_geometric_chart_endpoints_cutoffs_and_theta():
     ctx = mp.clone()
     ctx.dps = 18
@@ -129,7 +126,6 @@ def test_geometric_chart_endpoints_cutoffs_and_theta():
     periods = curve.first_kind_periods()
     inverse = (2*periods.omega)**-1
     tau = periods.tau
-    lattice_inverse = _jacobian_lattice_matrix(ctx, tau)**-1
     places = []
     for chart, seed in ((infinity, ctx.one), (branch, ctx.root(4, 3))):
         outer = curve.chart_place(chart, seed, ctx.mpf('.3'))
@@ -147,11 +143,11 @@ def test_geometric_chart_endpoints_cutoffs_and_theta():
     constant = curve.riemann_constant()
     # g=3: the divisor consists of one ramification point and infinity.
     argument = inverse*curve.abel_map(places) + constant.value
-    reduced = _reduce_jacobian_point(ctx, argument, tau, lattice_inverse)
+    reduced = curve.lattice_reduce(argument, tau).value
     assert abs(ctx.rtheta(reduced, tau)) < ctx.mpf('1e-11')
     shifted = curve.riemann_constant(base_place=places[0])
     argument = inverse*curve.abel_map(places, base_place=places[0])+shifted.value
-    reduced = _reduce_jacobian_point(ctx, argument, tau, lattice_inverse)
+    reduced = curve.lattice_reduce(argument, tau).value
     assert abs(ctx.rtheta(reduced, tau)) < ctx.mpf('1e-11')
     assert ctx.norm(curve.abel_map(places[0], base_place=places[0])) == 0
     other = ctx.algebraic_curve(TERMS)

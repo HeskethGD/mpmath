@@ -17,6 +17,38 @@ def hyperelliptic_abel_map(coefficients, target, **kwargs):
     return _hyperelliptic_abel_map(mp, coefficients, target, **kwargs)
 
 
+def test_period_validation_without_theta_dependency(monkeypatch):
+    ctx = mp.clone()
+    ctx.dps = 25
+
+    def theta_forbidden(*args, **kwargs):
+        raise AssertionError("period computation must not prepare theta data")
+
+    monkeypatch.setattr(ctx, '_rtheta_tau_data', theta_forbidden)
+    curve = ctx.algebraic_curve((0, -1, 0, 1))
+    data = curve.first_kind_periods()
+    assert ctx.almosteq(data.tau[0, 0], ctx.j)
+    assert curve.validate(data).passed
+    assert curve.validate(curve.second_kind_periods()).passed
+
+
+@pytest.mark.parametrize('imaginary', [
+    [[0]], [[-1]], [[1, 1], [1, 1]], [[1, 2], [2, 1]],
+])
+def test_period_validation_rejects_nonpositive_imaginary_part(imaginary):
+    ctx = mp.clone()
+    with pytest.raises(ValueError, match='positive definite'):
+        hyperelliptic_jacobian._validate_period_matrix(ctx, ctx.j*ctx.matrix(imaginary))
+
+
+@pytest.mark.parametrize('entry', ['inf', 'nan'])
+def test_period_validation_rejects_nonfinite_entries(entry):
+    ctx = mp.clone()
+    with pytest.raises(ValueError, match='finite entries'):
+        hyperelliptic_jacobian._validate_period_matrix(
+            ctx, ctx.matrix([[ctx.mpc(ctx.mpf(entry), 1)]]))
+
+
 def test_hyperelliptic_periods_genus_one_lemniscatic_curve():
     # y^2 = x^3-x has the square period lattice, hence tau = i in the
     # automatically selected real-branch basis.

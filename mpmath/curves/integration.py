@@ -1,18 +1,20 @@
 """Numerical integration along lifted algebraic-curve paths."""
 
+from ._records import _IteratedPathIntegrals, _PathIntegrals
 from .continuation import _LiftedEdgeSampler
 from .differentials import _evaluate_baker_basis
-from ._records import (
-    _IteratedPathIntegrals, _PathIntegrals, _PlaneCurvePeriods,
-)
 from .polynomial import (
-    _evaluate_plane_derivative, _evaluate_plane_polynomial,
-    _minimum_cost_assignment, _newton_plane_curve_sheet_with_derivatives,
+    _evaluate_plane_derivative,
+    _evaluate_plane_polynomial,
+    _minimum_cost_assignment,
+    _newton_plane_curve_sheet_with_derivatives,
     _plane_curve_sheets,
 )
 from .quadrature import (
-    _REUSABLE_GAUSS_ORDERS, _geometric_quadrature_order,
-    _geometric_edge_panels, _legendre_edge_rule,
+    _REUSABLE_GAUSS_ORDERS,
+    _geometric_edge_panels,
+    _geometric_quadrature_order,
+    _legendre_edge_rule,
 )
 
 
@@ -647,101 +649,4 @@ def _integrate_plane_curve_branch(
         values=tuple(values),
         max_sheet_residual=max_sheet_residual,
         segments=len(continuation.path) - 1,
-    )
-
-
-def _integrate_lifted_path_chain(
-        ctx, curve, chain, differentials, quadrature_order=None,
-        integral_cache=None, branch_values=None,
-        differential_evaluator=None, quadrature_cache=None):
-    """Integrate supplied differentials termwise over a lifted-path chain.
-
-    ``integral_cache`` may be a stage-local dictionary shared by chains that
-    reuse the same continuation objects. It stores only completed path
-    integrals; term coefficients and diagnostic segment counts are still
-    applied for every algebraic use of a path.
-    """
-    try:
-        differentials = tuple(differentials)
-    except TypeError:
-        raise ValueError("differentials must be a sequence of callables")
-    if not differentials or any(not callable(value)
-                                for value in differentials):
-        raise ValueError("differentials must be a sequence of callables")
-    values = [ctx.zero] * len(differentials)
-    max_sheet_residual = ctx.zero
-    segments = 0
-    for term in chain.terms:
-        cache_key = id(term.continuation), term.sheet
-        cached = (None if integral_cache is None
-                  else integral_cache.get(cache_key))
-        if cached is not None and cached[0] is term.continuation:
-            integral = cached[1]
-        else:
-            integral = _integrate_plane_curve_path(
-                ctx, curve, term.continuation, differentials,
-                sheet=term.sheet, quadrature_order=quadrature_order,
-                branch_values=branch_values,
-                differential_evaluator=differential_evaluator,
-                quadrature_cache=quadrature_cache)
-            if integral_cache is not None:
-                # Retaining the continuation both guards against object-ID
-                # reuse and documents that identity, rather than structural
-                # hashing of its large path and fibre tuples, defines reuse.
-                integral_cache[cache_key] = term.continuation, integral
-        for index, value in enumerate(integral.values):
-            values[index] += term.coefficient * value
-        max_sheet_residual = max(
-            max_sheet_residual, integral.max_sheet_residual)
-        segments += integral.segments
-    return _PathIntegrals(
-        values=tuple(values),
-        max_sheet_residual=max_sheet_residual,
-        segments=segments,
-    )
-
-
-def _assemble_plane_curve_periods(
-        ctx, curve, canonical_chains, differentials, genus,
-        quadrature_order=None):
-    """Integrate canonical chains and assemble a normalized Riemann matrix."""
-    canonical_chains = tuple(canonical_chains)
-    differentials = tuple(differentials)
-    if not isinstance(genus, int) or genus < 1:
-        raise ValueError("genus must be a positive integer")
-    if len(canonical_chains) < 2 * genus:
-        raise ValueError("canonical_chains must contain 2*genus cycles")
-    if len(differentials) != genus:
-        raise ValueError("one holomorphic differential is required per genus")
-
-    columns = []
-    max_sheet_residual = ctx.zero
-    integral_cache = {}
-    for chain in canonical_chains[:2 * genus]:
-        integral = _integrate_lifted_path_chain(
-            ctx, curve, chain, differentials,
-            quadrature_order=quadrature_order,
-            integral_cache=integral_cache)
-        columns.append(integral.values)
-        max_sheet_residual = max(
-            max_sheet_residual, integral.max_sheet_residual)
-    periods = ctx.matrix([
-        [columns[column][row] for column in range(2 * genus)]
-        for row in range(genus)])
-    a_periods = periods[:, :genus]
-    b_periods = periods[:, genus:]
-    tau = a_periods ** -1 * b_periods
-    imaginary_tau = ctx.matrix([
-        [ctx.im(tau[row, column]) for column in range(genus)]
-        for row in range(genus)])
-    imaginary_eigenvalues = tuple(ctx.eigsy(
-        imaginary_tau, eigvals_only=True))
-    return _PlaneCurvePeriods(
-        periods=periods,
-        a_periods=a_periods,
-        b_periods=b_periods,
-        tau=tau,
-        symmetry_residual=ctx.norm(tau - tau.T),
-        imaginary_eigenvalues=imaginary_eigenvalues,
-        max_sheet_residual=max_sheet_residual,
     )

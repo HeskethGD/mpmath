@@ -2,6 +2,7 @@
 
 from .model import _infinity_direction
 
+
 def _real_branch_integrals(ctx, roots, leading, interval, count):
     """Integrate monomials x**k dx/y between two adjacent roots."""
     left = roots[interval]
@@ -116,7 +117,6 @@ def _hyperelliptic_intervals(ctx, coefficients, roots, use_real_method,
             ctx, roots, coefficients[-1], count)
         b_sign = -ctx.one
     return intervals, b_sign
-
 
 
 def _infinity_branch_integrals(ctx, roots, leading, count):
@@ -251,7 +251,6 @@ def _infinity_second_kind_integrals(ctx, coefficients, roots, genus):
     return tuple(results)
 
 
-
 def _branch_target_integrals(ctx, roots, leading, branch_index, target,
                              supplied_y, count, target_eps):
     """Integrate from one branch point to a selected affine lift."""
@@ -286,7 +285,6 @@ def _branch_target_integrals(ctx, roots, leading, branch_index, target,
         for power in range(count))
 
 
-
 def _second_kind_interval(ctx, coefficients, monomials, row, genus):
     """Combine monomial integrals into one canonical second-kind integral."""
     # BEL (1.3), with j = row + 1. The caller supplies coefficients through
@@ -296,6 +294,3 @@ def _second_kind_interval(ctx, coefficients, monomials, row, genus):
         (power + 1 - j) * coefficients[power + 1 + j]
         * monomials[power] / 4
         for power in range(j, 2 * genus + 2 - j))
-
-
-

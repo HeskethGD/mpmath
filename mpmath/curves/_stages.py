@@ -2,31 +2,37 @@
 
 from functools import lru_cache, wraps
 
+from ._context import _curve_cache_state
 from ._hyperelliptic import _hyperelliptic_periods
 from ._hyperelliptic.model import (
-    _hyperelliptic_coefficients, _hyperelliptic_roots,
+    _hyperelliptic_coefficients,
+    _hyperelliptic_roots,
 )
-from ._context import _curve_cache_state
 from ._records import _GeometricPeriodData
-from .geometry import _voronoi_plane_graph
 from .continuation import _lift_plane_graph
 from .differentials import (
-    _baker_basis, _baker_callable,
+    _baker_basis,
+    _baker_callable,
 )
+from .geometry import _voronoi_plane_graph
 from .integration import (
+    _integrate_geometric_callable_chains,
     _integrate_geometric_chains,
-    _integrate_geometric_loops_iterated, _integrate_geometric_callable_chains,
-    _integrate_plane_curve_branch, _pullback_plane_curve_differentials,
+    _integrate_geometric_loops_iterated,
+    _integrate_plane_curve_branch,
+    _pullback_plane_curve_differentials,
 )
 from .jacobian import (
+    _finite_geometric_abel_value,
+    _normalise_curve_endpoint,
     _normalised_differentials,
     _riemann_constant_from_iterated_cycles,
-    _finite_geometric_abel_value, _normalise_curve_endpoint,
 )
-from .monodromy import (
-    _radial_plane_curve_monodromy,
-    _geometric_ribbon_graph, _geometric_canonical_polygon,
+from .homology import (
+    _geometric_canonical_polygon,
+    _geometric_ribbon_graph,
 )
+from .monodromy import _radial_plane_curve_monodromy
 from .polynomial import _plane_curve_critical_values
 
 # Cached computational stages
@@ -191,11 +197,6 @@ def _geometric_riemann_constant(ctx, curve, forms=None):
             polygon.a_loops, normalised)
         value = _riemann_constant_from_iterated_cycles(ctx, tau, cycles)
     return tuple(+entry for entry in value), cycles
-
-
-def _geometric_abel_value(ctx, curve, place, base_place=None):
-    """Private single-place wrapper for geometric Abel integration."""
-    return _geometric_abel_divisor(ctx, curve, (place,), base_place)
 
 
 def _geometric_abel_divisor(ctx, curve, places, base_place=None, forms=None,

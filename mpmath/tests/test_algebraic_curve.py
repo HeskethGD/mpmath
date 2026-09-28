@@ -19,55 +19,19 @@ from mpmath.curves.charts import (
     monomial_chart as _chart_monomial,
 )
 from mpmath.curves.continuation import (
-    _align_closed_continuation_base_fibre,
-    _close_monodromy_lift,
-    _concatenate_plane_curve_continuations,
     _continue_plane_curve_branch,
-    _continue_plane_curve_sheets,
+    _continue_plane_curve_sheets_adaptive,
     _lift_plane_curve_path,
-    _lifted_path_chain_boundary,
-    _prepare_lifted_path_chain,
     _radial_branch_geometry,
-    _reverse_plane_curve_branch,
-    _reverse_plane_curve_continuation,
 )
-from mpmath.curves.differentials import _baker_differentials
 from mpmath.curves.integration import (
-    _assemble_plane_curve_periods,
-    _concatenate_iterated_path_integrals,
     _integrate_plane_curve_path,
-    _integrate_plane_curve_path_iterated,
     _integrate_plane_curve_branch,
-    _integrate_lifted_path_chain,
     _pullback_plane_curve_differentials,
-    _reverse_iterated_path_integrals,
 )
-from mpmath.curves.jacobian import (
-    _canonical_polygon_riemann_constant,
-    _jacobian_lattice_matrix,
-    _reduce_jacobian_point,
-    _theta_divisor_samples,
-)
-from mpmath.curves.monodromy import (
-    _brahana_canonical_words,
-    _canonical_ribbon_polygon,
-    _lifted_monodromy_graph,
-    _numerical_graph_cycles,
-    _numerical_canonical_polygon,
-    _numerical_ordered_canonical_polygon,
-    _numerical_ordered_graph_cycles,
-    _ordered_monodromy_graph,
-    _monodromy_graph_permutations,
-    _permutation_cycles,
-    _real_branch_loop_path,
-    _real_plane_curve_monodromy,
-    _radial_plane_curve_monodromy,
-    _ribbon_tree_cotree_cut_system,
-    _symplectic_reduce_intersection,
-    _transform_lifted_path_chains,
-)
+from mpmath.curves.homology import _brahana_canonical_words
+from mpmath.curves.monodromy import _radial_plane_curve_monodromy
 from mpmath.curves.polynomial import (
-    _blow_up_plane_curve_y,
     _evaluate_plane_derivative,
     _evaluate_plane_polynomial,
     _finite_plane_curve_sheets,
@@ -76,7 +40,6 @@ from mpmath.curves.polynomial import (
     _plane_curve_critical_values,
     _plane_polynomial_y_coefficients,
     _prepare_plane_curve,
-    _reciprocal_y_plane_curve,
 )
 from mpmath.curves import _operations
 
@@ -184,15 +147,6 @@ def curve_chart_integral(chart, differentials, t_path, seed):
     return _chart_integral(mp, chart, differentials, t_path, seed)
 
 
-def _canonical_intersection_form(genus, radical_rank):
-    size = 2 * genus + radical_rank
-    return tuple(tuple(
-        1 if row < genus and column == genus + row
-        else -1 if column < genus and row == genus + column
-        else 0
-        for column in range(size)) for row in range(size))
-
-
 def test_brahana_polygon_word_reduction():
     # A maximally interlaced orientable genus-two polygon is deliberately not
     # in commutator order.  The reducer itself verifies the exact free-word
@@ -224,7 +178,7 @@ def test_plane_curve_sheet_continuation_around_branch_point():
     mp.dps = 40
     curve = _prepare_plane_curve(mp, {(0, 2): 1, (1, 0): -1})
     path = [mp.exp(2j * mp.pi * step / 32) for step in range(33)]
-    continuation = _continue_plane_curve_sheets(mp, curve, path)
+    continuation = _continue_plane_curve_sheets_adaptive(mp, curve, path)
     assert continuation.permutation == (1, 0)
     assert continuation.steps == 32
     assert continuation.max_residual < mp.mpf("1e-38")
@@ -238,7 +192,7 @@ def test_lifted_path_integrals_on_square_root_curve():
     mp.dps = 30
     curve = _prepare_plane_curve(mp, {(0, 2): 1, (1, 0): -1})
 
-    interval = _continue_plane_curve_sheets(mp, curve, (1, 4))
+    interval = _continue_plane_curve_sheets_adaptive(mp, curve, (1, 4))
     assert interval.permutation is None
     interval_integral = _integrate_plane_curve_path(
         mp, curve, interval, (lambda x, y: 1 / y,), sheet=1)
@@ -257,46 +211,17 @@ def test_lifted_path_integrals_on_square_root_curve():
 
     circle = tuple(mp.exp(2j * mp.pi * step / 16)
                    for step in range(17))
-    first_half = _continue_plane_curve_sheets(mp, curve, circle[:9])
-    second_half = _continue_plane_curve_sheets(mp, curve, circle[8:])
-    lifted_circle = _concatenate_plane_curve_continuations(
-        mp, first_half, second_half)
-    assert lifted_circle.permutation == (1, 0)
+    lifted_circle = _continue_plane_curve_sheets_adaptive(mp, curve, circle)
     circle_integrals = _integrate_plane_curve_path(
         mp, curve, lifted_circle,
         (lambda x, y: 1 / y, lambda x, y: y), sheet=1)
     assert abs(circle_integrals.values[0] + 4) < mp.mpf("1e-27")
-    assert abs(circle_integrals.values[1] + mp.mpf(4) / 3) < mp.mpf("1e-27")
-    assert circle_integrals.max_sheet_residual < mp.mpf("1e-28")
-
-    reversed_circle = _reverse_plane_curve_continuation(mp, lifted_circle)
-    reverse_integrals = _integrate_plane_curve_path(
-        mp, curve, reversed_circle,
-        (lambda x, y: 1 / y, lambda x, y: y), sheet=1)
-    for forward, reverse in zip(
-            circle_integrals.values, reverse_integrals.values):
-        assert abs(forward + reverse) < mp.mpf("1e-27")
-
-    round_trip = _concatenate_plane_curve_continuations(
-        mp, lifted_circle, reversed_circle)
-    assert round_trip.permutation == (0, 1)
-
-    open_lift = _prepare_lifted_path_chain(((1, lifted_circle, 1),))
-    boundary = _lifted_path_chain_boundary(mp, open_lift)
-    assert sorted(place.multiplicity for place in boundary) == [-1, 1]
-    cancelling_chain = _prepare_lifted_path_chain((
-        (2, lifted_circle, 1),
-        (2, reversed_circle, 1),
-    ))
-    assert not _lifted_path_chain_boundary(mp, cancelling_chain)
-
-    closed_lift = _close_monodromy_lift(mp, lifted_circle, 1)
-    closed_chain = _prepare_lifted_path_chain(((1, closed_lift, 1),))
-    assert closed_lift.permutation == (0, 1)
-    assert not _lifted_path_chain_boundary(mp, closed_chain)
-    closed_integral = _integrate_lifted_path_chain(
-        mp, curve, closed_chain, (lambda x, y: 1 / x,))
-    assert abs(closed_integral.values[0] - 4j * mp.pi) < mp.mpf("1e-27")
+    assert abs(circle_integrals.values[1] + mp.mpf(4)/3) < mp.mpf("1e-27")
+    # Two circuits close the lift; the logarithmic integral counts winding.
+    twice = _continue_plane_curve_sheets_adaptive(mp, curve, circle+circle[1:])
+    assert twice.permutation == (0, 1)
+    value = _integrate_plane_curve_path(mp, curve, twice, (lambda x,y:1/x,),sheet=1)
+    assert abs(value.values[0]-4j*mp.pi) < mp.mpf("1e-27")
 
 
 def test_lifted_path_integrals_use_single_sheet_newton(monkeypatch):
@@ -305,7 +230,7 @@ def test_lifted_path_integrals_use_single_sheet_newton(monkeypatch):
     # roots again at every Gauss node.
     mp.dps = 30
     curve = _prepare_plane_curve(mp, {(0, 3): 1, (1, 0): -1})
-    continuation = _continue_plane_curve_sheets(mp, curve, (1, 8))
+    continuation = _continue_plane_curve_sheets_adaptive(mp, curve, (1, 8))
     evaluate_derivative = curve_integration._evaluate_plane_derivative
     derivative_calls = []
 
@@ -325,13 +250,13 @@ def test_lifted_path_integrals_use_single_sheet_newton(monkeypatch):
         sheet=2, quadrature_order=32)
     assert abs(integral.values[0] - mp.mpf("4.5")) < mp.mpf("1e-20")
     assert integral.max_sheet_residual < mp.mpf("1e-28")
-    assert derivative_calls == ["x", "y"]
+    assert derivative_calls == ["x", "y"] * (len(continuation.path)-1)
 
 
 def test_lifted_path_integrals_fall_back_to_full_fibres(monkeypatch):
     mp.dps = 30
     curve = _prepare_plane_curve(mp, {(0, 3): 1, (1, 0): -1})
-    continuation = _continue_plane_curve_sheets(mp, curve, (1, 8))
+    continuation = _continue_plane_curve_sheets_adaptive(mp, curve, (1, 8))
     full_solve = curve_integration._plane_curve_sheets
     calls = []
 
@@ -350,229 +275,8 @@ def test_lifted_path_integrals_fall_back_to_full_fibres(monkeypatch):
     integral = _integrate_plane_curve_path(
         mp, curve, continuation, (lambda x, y: 1 / y,),
         sheet=2, quadrature_order=16)
-    assert len(calls) == 16
+    assert len(calls) == 16 * (len(continuation.path)-1)
     assert abs(integral.values[0] - mp.mpf("4.5")) < mp.mpf("2e-11")
-
-
-def test_lifted_path_chain_reuses_stage_local_integrals(monkeypatch):
-    mp.dps = 30
-    curve = _prepare_plane_curve(mp, {(0, 3): 1, (1, 0): -1})
-    continuation = _continue_plane_curve_sheets(mp, curve, (1, 8))
-    positive = _prepare_lifted_path_chain(((1, continuation, 2),))
-    negative = _prepare_lifted_path_chain(((-2, continuation, 2),))
-    integrate_path = curve_integration._integrate_plane_curve_path
-    calls = []
-
-    def counted_integral(*args, **kwargs):
-        calls.append((id(args[2]), kwargs.get("sheet")))
-        return integrate_path(*args, **kwargs)
-
-    monkeypatch.setattr(
-        curve_integration, "_integrate_plane_curve_path", counted_integral)
-    integral_cache = {}
-    first = _integrate_lifted_path_chain(
-        mp, curve, positive, (lambda x, y: 1 / y,),
-        quadrature_order=16, integral_cache=integral_cache)
-    second = _integrate_lifted_path_chain(
-        mp, curve, negative, (lambda x, y: 1 / y,),
-        quadrature_order=16, integral_cache=integral_cache)
-    assert len(calls) == 1
-    assert len(integral_cache) == 1
-    assert mp.almosteq(second.values[0], -2 * first.values[0])
-    assert second.segments == first.segments
-
-
-def test_reverse_continuation_inverts_three_sheet_monodromy():
-    mp.dps = 30
-    curve = _prepare_plane_curve(mp, {(0, 3): 1, (1, 0): -1})
-    circle = tuple(mp.exp(2j * mp.pi * step / 24)
-                   for step in range(25))
-    forward = _continue_plane_curve_sheets(mp, curve, circle)
-    reverse = _reverse_plane_curve_continuation(mp, forward)
-    assert tuple(len(cycle) for cycle in _permutation_cycles(
-        forward.permutation)) == (3,)
-    assert reverse.permutation == tuple(
-        forward.permutation.index(index) for index in range(3))
-    closed = _close_monodromy_lift(mp, forward, 0)
-    assert closed.permutation == (0, 1, 2)
-    chain = _prepare_lifted_path_chain(((1, closed, 0),))
-    assert not _lifted_path_chain_boundary(mp, chain)
-    # These inverse permutations describe positive local loops around the two
-    # branch places of the sphere, not a path and its negative orientation.
-    graph = _lifted_monodromy_graph(
-        (forward.permutation, reverse.permutation), (1, 1))
-    assert graph.genus == 0
-    assert len(graph.cycles) == 2
-    assert graph.boundary_components == 3
-    assert graph.intersection_rank == 0
-    reduction = _symplectic_reduce_intersection(graph.intersection)
-    assert reduction.genus == 0
-    assert reduction.radical_rank == 2
-    assert reduction.form == _canonical_intersection_form(0, 2)
-
-    forms = (lambda x, y: 1 / y, lambda x, y: x / y)
-    forward_integral = _integrate_plane_curve_path_iterated(
-        mp, curve, forward, forms, sheet=0, quadrature_order=12)
-    reverse_integral = _integrate_plane_curve_path_iterated(
-        mp, curve, reverse, forms, sheet=0,
-        quadrature_order=12)
-    algebraic_reverse = _reverse_iterated_path_integrals(
-        mp, forward_integral)
-    assert max(abs(left - right) for left, right in zip(
-        reverse_integral.values,
-        algebraic_reverse.values)) < mp.mpf("1e-28")
-    assert max(abs(reverse_integral.iterated[row][column]
-                   - algebraic_reverse.iterated[row][column])
-               for row in range(2) for column in range(2)) < mp.mpf("1e-27")
-    closed_integral = _concatenate_iterated_path_integrals(
-        mp, forward_integral, reverse_integral)
-    assert max(abs(value) for value in closed_integral.values) < mp.mpf(
-        "1e-28")
-    assert max(abs(closed_integral.iterated[row][column])
-               for row in range(2) for column in range(2)) < mp.mpf("1e-25")
-
-    aligned_reverse = _align_closed_continuation_base_fibre(
-        mp, reverse, forward.fibres[0])
-    assert all(abs(left - right) < mp.mpf("1e-28")
-               for left, right in zip(
-                   aligned_reverse.fibres[0], forward.fibres[0]))
-
-
-def test_real_hyperelliptic_monodromy_and_genus():
-    # y^2=x(x^2-1) has three finite simple branch values and one at infinity.
-    # This exercises the monodromy coordinator independently of the eventual
-    # non-hyperelliptic target.
-    mp.dps = 35
-    curve = _prepare_plane_curve(mp, {
-        (0, 2): 1,
-        (3, 0): -1,
-        (1, 0): 1,
-    })
-    monodromy = _real_plane_curve_monodromy(
-        mp, curve, -2, (-1, 0, 1), circle_steps=16)
-    assert all(tuple(len(cycle) for cycle in _permutation_cycles(
-        permutation)) == (2,) for permutation in monodromy.permutations)
-    assert tuple(len(cycle) for cycle in _permutation_cycles(
-        monodromy.infinity_permutation)) == (2,)
-    assert monodromy.ramification == 4
-    assert monodromy.genus == 1
-
-    graph = _lifted_monodromy_graph(
-        monodromy.permutations + (monodromy.infinity_permutation,),
-        (1,) * len(monodromy.permutations) + (-1,))
-    assert len(graph.vertices) == 6
-    assert len(graph.edges) == 8
-    assert len(graph.cycles) == 3
-    assert graph.boundary_components == 2
-    assert graph.intersection_rank == 2
-    assert abs(graph.intersection[0][1]) == 1
-    cut_system = _ribbon_tree_cotree_cut_system(graph)
-    assert len(cut_system.generator_edges) == 2
-    assert len(cut_system.boundary_word) == 4
-    assert abs(cut_system.intersection[0][1]) == 1
-    assert (set(cut_system.tree_edges)
-            | set(cut_system.cotree_edges)
-            | set(cut_system.generator_edges)) == set(range(len(graph.edges)))
-    assert not (set(cut_system.tree_edges) & set(cut_system.cotree_edges))
-    assert not (set(cut_system.tree_edges) & set(cut_system.generator_edges))
-    assert not (set(cut_system.cotree_edges)
-                & set(cut_system.generator_edges))
-    polygon = _canonical_ribbon_polygon(graph, cut_system)
-    assert len(polygon.a_loops) == len(polygon.b_loops) == 1
-    assert polygon.intersection == ((0, 1), (-1, 0))
-    reduction = _symplectic_reduce_intersection(graph.intersection)
-    assert reduction.genus == 1
-    assert reduction.radical_rank == 1
-    assert reduction.form == _canonical_intersection_form(1, 1)
-    numerical_cycles = _numerical_graph_cycles(mp, graph, monodromy)
-    assert len(numerical_cycles.chains) == 3
-    canonical_chains = _transform_lifted_path_chains(
-        numerical_cycles.chains, reduction.transformation)
-    assert all(not _lifted_path_chain_boundary(mp, chain)
-               for chain in canonical_chains)
-    period_data = _assemble_plane_curve_periods(
-        mp, curve, canonical_chains, (lambda x, y: 1 / y,), 1)
-    assert period_data.imaginary_eigenvalues[0] > 0
-    assert period_data.symmetry_residual == 0
-    assert abs(period_data.tau[0, 0] + 1 - 1j) < mp.mpf("1e-28")
-
-    canonical_polygon = _numerical_canonical_polygon(
-        mp, graph, monodromy)
-    polygon_periods = _assemble_plane_curve_periods(
-        mp, curve, canonical_polygon.chains,
-        (lambda x, y: 1 / y,), 1)
-    assert polygon_periods.imaginary_eigenvalues[0] > 0
-    assert polygon_periods.symmetry_residual == 0
-    for continuation, chain in zip(
-            canonical_polygon.a_continuations
-            + canonical_polygon.b_continuations,
-            canonical_polygon.chains):
-        based_value = _integrate_plane_curve_path(
-            mp, curve, continuation, (lambda x, y: 1 / y,), sheet=0)
-        homology_value = _integrate_lifted_path_chain(
-            mp, curve, chain, (lambda x, y: 1 / y,))
-        assert abs(based_value.values[0] - homology_value.values[0]) < (
-            mp.mpf("1e-28"))
-
-    riemann_constant, _, _ = _canonical_polygon_riemann_constant(
-        mp, curve, canonical_polygon, (lambda x, y: 1 / y,),
-        polygon_periods.a_periods, polygon_periods.tau, 12)
-    expected = (1 + polygon_periods.tau[0, 0]) / 2
-    assert abs(riemann_constant[0] - expected) < mp.mpf("1e-28")
-
-    # The middle lollipop encloses x=0 once.  This also verifies that lifted
-    # integration consumes the adaptively refined fibres without retracking
-    # the path independently.
-    winding = _integrate_plane_curve_path(
-        mp, curve, monodromy.continuations[1],
-        (lambda x, y: 1 / x,), sheet=0)
-    assert abs(winding.values[0] - 2j * mp.pi) < mp.mpf("1e-28")
-
-
-def test_even_degree_hyperelliptic_graph_has_primitive_periods():
-    # Four finite branch values leave two ordinary places over infinity.
-    # The graph cycles must nevertheless span the primitive compact homology
-    # lattice, rather than an index-four sublattice of it.
-    mp.dps = 30
-    coefficients = (0, -mp.mpf(4) / 5, mp.mpf(38) / 5, -12, 4)
-    curve = _prepare_plane_curve(mp, {
-        (0, 2): 1,
-        (4, 0): -4,
-        (3, 0): 12,
-        (2, 0): -mp.mpf(38) / 5,
-        (1, 0): mp.mpf(4) / 5,
-    })
-    branch_points = tuple(mp.polyroots(coefficients))
-    monodromy = _real_plane_curve_monodromy(
-        mp, curve, -1, branch_points, circle_steps=12)
-    assert monodromy.infinity_permutation == (0, 1)
-
-    graph = _lifted_monodromy_graph(
-        _monodromy_graph_permutations(monodromy))
-    reduction = _symplectic_reduce_intersection(graph.intersection)
-    numerical_cycles = _numerical_graph_cycles(mp, graph, monodromy)
-    canonical_chains = _transform_lifted_path_chains(
-        numerical_cycles.chains, reduction.transformation)
-    periods = _assemble_plane_curve_periods(
-        mp, curve, canonical_chains, (lambda x, y: 1 / y,), 1,
-        quadrature_order=16).periods
-
-    omega, omega_prime, unused_tau = hyperelliptic_periods(
-        coefficients, method="real")
-    reference = mp.matrix([[2 * omega[0, 0], 2 * omega_prime[0, 0]]])
-    numerical_change = mp.matrix([
-        [mp.re(periods[0, 0]), mp.re(periods[0, 1])],
-        [mp.im(periods[0, 0]), mp.im(periods[0, 1])],
-    ]) ** -1 * mp.matrix([
-        [mp.re(reference[0, 0]), mp.re(reference[0, 1])],
-        [mp.im(reference[0, 0]), mp.im(reference[0, 1])],
-    ])
-    integer_change = mp.matrix([
-        [int(mp.nint(numerical_change[row, column]))
-         for column in range(2)] for row in range(2)])
-    assert max(abs(value) for value in
-               numerical_change - integer_change) < mp.mpf("1e-22")
-    assert abs(mp.det(integer_change)) == 1
 
 
 def test_symmetric_radial_geometry_has_stable_base_point():
@@ -584,61 +288,6 @@ def test_symmetric_radial_geometry_has_stable_base_point():
     assert mp.im(base_30) > 0
     assert mp.im(base_50) > 0
     assert abs(base_30 - base_50) < mp.mpf("1e-28")
-
-
-def test_complex_radial_monodromy_and_periods():
-    # A generic complex elliptic curve exercises automatic exterior-base
-    # selection, distinct continuation and ribbon orders, and the geometric
-    # clockwise generator at infinity.
-    mp.dps = 30
-    branch_points = (0, 1 + 1j, 2 - 1j)
-    curve = _prepare_plane_curve(mp, {
-        (0, 2): 1,
-        (3, 0): -1,
-        (2, 0): 3,
-        (1, 0): -3 - 1j,
-    })
-    monodromy = _radial_plane_curve_monodromy(
-        mp, curve, branch_points, circle_steps=12)
-    identity = (0, 1)
-    product = identity
-    for generator in monodromy.product_generators:
-        product = tuple(
-            generator.permutation[product[index]] for index in range(2))
-    assert product == identity
-    assert monodromy.product_generators[-1].kind == "infinity"
-    assert monodromy.product_generators[-1].permutation == (1, 0)
-    assert monodromy.minimum_clearance > 0
-    assert monodromy.genus == 1
-
-    graph = _ordered_monodromy_graph(monodromy)
-    assert graph.genus == 1
-    assert graph.intersection_rank == 2
-    reduction = _symplectic_reduce_intersection(graph.intersection)
-    numerical = _numerical_ordered_graph_cycles(mp, graph, monodromy)
-    canonical_chains = _transform_lifted_path_chains(
-        numerical.chains, reduction.transformation)
-    radical_integrals = tuple(_integrate_lifted_path_chain(
-        mp, curve, chain, (lambda x, y: 1 / y,),
-        quadrature_order=16).values[0]
-        for chain in canonical_chains[2:])
-    # This is cancellation between separately quadrature-integrated graph
-    # cycles.  The wrong ribbon order gives an O(1) value; the correct order
-    # is zero up to the fixed-order quadrature error.
-    assert max(map(abs, radical_integrals), default=mp.zero) < mp.mpf(
-        "1e-12")
-    periods = _assemble_plane_curve_periods(
-        mp, curve, canonical_chains, (lambda x, y: 1 / y,), 1,
-        quadrature_order=16)
-    assert periods.symmetry_residual == 0
-    assert periods.imaginary_eigenvalues[0] > 0
-    assert periods.max_sheet_residual < mp.mpf("1e-25")
-
-    polygon = _numerical_ordered_canonical_polygon(mp, graph, monodromy)
-    polygon_periods = _assemble_plane_curve_periods(
-        mp, curve, polygon.chains, (lambda x, y: 1 / y,), 1,
-        quadrature_order=16)
-    assert polygon_periods.imaginary_eigenvalues[0] > 0
 
 
 def test_trigonal_infinity_uses_positive_local_orientation():
@@ -661,101 +310,8 @@ def test_trigonal_infinity_uses_positive_local_orientation():
         mp, curve)
     monodromy = _radial_plane_curve_monodromy(
         mp, curve, branch_points, circle_steps=12, max_refinements=20)
-    graph = _ordered_monodromy_graph(monodromy)
-    assert monodromy.genus == graph.genus == 3
-    assert graph.boundary_components == curve.y_degree == 3
-    assert graph.intersection_rank == 2 * graph.genus
-
-
-def test_alternative_tree_cotree_preserves_genus_two_data():
-    # Different admissible tree-cotree choices give different canonical
-    # polygons, but must describe the same period lattice and theta divisor.
-    mp.dps = 20
-    curve = _prepare_plane_curve(mp, {
-        (0, 2): 1,
-        (5, 0): -1,
-        (3, 0): 5,
-        (1, 0): -4,
-    })
-    forms = (lambda x, y: 1 / y, lambda x, y: x / y)
-    branch_points, unused_resultant = _plane_curve_critical_values(
-        mp, curve)
-    monodromy = _radial_plane_curve_monodromy(
-        mp, curve, branch_points, circle_steps=12, max_refinements=20)
-    graph = _ordered_monodromy_graph(monodromy)
-
-    parent = {vertex: vertex for vertex in graph.vertices}
-
-    def find(vertex):
-        while parent[vertex] != vertex:
-            parent[vertex] = parent[parent[vertex]]
-            vertex = parent[vertex]
-        return vertex
-
-    alternative_tree = []
-    for edge_index in reversed(range(len(graph.edges))):
-        edge = graph.edges[edge_index]
-        left = find(edge.tail)
-        right = find(edge.head)
-        if left != right:
-            parent[left] = right
-            alternative_tree.append(edge_index)
-    alternative_tree = tuple(alternative_tree)
-    alternative_complement = tuple(
-        edge_index for edge_index in range(len(graph.edges))
-        if edge_index not in set(alternative_tree))
-
-    default_cut = _ribbon_tree_cotree_cut_system(graph)
-    alternative_cut = _ribbon_tree_cotree_cut_system(
-        graph, tree_edges=alternative_tree,
-        cotree_edge_order=tuple(reversed(alternative_complement)))
-    assert alternative_cut.tree_edges != default_cut.tree_edges
-    assert alternative_cut.generator_edges != default_cut.generator_edges
-    with pytest.raises(ValueError, match="spanning tree"):
-        _ribbon_tree_cotree_cut_system(
-            graph, tree_edges=alternative_tree[:-1])
-    with pytest.raises(ValueError, match="base-sheet vertex"):
-        _ribbon_tree_cotree_cut_system(
-            graph, root=("branch", 0, 0))
-
-    results = []
-    for cut_system in (default_cut, alternative_cut):
-        polygon = _numerical_ordered_canonical_polygon(
-            mp, graph, monodromy, cut_system=cut_system)
-        periods = _assemble_plane_curve_periods(
-            mp, curve, polygon.chains, forms, 2, quadrature_order=12)
-        tau = (periods.tau + periods.tau.T) / 2
-        constant, unused_integrals, normalised = (
-            _canonical_polygon_riemann_constant(
-                mp, curve, polygon, forms, periods.a_periods, tau, 12))
-        samples = _theta_divisor_samples(
-            mp, curve, monodromy, branch_points, normalised, 2, 12)
-        lattice_inverse = _jacobian_lattice_matrix(mp, tau) ** -1
-        residuals = tuple(abs(mp.rtheta(_reduce_jacobian_point(
-            mp, sample + constant, tau, lattice_inverse), tau))
-            for sample in samples)
-        assert periods.symmetry_residual < mp.mpf("1e-18")
-        assert min(periods.imaginary_eigenvalues) > 0
-        assert max(residuals) < mp.mpf("1e-12")
-        results.append((polygon, periods))
-
-    default_polygon, default_periods = results[0]
-    alternative_polygon, alternative_periods = results[1]
-    change = (mp.matrix(alternative_polygon.transformation)
-              * mp.matrix(default_polygon.transformation) ** -1)
-    integer_change = mp.matrix([
-        [int(mp.nint(change[row, column]))
-         for column in range(change.cols)]
-        for row in range(change.rows)])
-    assert mp.norm(change - integer_change) < mp.mpf("1e-18")
-    compact_change = integer_change[:4, :4]
-    standard_form = mp.matrix(_canonical_intersection_form(2, 0))
-    assert mp.norm(
-        compact_change * standard_form * compact_change.T
-        - standard_form) == 0
-    assert mp.norm(
-        alternative_periods.periods
-        - default_periods.periods * compact_change.T) < mp.mpf("1e-17")
+    assert monodromy.genus == 3
+    assert monodromy.ramification == 10
 
 
 def test_curve_branch_locus_and_validate():
@@ -1317,51 +873,6 @@ def test_curve_chart_place_cutoff_stability_and_composition():
         direct.coordinate_map(t, w))) < mp.mpf("1e-23")
 
 
-def test_real_trigonal_monodromy_graph_and_periods():
-    # y^3=x(x-1) is an equianharmonic genus-one curve.  Its three branch
-    # places all have ramification index three, so this checks non-simple
-    # ramification and a genuinely non-hyperelliptic projection.
-    mp.dps = 30
-    curve = _prepare_plane_curve(mp, {
-        (0, 3): 1,
-        (2, 0): -1,
-        (1, 0): 1,
-    })
-    monodromy = _real_plane_curve_monodromy(
-        mp, curve, -1, (0, 1), circle_steps=16)
-    permutations = (
-        monodromy.permutations + (monodromy.infinity_permutation,))
-    assert all(tuple(len(cycle) for cycle in _permutation_cycles(
-        permutation)) == (3,) for permutation in permutations)
-    assert monodromy.ramification == 6
-    assert monodromy.genus == 1
-
-    # The clockwise affine outer loop is positive in z=1/x at infinity.
-    graph = _lifted_monodromy_graph(permutations, (1, 1, 1))
-    assert len(graph.cycles) == 4
-    assert graph.boundary_components == 3
-    assert graph.intersection_rank == 2
-    reduction = _symplectic_reduce_intersection(graph.intersection)
-    assert reduction.genus == 1
-    assert reduction.radical_rank == 2
-    assert reduction.form == _canonical_intersection_form(1, 2)
-
-    numerical_cycles = _numerical_graph_cycles(mp, graph, monodromy)
-    canonical_chains = _transform_lifted_path_chains(
-        numerical_cycles.chains, reduction.transformation)
-    assert all(not _lifted_path_chain_boundary(mp, chain)
-               for chain in canonical_chains)
-    periods = _assemble_plane_curve_periods(
-        mp, curve, canonical_chains, (lambda x, y: 1 / y**2,), 1,
-        quadrature_order=16)
-    assert periods.imaginary_eigenvalues[0] > 0
-    assert abs(mp.im(periods.tau[0, 0]) - mp.sqrt(3) / 2) < mp.mpf(
-        "1e-27")
-    assert abs(abs(mp.re(periods.tau[0, 0])) - mp.mpf("0.5")) < mp.mpf(
-        "1e-27")
-    assert periods.max_sheet_residual < mp.mpf("1e-27")
-
-
 def test_kovalevskaya_four_sheet_monodromy_at_zero():
     # This is the first frozen non-hyperelliptic oracle.  Root and loop
     # orderings may differ from Abelfunctions, but x=0 must exchange both
@@ -1383,7 +894,7 @@ def test_kovalevskaya_four_sheet_monodromy_at_zero():
         for step in range(1, 41)
     ]
     path = stem + loop + list(reversed(stem[:-1]))
-    continuation = _continue_plane_curve_sheets(mp, curve, path)
+    continuation = _continue_plane_curve_sheets_adaptive(mp, curve, path)
     permutation = continuation.permutation
     assert all(permutation[index] != index for index in range(4))
     assert tuple(permutation[permutation[index]]
@@ -1418,12 +929,7 @@ def test_kovalevskaya_local_coordinate_charts():
             differentials, coordinate_map)
         forward = _integrate_plane_curve_branch(
             mp, chart, branch, pullbacks, quadrature_order=16)
-        reverse = _integrate_plane_curve_branch(
-            mp, chart, _reverse_plane_curve_branch(branch), pullbacks,
-            quadrature_order=16)
         assert all(mp.isfinite(value) for value in forward.values)
-        assert all(abs(left + right) < mp.mpf("1e-28")
-                   for left, right in zip(forward.values, reverse.values))
         assert forward.max_sheet_residual < mp.mpf("1e-32")
         midpoint = (branch.path[0] + branch.path[-1]) / 2
         first = _continue_plane_curve_branch(
@@ -1443,14 +949,22 @@ def test_kovalevskaya_local_coordinate_charts():
     # Over x=0 use v=1/y, then x=t^2, v=t*w.  The first chart has
     # double roots w=+/-1; blowing either one up separates the two tangent
     # directions into finite simple roots u=+/-i/sqrt(5).
-    reciprocal = _reciprocal_y_plane_curve(mp, curve)
+    reciprocal = _prepare_plane_curve(mp, {(i,4-j):v for i,j,v in curve.terms})
     zero_chart = _monomial_plane_curve_chart(mp, reciprocal, 2, 1)
     for root in (-1, 1):
         assert _evaluate_plane_polynomial(mp, zero_chart, 0, root) == 0
         assert _evaluate_plane_derivative(
             mp, zero_chart, 0, root, "y") == 0
     for center in (-1, 1):
-        resolved = _blow_up_plane_curve_y(mp, zero_chart, center)
+        # Substitute w=center+t*u into the displayed local equation and
+        # cancel t^2. The remaining constant term is 4*u^2+4/5.
+        from math import comb
+        terms = {}
+        for i,j,v in zero_chart.terms:
+            for k in range(j+1):
+                key = (i+k-2,k)
+                terms[key] = terms.get(key,0)+v*comb(j,k)*center**(j-k)
+        resolved = _prepare_plane_curve(mp, {k:v for k,v in terms.items() if v})
         roots = _finite_plane_curve_sheets(mp, resolved, 0)
         assert len(roots) == 2
         assert all(abs(root**2 + mp.mpf(1) / 5) < mp.mpf("1e-30")
@@ -1528,84 +1042,6 @@ def test_kovalevskaya_local_coordinate_charts():
                    vanishing_affine_integral.values))
 
 
-@pytest.mark.parametrize("working_dps,circle_steps", ((25, 8), (40, 24)))
-def test_kovalevskaya_finite_monodromy_and_genus(
-        working_dps, circle_steps):
-    # Derive all finite branch values from the two squarefree resultant
-    # factors.  Kovalevskaya is an oracle here; path construction and adaptive
-    # continuation receive only a general polynomial and point set.
-    mp.dps = working_dps
-    curve = _prepare_plane_curve(mp, {
-        (2, 4): 1,
-        (3, 2): -4,
-        (2, 2): 6,
-        (1, 2): -2,
-        (2, 0): mp.mpf(27) / 5,
-        (1, 0): -mp.mpf(26) / 5,
-        (0, 0): 1,
-    })
-    branch_points = tuple(sorted(
-        [mp.zero]
-        + mp.polyroots([5, -26, 27])
-        + mp.polyroots([-2, 19, -30, 10])))
-    expected_cycles = ((2, 2), (2, 2), (2,), (2,), (2, 2), (2, 2))
-
-    monodromy = _real_plane_curve_monodromy(
-        mp, curve, -1, branch_points, circle_steps=circle_steps)
-    for continuation, expected in zip(
-            monodromy.continuations, expected_cycles):
-        cycle_lengths = tuple(sorted(
-            len(cycle) for cycle in _permutation_cycles(
-                continuation.permutation)))
-        assert cycle_lengths == expected
-        assert continuation.max_residual < mp.power(10, 3 - working_dps)
-        assert continuation.refinements > 0
-    infinity_cycles = tuple(sorted(
-        len(cycle) for cycle in _permutation_cycles(
-            monodromy.infinity_permutation)))
-    assert infinity_cycles == (2, 2)
-    assert monodromy.ramification == 12
-    assert monodromy.genus == 3
-
-    graph = _lifted_monodromy_graph(
-        monodromy.permutations + (monodromy.infinity_permutation,),
-        (1,) * len(monodromy.permutations) + (-1,))
-    assert len(graph.cycles) == 9
-    assert graph.boundary_components == 4
-    assert graph.intersection_rank == 6
-    cut_system = _ribbon_tree_cotree_cut_system(graph)
-    assert len(cut_system.cotree_edges) == 3
-    assert len(cut_system.generator_edges) == 6
-    assert len(cut_system.boundary_word) == 12
-    assert all(sum(edge == generator and orientation == sign
-                   for edge, orientation in cut_system.boundary_word) == 1
-               for generator in cut_system.generator_edges
-               for sign in (-1, 1))
-    assert len(cut_system.loops) == 6
-    assert all(len(loop) for loop in cut_system.loops)
-    assert all(cut_system.intersection[row][column]
-               == -cut_system.intersection[column][row]
-               for row in range(6) for column in range(6))
-    polygon = _canonical_ribbon_polygon(graph, cut_system)
-    assert len(polygon.a_loops) == len(polygon.b_loops) == 3
-    assert polygon.intersection == _canonical_intersection_form(3, 0)
-    numerical_polygon = _numerical_canonical_polygon(
-        mp, graph, monodromy)
-    assert len(numerical_polygon.chains) == 6
-    assert all(not _lifted_path_chain_boundary(mp, chain)
-               for chain in numerical_polygon.chains)
-    reduction = _symplectic_reduce_intersection(graph.intersection)
-    assert reduction.genus == 3
-    assert reduction.radical_rank == 3
-    assert reduction.form == _canonical_intersection_form(3, 3)
-    numerical_cycles = _numerical_graph_cycles(mp, graph, monodromy)
-    assert len(numerical_cycles.chains) == 9
-    canonical_chains = _transform_lifted_path_chains(
-        numerical_cycles.chains, reduction.transformation)
-    assert all(not _lifted_path_chain_boundary(mp, chain)
-               for chain in canonical_chains)
-
-
 def test_plane_curve_validation():
     with pytest.raises(ValueError, match="must depend on y"):
         _prepare_plane_curve(mp, {(2, 0): 1, (0, 0): -1})
@@ -1616,6 +1052,3 @@ def test_plane_curve_validation():
     curve = _prepare_plane_curve(mp, {(1, 1): 1, (0, 0): 1})
     with pytest.raises(ValueError, match="projection degree drops"):
         _ordered_plane_curve_sheets(mp, curve, 0)
-
-    with pytest.raises(ValueError, match="requires real points"):
-        _real_branch_loop_path(mp, -1, 1j, (1j,))

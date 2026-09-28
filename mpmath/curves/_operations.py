@@ -1,42 +1,62 @@
 """Internal orchestration for :class:`~mpmath.curves.AlgebraicCurve`."""
 
+from ._context import _curve_cache_state
 from ._hyperelliptic import _hyperelliptic_abel_map
 from ._hyperelliptic.jacobian import _hyperelliptic_characteristic
 from ._hyperelliptic.model import _normalise_abel_targets
-from ._context import _curve_cache_state
 from ._records import (
-    CurveBranchLocus, CurveCheck, CurveFirstKindPeriods, CurveGenus,
-    CurveHomology, CurveIntegral, CurveLatticeReduction, CurveMonodromy,
-    CurvePath, CurvePlace, CurveRiemannConstant, CurveSecondKindAbelMap,
-    CurveSecondKindPeriods, CurveValidation,
+    CurveBranchLocus,
+    CurveCheck,
+    CurveFirstKindPeriods,
+    CurveGenus,
+    CurveHomology,
+    CurveIntegral,
+    CurveLatticeReduction,
+    CurveMonodromy,
+    CurvePath,
+    CurvePlace,
+    CurveRiemannConstant,
+    CurveSecondKindAbelMap,
+    CurveSecondKindPeriods,
+    CurveValidation,
 )
 from ._stages import (
-    _curve_differential_sequence,
-    _stage_branch_locus,
-    _stage_monodromy,
-    _stage_hyperelliptic_homology, _stage_hyperelliptic_periods,
-    _tau_imaginary_eigenvalues,
-    _stage_geometric_periods, _stage_geometric_polygon,
-    _stage_geometric_riemann_constant, _geometric_abel_divisor,
-    _stage_geometric_custom_periods, _stage_geometric_custom_riemann_constant,
     _GEOMETRIC_GUARD_BITS,
+    _curve_differential_sequence,
+    _geometric_abel_divisor,
+    _stage_branch_locus,
+    _stage_geometric_custom_periods,
+    _stage_geometric_custom_riemann_constant,
+    _stage_geometric_periods,
+    _stage_geometric_polygon,
+    _stage_geometric_riemann_constant,
+    _stage_hyperelliptic_homology,
+    _stage_hyperelliptic_periods,
+    _stage_monodromy,
+    _tau_imaginary_eigenvalues,
 )
-from .differentials import _baker_callable
 from .charts import _validated_chart_coordinate_map
 from .continuation import (
     _lift_plane_curve_path,
 )
+from .differentials import _baker_callable
 from .integration import (
-    _integrate_plane_curve_branch, _integrate_plane_curve_path,
+    _integrate_plane_curve_branch,
+    _integrate_plane_curve_path,
     _pullback_plane_curve_differentials,
 )
 from .jacobian import (
-    _guarded_open_path, _jacobian_characteristic,
-    _normalise_algebraic_curve_input, _normalise_curve_endpoint,
-    _period_matrix_from_columns, _to_hyperelliptic_points,
+    _guarded_open_path,
+    _jacobian_characteristic,
+    _normalise_algebraic_curve_input,
+    _normalise_curve_endpoint,
+    _period_matrix_from_columns,
+    _to_hyperelliptic_points,
 )
+from .homology import _integer_matrix_rank
 from .monodromy import (
-    _compose_permutations, _integer_matrix_rank, _monodromy_orbit,
+    _compose_permutations,
+    _monodromy_orbit,
 )
 from .polynomial import _ordered_plane_curve_sheets
 
@@ -107,7 +127,7 @@ def branch_locus(ctx, curve):
         >>> locus.branch_values
         (mpf('-1.0'), mpf('0.0'), mpf('1.0'))
     """
-    prepared, unused_hyperelliptic = _normalise_algebraic_curve_input(
+    prepared, _unused_hyperelliptic = _normalise_algebraic_curve_input(
         ctx, curve)
     branch_values, resultant = _stage_branch_locus(ctx, prepared)
     return CurveBranchLocus(prepared.y_degree, branch_values, resultant)
@@ -142,7 +162,7 @@ def monodromy(ctx, curve):
         >>> monodromy.infinity_permutation
         (1, 0)
     """
-    prepared, unused_hyperelliptic = _normalise_algebraic_curve_input(
+    prepared, _unused_hyperelliptic = _normalise_algebraic_curve_input(
         ctx, curve)
     monodromy = _stage_monodromy(ctx, prepared)
     degree = prepared.y_degree
@@ -188,7 +208,7 @@ def genus_data(ctx, curve):
         ctx, curve)
     if unused_hyperelliptic is None:
         with ctx.extraprec(_GEOMETRIC_GUARD_BITS):
-            graph, unused_polygon = _stage_geometric_polygon(ctx, prepared)
+            graph, _unused_polygon = _stage_geometric_polygon(ctx, prepared)
         return CurveGenus(graph.genus, prepared.y_degree,
                           2 * graph.genus - 2 + 2 * prepared.y_degree)
     monodromy = _stage_monodromy(ctx, prepared)
@@ -407,8 +427,7 @@ def riemann_constant(ctx, curve, differentials=None, *,
     if hyperelliptic_model is not None and differentials is None:
         cached = _stage_hyperelliptic_periods(
             ctx, (hyperelliptic_model.coefficients, False))
-        omega, unused_omega_prime, tau = (
-            +matrix for matrix in cached)
+        omega, tau = +cached[0], +cached[2]
         characteristic = _hyperelliptic_characteristic(ctx, omega.rows)
         a, b = characteristic
         genus = tau.rows
@@ -591,7 +610,7 @@ def validate(ctx, result):
                 "max_sheet_residual", result.max_sheet_residual,
                 result.max_sheet_residual <= tolerance))
     else:
-        raise ValueError("validate requires a curve result record")
+        raise TypeError("validate requires a curve result record")
     maximum_residual = max(residuals) if residuals else None
     return CurveValidation(
         type(result).__name__, all(check.passed for check in checks),
@@ -615,7 +634,7 @@ def fibre(ctx, curve, x):
     >>> [mp.nstr(place.y, 6) for place in curve.fibre(2)]
     ['-2.44949', '2.44949']
     """
-    prepared, unused_hyperelliptic = _normalise_algebraic_curve_input(
+    prepared, _unused_hyperelliptic = _normalise_algebraic_curve_input(
         ctx, curve)
     x = ctx.convert(x)
     if not ctx.isfinite(x):
@@ -657,7 +676,7 @@ def path(ctx, curve, start, end):
     >>> mp.nstr(path.start.y, 6), mp.nstr(path.end.y, 6)
     ('1.0', '2.0')
     """
-    prepared, unused_hyperelliptic = _normalise_algebraic_curve_input(
+    prepared, _unused_hyperelliptic = _normalise_algebraic_curve_input(
         ctx, curve)
     start_junction, start_tail, start_place = _normalise_curve_endpoint(
         ctx, prepared, start, "start")
@@ -666,7 +685,7 @@ def path(ctx, curve, start, end):
     if start_junction.x == end_junction.x:
         raise ValueError(
             "path endpoints must have distinct x values")
-    branch_values, unused_resultant = _stage_branch_locus(ctx, prepared)
+    branch_values, _unused_resultant = _stage_branch_locus(ctx, prepared)
     path = _guarded_open_path(
         ctx, start_junction.x, end_junction.x, branch_values)
     lifted = _lift_plane_curve_path(
@@ -709,7 +728,7 @@ def integral(ctx, curve, differentials, path):
     >>> mp.nstr(integral.values, 12)
     '2.0'
     """
-    prepared, unused_hyperelliptic = _normalise_algebraic_curve_input(
+    prepared, _unused_hyperelliptic = _normalise_algebraic_curve_input(
         ctx, curve)
     if callable(differentials):
         single = True
@@ -719,7 +738,7 @@ def integral(ctx, curve, differentials, path):
         forms = _curve_differential_sequence(
             differentials, "differentials")
     if not isinstance(path, CurvePath):
-        raise ValueError("path must be a CurvePath from AlgebraicCurve.path")
+        raise TypeError("path must be a CurvePath from AlgebraicCurve.path")
     if path.curve_key != (prepared, _curve_cache_state(ctx)):
         raise ValueError(
             "path was constructed for a different curve or precision")
@@ -748,6 +767,7 @@ def _normalise_curve_places(ctx, curve, target):
     if isinstance(target, CurvePlace):
         candidates = [target]
     else:
+        left = right = None
         try:
             left, right = target
             pair = True
@@ -843,10 +863,10 @@ def abel_map(ctx, curve, target, differentials=None, *, second_kind=False,
                 reduce=reduce, second_kind=second_kind,
                 _return_shift=second_kind and reduce)
             if second_kind:
+                second = result[1]
                 if reduce:
-                    unused_first, second, shift = result
+                    shift = result[-1] if len(result) == 3 else None
                 else:
-                    unused_first, second = result
                     shift = None
                 return CurveSecondKindAbelMap(
                     second, shift, "hyperelliptic", "baker")

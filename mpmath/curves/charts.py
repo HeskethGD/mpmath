@@ -1,18 +1,27 @@
 """Local-chart construction and integration for algebraic curves."""
 
 from ._context import _curve_cache_state
-from ._records import CurveChart, CurveIntegral, CurvePlace, _CurveChartTail, _PlaneCurve
+from ._records import (
+    CurveChart,
+    CurveIntegral,
+    CurvePlace,
+    _CurveChartTail,
+    _PlaneCurve,
+)
 from ._stages import _curve_differential_sequence
 from .continuation import _continue_plane_curve_branch
 from .integration import (
-    _integrate_plane_curve_branch, _pullback_plane_curve_differentials,
+    _integrate_plane_curve_branch,
+    _pullback_plane_curve_differentials,
 )
 from .jacobian import _normalise_algebraic_curve_input
 from .polynomial import (
-    _blow_up_plane_curve_y, _evaluate_plane_polynomial,
-    _finite_plane_curve_sheets, _monomial_plane_curve_chart,
-    _prepare_plane_curve, _reciprocal_y_plane_curve,
+    _evaluate_plane_polynomial,
+    _finite_plane_curve_sheets,
+    _monomial_plane_curve_chart,
+    _prepare_plane_curve,
 )
+
 
 def _identity_chart_coordinates(t, w):
     """Return the identity coordinate map of an affine curve."""
@@ -145,44 +154,6 @@ def monomial_chart(ctx, source, x_power, y_power):
                        y_power=y_power):
         x, y, dx_dt = base_map(t ** x_power, t ** y_power * w)
         return x, y, dx_dt * x_power * t ** (x_power - 1)
-
-    return CurveChart(base.curve_key, curve, coordinate_map)
-
-
-def _curve_chart_reciprocal_y(ctx, source):
-    """Return the private reciprocal ``v = 1/w`` chart transform.
-
-    The reciprocal chart reparametrizes the base ``w`` coordinate as
-    ``v = 1/w``, so its ambient point at ``(t, v)`` is the base chart's
-    point at ``(t, 1/v)``.  For an affine base curve this is the usual
-    ``y = 1/v`` chart.
-    """
-    base = _curve_chart_source(ctx, source)
-    curve = _reciprocal_y_plane_curve(ctx, base.curve)
-    base_map = base.coordinate_map
-
-    def coordinate_map(t, v, base_map=base_map):
-        return base_map(t, 1 / v)
-
-    return CurveChart(base.curve_key, curve, coordinate_map)
-
-
-def _curve_chart_blow_up(ctx, source, center, power=1):
-    """Return the private blow-up chart ``w = center + t**power*u``.
-
-    The substitution separates branches of ``source`` meeting above a
-    common ``w`` value at ``t = 0``.  ``source`` may be a curve or another
-    chart, and the returned chart composes the coordinate maps.
-    """
-    base = _curve_chart_source(ctx, source)
-    curve = _blow_up_plane_curve_y(
-        ctx, base.curve, center, y_power=power)
-    center = ctx.convert(center)
-    base_map = base.coordinate_map
-
-    def coordinate_map(t, u, base_map=base_map, center=center,
-                        power=power):
-        return base_map(t, center + t ** power * u)
 
     return CurveChart(base.curve_key, curve, coordinate_map)
 

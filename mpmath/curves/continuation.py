@@ -1,70 +1,32 @@
 """Path construction and continuation on plane algebraic curves."""
 
+import itertools
 from bisect import bisect_right
 
 from ._context import _curve_cache_state
 from ._records import (
-    _BoundaryPlace, _BranchContinuation, _GeometricCover,
-    _LiftedPathChain, _LiftedPathTerm,
-    _LiftedPlaneCurvePath, _PlaneCurvePlace, _SheetContinuation,
+    _BoundaryPlace,
+    _BranchContinuation,
+    _GeometricCover,
+    _LiftedPathChain,
+    _LiftedPathTerm,
+    _LiftedPlaneCurvePath,
+    _PlaneCurvePlace,
+    _SheetContinuation,
 )
 from .geometry import _stable_complex_order
 from .polynomial import (
-    _evaluate_plane_derivative, _evaluate_plane_polynomial,
-    _minimum_cost_assignment, _minimum_root_separation,
-    _newton_plane_curve_sheet, _ordered_plane_curve_sheets,
+    _evaluate_plane_derivative,
+    _evaluate_plane_polynomial,
+    _minimum_cost_assignment,
+    _minimum_root_separation,
+    _newton_plane_curve_sheet,
+    _ordered_plane_curve_sheets,
     _plane_curve_sheets,
 )
 
 # Base-plane paths
 # ----------------
-
-def _real_branch_loop_path(ctx, base_point, branch_point, branch_points,
-                           circle_steps=24, corridor_height=None):
-    """Construct a guarded loop for a set of distinct real branch values.
-
-    The path descends from a real base point to a common lower-half-plane
-    corridor, approaches the selected branch point vertically, traverses one
-    positive circle, and returns along the stem.  More general complex branch
-    configurations will use a separate path-construction strategy.
-    """
-    base_point = ctx.convert(base_point)
-    branch_point = ctx.convert(branch_point)
-    branch_points = tuple(ctx.convert(point) for point in branch_points)
-    if ctx.im(base_point) or any(ctx.im(point) for point in branch_points):
-        raise ValueError("real branch-loop construction requires real points")
-    if branch_point not in branch_points:
-        raise ValueError("branch_point must occur in branch_points")
-    if len(set(branch_points)) != len(branch_points):
-        raise ValueError("branch points must be distinct")
-    if base_point in branch_points:
-        raise ValueError("the base point must be regular")
-    if not isinstance(circle_steps, int) or circle_steps < 8:
-        raise ValueError("circle_steps must be an integer at least 8")
-
-    spacing = min(abs(branch_point - point)
-                  for point in branch_points + (base_point,)
-                  if point != branch_point)
-    radius = spacing / 4
-    extent = max([ctx.one] + [abs(point - base_point)
-                              for point in branch_points])
-    if corridor_height is None:
-        corridor_height = extent / 4
-    else:
-        corridor_height = ctx.convert(corridor_height)
-        if not ctx.isfinite(corridor_height) or corridor_height <= 0:
-            raise ValueError("corridor_height must be finite and positive")
-    corridor_height = max(corridor_height, 2 * radius)
-
-    corridor_base = base_point - ctx.j * corridor_height
-    corridor_target = branch_point - ctx.j * corridor_height
-    approach = branch_point - ctx.j * radius
-    stem = (base_point, corridor_base, corridor_target, approach)
-    circle = tuple(
-        branch_point + radius * ctx.exp(
-            ctx.j * (-ctx.pi / 2 + 2 * ctx.pi * step / circle_steps))
-        for step in range(1, circle_steps + 1))
-    return stem + circle + tuple(reversed(stem[:-1]))
 
 
 def _point_segment_distance(ctx, point, start, end):
@@ -194,70 +156,6 @@ def _closed_path_permutation(ctx, path, final_sheets, initial_sheets):
     return _minimum_cost_assignment(ctx, final_sheets, initial_sheets)
 
 
-def _continue_plane_curve_sheets(ctx, curve, path, initial_sheets=None):
-    """Continue every sheet along a prescribed sequence of x-values.
-
-    The path is assumed to avoid critical values.  Adaptive path refinement is
-    intentionally a separate future concern; this primitive reports the
-    diagnostics needed to decide when refinement is necessary.
-    """
-    path = tuple(ctx.convert(point) for point in path)
-    if not path:
-        raise ValueError(
-            "the continuation path must contain at least one point")
-    if any(not ctx.isfinite(point) for point in path):
-        raise ValueError("continuation path points must be finite")
-
-    if initial_sheets is None:
-        initial_sheets = _ordered_plane_curve_sheets(ctx, curve, path[0])
-    else:
-        initial_sheets = tuple(ctx.convert(sheet) for sheet in initial_sheets)
-        if len(initial_sheets) != curve.y_degree:
-            raise ValueError("initial_sheets must contain one value per sheet")
-    sheets = initial_sheets
-    fibres = [sheets]
-
-    max_residual = max(
-        abs(_evaluate_plane_polynomial(ctx, curve, path[0], sheet))
-        for sheet in sheets)
-    min_separation = _minimum_root_separation(ctx, sheets)
-    max_prediction_correction = ctx.zero
-
-    for x, next_x in zip(path, path[1:]):
-        predictions = _predict_plane_curve_sheets(
-            ctx, curve, x, next_x, sheets)
-        candidates = _plane_curve_sheets(
-            ctx, curve, next_x, roots_init=predictions)
-        assignment = _minimum_cost_assignment(ctx, predictions, candidates)
-        next_sheets = tuple(candidates[index] for index in assignment)
-        max_prediction_correction = max(
-            max_prediction_correction,
-            max(abs(value - prediction)
-                for value, prediction in zip(next_sheets, predictions)))
-        max_residual = max(
-            max_residual,
-            max(abs(_evaluate_plane_polynomial(
-                ctx, curve, next_x, sheet)) for sheet in next_sheets))
-        min_separation = min(
-            min_separation, _minimum_root_separation(ctx, next_sheets))
-        sheets = next_sheets
-        fibres.append(sheets)
-
-    permutation = _closed_path_permutation(
-        ctx, path, sheets, initial_sheets)
-    return _SheetContinuation(
-        sheets=sheets,
-        permutation=permutation,
-        max_residual=max_residual,
-        min_separation=min_separation,
-        max_prediction_correction=max_prediction_correction,
-        steps=len(path) - 1,
-        path=path,
-        fibres=tuple(fibres),
-        refinements=0,
-    )
-
-
 def _continue_plane_curve_sheets_adaptive(
         ctx, curve, path, initial_sheets=None, max_refinements=12,
         correction_fraction=None, motion_fraction=None):
@@ -357,7 +255,7 @@ def _continue_plane_curve_sheets_adaptive(
         return next_sheets
 
     sheets = initial_sheets
-    for left, right in zip(path, path[1:]):
+    for left, right in itertools.pairwise(path):
         sheets = advance(left, right, sheets, 0)
 
     permutation = _closed_path_permutation(
@@ -420,7 +318,7 @@ def _continue_plane_curve_branch(
         derivative_y = _evaluate_plane_derivative(
             ctx, curve, left, value, "y")
         prediction = value - derivative_x * (right - left) / derivative_y
-        (candidate, unused_residual, unused_derivative, unused_scale,
+        (candidate, _unused_residual, _unused_derivative, _unused_scale,
          converged) = _newton_plane_curve_sheet(
              ctx, curve, right, prediction, maxsteps=max_newton_steps)
 
@@ -450,7 +348,7 @@ def _continue_plane_curve_branch(
         return candidate
 
     value = initial_y
-    for left, right in zip(path, path[1:]):
+    for left, right in itertools.pairwise(path):
         value = advance(left, right, value, 0)
     return _BranchContinuation(
         values=tuple(accepted_values),
@@ -462,100 +360,8 @@ def _continue_plane_curve_branch(
     )
 
 
-def _reverse_plane_curve_branch(continuation):
-    """Reverse a continued single branch."""
-    return _BranchContinuation(
-        values=tuple(reversed(continuation.values)),
-        max_residual=continuation.max_residual,
-        min_derivative=continuation.min_derivative,
-        steps=continuation.steps,
-        path=tuple(reversed(continuation.path)),
-        refinements=continuation.refinements,
-    )
-
-
 # Lifted-path composition
 # -----------------------
-
-def _reverse_plane_curve_continuation(ctx, continuation):
-    """Reverse a continued path while preserving its lifted sheet labels."""
-    path = tuple(reversed(continuation.path))
-    fibres = tuple(reversed(continuation.fibres))
-    permutation = _closed_path_permutation(
-        ctx, path, fibres[-1], fibres[0])
-    return _SheetContinuation(
-        sheets=fibres[-1],
-        permutation=permutation,
-        max_residual=continuation.max_residual,
-        min_separation=continuation.min_separation,
-        max_prediction_correction=(
-            continuation.max_prediction_correction),
-        steps=continuation.steps,
-        path=path,
-        fibres=fibres,
-        refinements=continuation.refinements,
-    )
-
-
-def _align_closed_continuation_base_fibre(ctx, continuation, base_fibre):
-    """Relabel a closed continuation to a specified common base fibre."""
-    scale = max(ctx.one, abs(continuation.path[0]),
-                abs(continuation.path[-1]))
-    if abs(continuation.path[-1] - continuation.path[0]) > (
-            ctx.sqrt(ctx.eps) * scale):
-        raise ValueError("base-fibre alignment requires a closed path")
-    assignment = _minimum_cost_assignment(
-        ctx, tuple(base_fibre), continuation.fibres[0])
-    fibres = tuple(tuple(fibre[index] for index in assignment)
-                   for fibre in continuation.fibres)
-    permutation = _closed_path_permutation(
-        ctx, continuation.path, fibres[-1], fibres[0])
-    return _SheetContinuation(
-        sheets=fibres[-1],
-        permutation=permutation,
-        max_residual=continuation.max_residual,
-        min_separation=continuation.min_separation,
-        max_prediction_correction=(
-            continuation.max_prediction_correction),
-        steps=continuation.steps,
-        path=continuation.path,
-        fibres=fibres,
-        refinements=continuation.refinements,
-    )
-
-
-def _concatenate_plane_curve_continuations(ctx, left, right):
-    """Join continued paths, relabeling the right fibre at the common point."""
-    left_degree = len(left.fibres[0])
-    if any(len(fibre) != left_degree
-           for fibre in left.fibres + right.fibres):
-        raise ValueError("continued paths must have the same degree")
-    scale = max(ctx.one, abs(left.path[-1]), abs(right.path[0]))
-    if abs(left.path[-1] - right.path[0]) > ctx.sqrt(ctx.eps) * scale:
-        raise ValueError("continued paths do not share an endpoint")
-
-    assignment = _minimum_cost_assignment(
-        ctx, left.fibres[-1], right.fibres[0])
-    right_fibres = tuple(
-        tuple(fibre[index] for index in assignment)
-        for fibre in right.fibres)
-    path = left.path + right.path[1:]
-    fibres = left.fibres + right_fibres[1:]
-    permutation = _closed_path_permutation(
-        ctx, path, fibres[-1], fibres[0])
-    return _SheetContinuation(
-        sheets=fibres[-1],
-        permutation=permutation,
-        max_residual=max(left.max_residual, right.max_residual),
-        min_separation=min(left.min_separation, right.min_separation),
-        max_prediction_correction=max(
-            left.max_prediction_correction,
-            right.max_prediction_correction),
-        steps=left.steps + right.steps,
-        path=path,
-        fibres=fibres,
-        refinements=left.refinements + right.refinements,
-    )
 
 
 def _lift_plane_curve_path(
@@ -613,11 +419,11 @@ def _prepare_lifted_path_chain(terms):
                 "chain terms must be (coefficient, path, sheet) tuples")
         coefficient, continuation, sheet = term
         if not isinstance(coefficient, int):
-            raise ValueError("chain coefficients must be integers")
+            raise TypeError("chain coefficients must be integers")
         if not coefficient:
             continue
         if not isinstance(sheet, int):
-            raise ValueError("chain sheets must be integer indices")
+            raise TypeError("chain sheets must be integer indices")
         if (not continuation.fibres
                 or not 0 <= sheet < len(continuation.fibres[0])):
             raise ValueError("chain sheet does not index the lifted path")
@@ -661,27 +467,6 @@ def _lifted_path_chain_boundary(ctx, chain):
     return tuple(
         _BoundaryPlace(multiplicity, place[0], place[1])
         for place, multiplicity in places if multiplicity)
-
-
-def _close_monodromy_lift(ctx, continuation, sheet):
-    """Repeat a closed base loop until the selected lifted sheet closes."""
-    permutation = continuation.permutation
-    if permutation is None:
-        raise ValueError(
-            "closing a monodromy lift requires a closed base path")
-    if not isinstance(sheet, int) or not 0 <= sheet < len(permutation):
-        raise ValueError("sheet must index the lifted path")
-    result = continuation
-    image = permutation[sheet]
-    repeats = 1
-    while image != sheet:
-        if repeats >= len(permutation):
-            raise ValueError("invalid monodromy orbit")
-        result = _concatenate_plane_curve_continuations(
-            ctx, result, continuation)
-        image = permutation[image]
-        repeats += 1
-    return result
 
 
 def _lift_plane_graph(ctx, curve, geometry):
@@ -731,7 +516,7 @@ class _LiftedEdgeSampler:
         tolerance = 100 * ctx.eps
         if (any(abs(ctx.im(t)) > tolerance for t in parameters)
                 or any(ctx.re(a) >= ctx.re(b)
-                       for a, b in zip(parameters, parameters[1:]))):
+                       for a, b in itertools.pairwise(parameters))):
             raise ValueError("a lifted edge must follow a straight ordered path")
         self.positions = [ctx.re(t) for t in parameters]
         self.fibres = list(continuation.fibres)
@@ -752,7 +537,7 @@ class _LiftedEdgeSampler:
             predictions = tuple(
                 u + fraction * (v - u)
                 for u, v in zip(self.fibres[index], self.fibres[index + 1]))
-            candidate, residual, unused_derivative, unused_scale, converged = (
+            candidate, residual, _unused_derivative, _unused_scale, converged = (
                 _newton_plane_curve_sheet(ctx, self.curve, x, predictions[sheet]))
             separation = min((abs(predictions[sheet] - y)
                               for j, y in enumerate(predictions) if j != sheet),

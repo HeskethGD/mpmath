@@ -1,15 +1,23 @@
 """Period and Jacobian assembly for Baker-marked curves."""
 
 from .integration import (
-    _infinity_branch_integrals, _infinity_second_kind_integrals,
+    _infinity_branch_integrals,
+    _infinity_second_kind_integrals,
     _second_kind_interval,
 )
 
 
-def _matrix_tuple(matrix):
-    """Return a matrix as an immutable tuple of row tuples."""
-    return tuple(tuple(matrix[row, column] for column in range(matrix.cols))
-                 for row in range(matrix.rows))
+def _validate_period_matrix(ctx, tau):
+    """Check positive definiteness after period-matrix symmetrization."""
+    imaginary_tau = ctx.matrix([
+        [ctx.im(tau[row, column]) for column in range(tau.cols)]
+        for row in range(tau.rows)])
+    if any(not ctx.isfinite(value) for value in tau):
+        raise ValueError("period matrix must contain finite entries")
+    try:
+        ctx.cholesky(imaginary_tau)
+    except (ValueError, ZeroDivisionError) as exc:
+        raise ValueError("imaginary part of tau must be positive definite") from exc
 
 def _first_kind_periods(ctx, intervals, genus, even_degree, b_sign,
                         target_eps):
@@ -26,9 +34,8 @@ def _first_kind_periods(ctx, intervals, genus, even_degree, b_sign,
     inverse_omega = ctx.inverse(omega)
     tau = inverse_omega * omega_prime
     _symmetrize_period_matrix(ctx, tau, target_eps, "period matrix")
-    ctx._rtheta_tau_data(_matrix_tuple(tau))
+    _validate_period_matrix(ctx, tau)
     return omega, omega_prime, tau, inverse_omega
-
 
 
 def _branch_abel_values(ctx, roots, intervals, leading, genus, even_degree):
@@ -73,7 +80,6 @@ def _branch_second_kind_values(ctx, coefficients, roots, intervals, genus,
     return tuple(values)
 
 
-
 def _abel_lattice_shift(ctx, value, omega, omega_prime, target_eps):
     """Resolve an Abelian vector into the full period lattice."""
     genus = omega.rows
@@ -103,7 +109,6 @@ def _abel_lattice_shift(ctx, value, omega, omega_prime, target_eps):
         for coordinate in coordinates
     ])
     return periods, lattice_shift
-
 
 
 def _second_kind_periods(ctx, coefficients, intervals, genus, even_degree,
@@ -168,4 +173,3 @@ def _hyperelliptic_characteristic(ctx, genus):
     b = tuple(half if (genus - index) & 1 else ctx.zero
               for index in range(genus))
     return a, b
-

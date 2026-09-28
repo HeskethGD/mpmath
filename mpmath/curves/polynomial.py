@@ -1,6 +1,5 @@
 """Polynomial representation, evaluation, and sheet solving."""
 
-from math import comb
 
 from ._records import _PlaneCurve
 
@@ -415,15 +414,6 @@ def _newton_plane_curve_sheet_with_derivatives(
             scale, converged)
 
 
-def _reciprocal_y_plane_curve(ctx, curve):
-    """Return ``y**degree * F(x, 1/y)`` as a prepared plane curve."""
-    degree = curve.y_degree
-    return _prepare_plane_curve(ctx, {
-        (x_power, degree - y_power): coefficient
-        for x_power, y_power, coefficient in curve.terms
-    })
-
-
 def _monomial_plane_curve_chart(ctx, curve, x_power, y_power):
     """Return a polynomial chart for ``x=t**x_power, y=t**y_power*w``.
 
@@ -445,29 +435,6 @@ def _monomial_plane_curve_chart(ctx, curve, x_power, y_power):
         powers = t_power - minimum, w_power
         coefficients[powers] = coefficients.get(powers, ctx.zero) + coefficient
     return _prepare_plane_curve(ctx, coefficients)
-
-
-def _blow_up_plane_curve_y(ctx, curve, center, y_power=1):
-    """Return the strict transform for ``y=center+x**y_power*w``."""
-    if not isinstance(y_power, int) or y_power < 1:
-        raise ValueError("y_power must be a positive integer")
-    center = ctx.convert(center)
-    coefficients = {}
-    for x_degree, degree, coefficient in curve.terms:
-        for w_degree in range(degree + 1):
-            t_power = x_degree + y_power * w_degree
-            value = (coefficient * comb(degree, w_degree)
-                     * center ** (degree - w_degree))
-            powers = t_power, w_degree
-            coefficients[powers] = coefficients.get(powers, ctx.zero) + value
-    coefficients = {powers: coefficient
-                    for powers, coefficient in coefficients.items()
-                    if coefficient}
-    minimum = min(x_power for x_power, unused in coefficients)
-    return _prepare_plane_curve(ctx, {
-        (x_power - minimum, w_power): coefficient
-        for (x_power, w_power), coefficient in coefficients.items()
-    })
 
 
 def _finite_plane_curve_sheets(ctx, curve, x):

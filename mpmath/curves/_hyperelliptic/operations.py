@@ -1,17 +1,24 @@
 """Orchestration for the specialized hyperelliptic implementation."""
 
 from .integration import (
-    _branch_target_integrals, _hyperelliptic_intervals,
+    _branch_target_integrals,
+    _hyperelliptic_intervals,
     _second_kind_interval,
 )
 from .jacobian import (
-    _abel_lattice_shift, _branch_abel_values, _branch_second_kind_values,
-    _first_kind_periods, _second_kind_periods, _symmetrize_period_matrix,
+    _abel_lattice_shift,
+    _branch_abel_values,
+    _branch_second_kind_values,
+    _first_kind_periods,
+    _second_kind_periods,
+    _symmetrize_period_matrix,
     _validate_legendre_relation,
 )
 from .model import (
-    _admissible_branch_vertex, _evaluate_polynomial,
-    _normalise_abel_targets, _prepare_hyperelliptic_curve,
+    _admissible_branch_vertex,
+    _evaluate_polynomial,
+    _normalise_abel_targets,
+    _prepare_hyperelliptic_curve,
     _target_branch_index,
 )
 
@@ -25,7 +32,7 @@ def _hyperelliptic_periods(ctx, coefficients, method="auto",
     with ctx.extraprec(quadrature_guard + cancellation_guard):
         curve_data = _prepare_hyperelliptic_curve(
             ctx, coefficients, method)
-        (coefficients, roots, unused_root_tolerance, use_real_method,
+        (coefficients, roots, _unused_root_tolerance, use_real_method,
          genus, even_degree) = curve_data
         monomial_count = 2 * genus + 1 if second_kind else genus
         intervals, b_sign = _hyperelliptic_intervals(
@@ -61,7 +68,7 @@ def _hyperelliptic_abel_map(
         targets = _normalise_abel_targets(ctx, target)
         curve_data = _prepare_hyperelliptic_curve(
             ctx, coefficients, method)
-        (coefficients, roots, unused_root_tolerance, use_real_method,
+        (coefficients, roots, _unused_root_tolerance, use_real_method,
          genus, even_degree) = curve_data
         for x, y in targets:
             curve_value = _evaluate_polynomial(ctx, coefficients, x)
@@ -113,7 +120,7 @@ def _hyperelliptic_abel_map(
                             genus))
 
         if reduce:
-            omega, omega_prime, unused_tau, unused_inverse = (
+            omega, omega_prime, _unused_tau, _unused_inverse = (
                 _first_kind_periods(
                     ctx, intervals, genus, even_degree, b_sign, target_eps))
             periods, lattice_shift = _abel_lattice_shift(

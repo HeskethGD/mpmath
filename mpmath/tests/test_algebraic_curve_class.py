@@ -1,12 +1,10 @@
 import warnings
 
 import mpmath
-import pytest
 from mpmath import (
     AlgebraicCurve, CurveBranchLocus, algebraic_curve, mp,
 )
 from mpmath.curves._stages import _stage_hyperelliptic_periods
-from mpmath.curves.polynomial import _prepare_plane_curve
 
 
 def test_unshipped_functional_curve_api_is_not_exported():

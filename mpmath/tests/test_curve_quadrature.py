@@ -1,7 +1,7 @@
 import pytest
 
 from mpmath import mp
-from mpmath.curves.continuation import _continue_plane_curve_sheets
+from mpmath.curves.continuation import _continue_plane_curve_sheets_adaptive
 from mpmath.curves.integration import _integrate_plane_curve_path
 from mpmath.curves.polynomial import _prepare_plane_curve
 from mpmath.curves.quadrature import _geometric_quadrature_order
@@ -14,7 +14,7 @@ def test_geometry_quadrature_resolves_nearby_branch_value(dps):
         curve = _prepare_plane_curve(mp, {
             (0, 2): 1, (1, 0): -1, (0, 0): branch,
         })
-        continuation = _continue_plane_curve_sheets(mp, curve, (-1, 1))
+        continuation = _continue_plane_curve_sheets_adaptive(mp, curve, (-1, 1))
         order = _geometric_quadrature_order(mp, -1, 1, (branch,))
         assert order > 12
         assert _geometric_quadrature_order(
@@ -23,7 +23,7 @@ def test_geometry_quadrature_resolves_nearby_branch_value(dps):
                      - continuation.fibres[0][0])
         form = (lambda x, y: 1 / y,)
         coarse = _integrate_plane_curve_path(
-            mp, curve, continuation, form, quadrature_order=12)
+            mp, curve, continuation, form, quadrature_order=3)
         local = _integrate_plane_curve_path(
             mp, curve, continuation, form, quadrature_order="geometry",
             branch_values=(branch,))

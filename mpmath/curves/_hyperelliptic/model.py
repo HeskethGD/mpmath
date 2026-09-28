@@ -85,7 +85,6 @@ def _prepare_hyperelliptic_curve(ctx, coefficients, method):
             genus, even_degree)
 
 
-
 def _infinity_direction(ctx, roots):
     """Choose a deterministic root-free ray leaving the terminal root."""
     terminal = roots[-1]
@@ -105,7 +104,6 @@ def _infinity_direction(ctx, roots):
         if not blocked:
             return direction
     raise ValueError("failed to choose a root-free path from infinity")
-
 
 
 def _normalise_abel_targets(ctx, target):
