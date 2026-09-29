@@ -1,0 +1,644 @@
+"""Numerical integration along lifted algebraic-curve paths."""
+
+from ._records import _IteratedPathIntegrals, _PathIntegrals
+from .continuation import _LiftedEdgeSampler
+from .differentials import _evaluate_baker_basis
+from .polynomial import (
+    _evaluate_plane_derivative,
+    _evaluate_plane_polynomial,
+    _minimum_cost_assignment,
+    _newton_plane_curve_sheet_with_derivatives,
+    _plane_curve_sheets,
+)
+from .quadrature import (
+    _REUSABLE_GAUSS_ORDERS,
+    _geometric_edge_panels,
+    _geometric_quadrature_order,
+    _legendre_edge_rule,
+)
+
+
+def _integrate_geometric_chains(ctx, curve, chains, basis, branch_values):
+    """Integrate structured holomorphic forms on shared lifted graph edges.
+
+    Rules, plans, samplers and edge integrals belong to this one numerical
+    stage. Only additive chains are combined here; based words remain with
+    their polygon for iterated integrals. Opaque callable differentials are
+    deliberately not admitted by this branch-locus-only quadrature policy.
+    """
+    count = len(basis[0])
+    rules, plans, samplers, integrals = {}, {}, {}, {}
+    residual = ctx.zero
+    columns = []
+    for chain in chains:
+        pieces = []
+        for term in chain.terms:
+            continuation = term.continuation
+            key = id(continuation)
+            integral_key = key, term.sheet
+            if integral_key not in integrals:
+                if key not in samplers:
+                    samplers[key] = _LiftedEdgeSampler(ctx, curve, continuation)
+                    plans[key] = _geometric_edge_panels(
+                        ctx, continuation.path[0], continuation.path[-1], branch_values)
+                sampler = samplers[key]
+                panel_values = []
+                for lower, upper, order in plans[key]:
+                    if order not in rules:
+                        rules[order] = _legendre_edge_rule(ctx, order)
+                    terms = [[] for unused in range(count)]
+                    width = upper - lower
+                    for node, weight in rules[order]:
+                        x, y, error = sampler.sample(lower + width * node, term.sheet)
+                        residual = max(residual, error)
+                        values = _evaluate_baker_basis(ctx, basis, x, y)
+                        for index, value in enumerate(values):
+                            terms[index].append(weight * value)
+                    panel_values.append(tuple(
+                        sampler.delta * width * ctx.fsum(row) for row in terms))
+                integrals[integral_key] = tuple(
+                    ctx.fsum(panel[index] for panel in panel_values)
+                    for index in range(count))
+            pieces.append((term.coefficient, integrals[integral_key]))
+        columns.append(tuple(ctx.fsum(c * values[i] for c, values in pieces)
+                             for i in range(count)))
+    return tuple(columns), residual
+
+def _integrate_geometric_callable_chains(ctx, curve, chains, forms, branch_values):
+    """Integrate supplied forms on shared geometric edges.
+
+    Callers must exclude poles on these paths, as in the radial API. Use
+    successive-order checks for opaque callables rather than the structured
+    automatic-basis fast path. These checks do not certify absence of poles.
+    """
+    rules, edges, columns = {}, {}, []
+    residual = ctx.zero
+    for chain in chains:
+        pieces = []
+        for term in chain.terms:
+            key = id(term.continuation), term.sheet
+            if key not in edges:
+                integral = _integrate_plane_curve_path(
+                    ctx, curve, term.continuation, forms, sheet=term.sheet,
+                    quadrature_order="geometry", branch_values=branch_values,
+                    check_convergence=True, quadrature_cache=rules)
+                edges[key] = integral.values
+                residual = max(residual, integral.max_sheet_residual)
+            pieces.append((term.coefficient, edges[key]))
+        columns.append(tuple(ctx.fsum(c * values[i] for c, values in pieces)
+                             for i in range(len(forms))))
+    return tuple(columns), residual
+
+
+# Lifted-path integration
+# -----------------------
+
+def _full_plane_curve_segment_samples(
+        ctx, curve, left_x, right_x, left_fibre, right_fibre,
+        parameters, sheet):
+    """Resolve one selected sheet independently at every quadrature node."""
+    delta_x = right_x - left_x
+    samples = []
+    for parameter in parameters:
+        x = left_x + parameter * delta_x
+        predictions = tuple(
+            left + parameter * (right - left)
+            for left, right in zip(left_fibre, right_fibre))
+        candidates = _plane_curve_sheets(
+            ctx, curve, x, roots_init=predictions)
+        assignment = _minimum_cost_assignment(ctx, predictions, candidates)
+        y = candidates[assignment[sheet]]
+        residual = abs(_evaluate_plane_polynomial(ctx, curve, x, y))
+        samples.append((x, y, residual))
+    return tuple(samples)
+
+
+def _newton_plane_curve_segment_samples(
+        ctx, curve, left_x, right_x, left_fibre, right_fibre,
+        parameters, sheet):
+    """Continue one sheet through ordered nodes, or return ``None``.
+
+    The known right endpoint certifies the resulting branch.  A caller must
+    fall back to independent full-fibre solves when this fast path fails.
+    """
+    current_x = left_x
+    current_y = left_fibre[sheet]
+    current_derivative_x = _evaluate_plane_derivative(
+        ctx, curve, current_x, current_y, "x")
+    current_derivative_y = _evaluate_plane_derivative(
+        ctx, curve, current_x, current_y, "y")
+    delta_x = right_x - left_x
+    samples = []
+
+    def advance(next_x):
+        nonlocal current_x, current_y
+        nonlocal current_derivative_x, current_derivative_y
+        derivative_scale = max(
+            ctx.one, abs(current_derivative_x), abs(current_derivative_y))
+        if (abs(current_derivative_y)
+                <= ctx.sqrt(ctx.eps) * derivative_scale):
+            return None
+        prediction = current_y - (
+            current_derivative_x * (next_x - current_x)
+            / current_derivative_y)
+        (candidate, residual, candidate_derivative_x,
+         candidate_derivative_y, unused_scale,
+         converged) = _newton_plane_curve_sheet_with_derivatives(
+             ctx, curve, next_x, prediction)
+        correction = abs(candidate - prediction)
+        motion = abs(candidate - current_y)
+        if (not converged
+                or correction > max(ctx.one, motion) / 4):
+            return None
+        current_x = next_x
+        current_y = candidate
+        current_derivative_x = candidate_derivative_x
+        current_derivative_y = candidate_derivative_y
+        return candidate, abs(residual)
+
+    for parameter in parameters:
+        x = left_x + parameter * delta_x
+        result = advance(x)
+        if result is None:
+            return None
+        y, residual = result
+        samples.append((x, y, residual))
+
+    endpoint = advance(right_x)
+    if endpoint is None:
+        return None
+    expected = right_fibre[sheet]
+    endpoint_scale = max(ctx.one, abs(expected), abs(current_y))
+    tolerance = 100 * ctx.sqrt(ctx.eps) * endpoint_scale
+    if abs(current_y - expected) > tolerance:
+        return None
+    if any(abs(current_y - other) < abs(current_y - expected)
+           for index, other in enumerate(right_fibre) if index != sheet):
+        return None
+    return tuple(samples)
+
+
+def _plane_curve_segment_samples(
+        ctx, curve, left_x, right_x, left_fibre, right_fibre,
+        parameters, sheet):
+    """Sample one lifted segment, using certified Newton continuation."""
+    if curve.y_degree > 2:
+        samples = _newton_plane_curve_segment_samples(
+            ctx, curve, left_x, right_x, left_fibre, right_fibre,
+            parameters, sheet)
+        if samples is not None:
+            return samples
+    return _full_plane_curve_segment_samples(
+        ctx, curve, left_x, right_x, left_fibre, right_fibre,
+        parameters, sheet)
+
+
+def _integrate_plane_curve_path(
+        ctx, curve, continuation, differentials, sheet=0,
+        quadrature_order=None, branch_values=None,
+        differential_evaluator=None, check_convergence=False,
+        quadrature_cache=None):
+    """Integrate coefficients of dx along one continued sheet.
+
+    Each differential is a callable ``differential(x, y)`` returning the
+    coefficient of ``dx``.  An internal ``differential_evaluator`` may return
+    all coefficients together when their algebraic structure permits shared
+    work.  Ordered quadrature nodes use predictor-corrector continuation of
+    the selected sheet, certified against each segment's known endpoint
+    fibre. Unsafe segments fall back to independent full-fibre solves matched
+    against the interpolated endpoint fibres.
+    """
+    try:
+        differentials = tuple(differentials)
+    except TypeError:
+        raise ValueError("differentials must be a sequence of callables")
+    if not differentials or any(not callable(value)
+                                for value in differentials):
+        raise ValueError("differentials must be a sequence of callables")
+    if (differential_evaluator is not None
+            and not callable(differential_evaluator)):
+        raise ValueError("differential_evaluator must be callable")
+    if not isinstance(check_convergence, bool):
+        raise ValueError("check_convergence must be boolean")
+    if quadrature_cache is not None and not isinstance(
+            quadrature_cache, dict):
+        raise ValueError("quadrature_cache must be a dictionary")
+    if not isinstance(sheet, int) or not 0 <= sheet < curve.y_degree:
+        raise ValueError("sheet must index the initial fibre")
+    if len(continuation.path) != len(continuation.fibres):
+        raise ValueError("continuation path and fibres are inconsistent")
+    if any(len(fibre) != curve.y_degree
+           for fibre in continuation.fibres):
+        raise ValueError("continuation fibres have the wrong degree")
+    geometric = quadrature_order == "geometry"
+    if geometric and not branch_values:
+        raise ValueError("geometry quadrature requires branch values")
+    if quadrature_order is None:
+        quadrature_order = max(16, 2 * ctx.dps)
+    if not geometric and (not isinstance(quadrature_order, int)
+                          or quadrature_order < 2):
+        raise ValueError("quadrature_order must be an integer at least 2")
+    rules = {} if quadrature_cache is None else quadrature_cache
+
+    def rule(order):
+        if order not in rules:
+            nodes, weights = ctx.gauss_quadrature(order, "legendre01")
+            rules[order] = tuple(nodes), tuple(weights)
+        return rules[order]
+
+    def integrate_segment(
+            left_x, right_x, left_fibre, right_fibre, order):
+        parameters, weights = rule(order)
+        contributions = [[] for unused in differentials]
+        samples = _plane_curve_segment_samples(
+            ctx, curve, left_x, right_x, left_fibre, right_fibre,
+            parameters, sheet)
+        residual = ctx.zero
+        for (x, y, sample_residual), weight in zip(samples, weights):
+            residual = max(residual, sample_residual)
+            sample_values = (tuple(differential(x, y)
+                                   for differential in differentials)
+                             if differential_evaluator is None else
+                             tuple(differential_evaluator(x, y)))
+            if len(sample_values) != len(differentials):
+                raise ValueError(
+                    "differential_evaluator returned the wrong number "
+                    "of values")
+            for index, value in enumerate(sample_values):
+                contributions[index].append(
+                    weight * value)
+        delta_x = right_x - left_x
+        return (tuple(delta_x * ctx.fsum(terms)
+                      for terms in contributions), residual)
+
+    values = [ctx.zero] * len(differentials)
+    max_sheet_residual = ctx.zero
+    for segment in range(len(continuation.path) - 1):
+        left_x = continuation.path[segment]
+        right_x = continuation.path[segment + 1]
+        if left_x == right_x:
+            continue
+        left_fibre = continuation.fibres[segment]
+        right_fibre = continuation.fibres[segment + 1]
+        if geometric:
+            order = _geometric_quadrature_order(
+                ctx, left_x, right_x, branch_values)
+        else:
+            order = quadrature_order
+        segment_values, residual = integrate_segment(
+            left_x, right_x, left_fibre, right_fibre, order)
+        if check_convergence:
+            for unused_refinement in range(5):
+                larger = next(
+                    (candidate for candidate in _REUSABLE_GAUSS_ORDERS
+                     if candidate > order),
+                    32 * ((order + 32) // 32))
+                refined, refined_residual = integrate_segment(
+                    left_x, right_x, left_fibre, right_fibre, larger)
+                error = max(
+                    abs(left - right)
+                    for left, right in zip(segment_values, refined))
+                scale = max([ctx.one] + [abs(value) for value in refined])
+                residual = max(residual, refined_residual)
+                segment_values = refined
+                order = larger
+                if error <= 100 * ctx.eps * scale:
+                    break
+            else:
+                raise ctx.NoConvergence(
+                    "path quadrature did not reach working precision")
+        max_sheet_residual = max(max_sheet_residual, residual)
+        for index, value in enumerate(segment_values):
+            values[index] += value
+
+    return _PathIntegrals(
+        values=tuple(values),
+        max_sheet_residual=max_sheet_residual,
+        segments=len(continuation.path) - 1,
+    )
+
+
+def _gauss_indefinite_matrix(ctx, parameters, weights):
+    """Integrate the Gauss cardinal basis from zero to each node.
+
+    Expanding cardinal polynomials in monomials is badly conditioned at the
+    orders needed for arbitrary precision.  Discrete Legendre orthogonality
+    gives the same matrix directly in the orthogonal basis.  ``parameters``
+    and ``weights`` are the nodes and weights rescaled to ``[0, 1]``.
+    """
+    parameters = tuple(parameters)
+    weights = tuple(weights)
+    order = len(parameters)
+    if len(weights) != order:
+        raise ValueError("Gauss nodes and weights must have equal length")
+
+    # Values P_0, ..., P_n at every corresponding [-1, 1] node.
+    legendre = []
+    for parameter in parameters:
+        x = 2 * parameter - 1
+        values = [ctx.one]
+        if order:
+            values.append(x)
+        for degree in range(1, order):
+            values.append(
+                ((2 * degree + 1) * x * values[degree]
+                 - degree * values[degree - 1]) / (degree + 1))
+        legendre.append(tuple(values))
+
+    result = []
+    for row, upper in enumerate(parameters):
+        integrated = [upper]
+        integrated.extend(
+            (legendre[row][degree + 1]
+             - legendre[row][degree - 1]) / 2
+            for degree in range(1, order))
+        result.append(tuple(
+            weights[column] * ctx.fsum(
+                legendre[column][degree] * integrated[degree]
+                for degree in range(order))
+            for column in range(order)))
+    return tuple(result)
+
+
+def _integrate_plane_curve_path_iterated(
+        ctx, curve, continuation, differentials, sheet=0,
+        quadrature_order=None, branch_values=None,
+        quadrature_cache=None):
+    """Integrate forms and their ordered pairwise iterated integrals."""
+    differentials = tuple(differentials)
+    if not differentials or any(not callable(value)
+                                for value in differentials):
+        raise ValueError("differentials must be a sequence of callables")
+    if not isinstance(sheet, int) or not 0 <= sheet < curve.y_degree:
+        raise ValueError("sheet must index the initial fibre")
+    geometric = quadrature_order == "geometry"
+    if geometric and not branch_values:
+        raise ValueError("geometry quadrature requires branch values")
+    if quadrature_order is None:
+        quadrature_order = max(12, ctx.dps // 2)
+    if not geometric and (not isinstance(quadrature_order, int)
+                          or quadrature_order < 2):
+        raise ValueError("quadrature_order must be an integer at least 2")
+    if quadrature_cache is not None and not isinstance(
+            quadrature_cache, dict):
+        raise ValueError("quadrature_cache must be a dictionary")
+    rules = {} if quadrature_cache is None else quadrature_cache
+
+    def rule(order):
+        if order not in rules:
+            nodes, weights = ctx.gauss_quadrature(order, "legendre01")
+            parameters, weights = tuple(nodes), tuple(weights)
+            rules[order] = (
+                parameters,
+                weights,
+                _gauss_indefinite_matrix(ctx, parameters, weights),
+            )
+        return rules[order]
+
+    count = len(differentials)
+    values = [ctx.zero] * count
+    iterated = [[ctx.zero] * count for unused in range(count)]
+    max_sheet_residual = ctx.zero
+
+    for segment in range(len(continuation.path) - 1):
+        left_x = continuation.path[segment]
+        right_x = continuation.path[segment + 1]
+        delta_x = right_x - left_x
+        if not delta_x:
+            continue
+        order = (_geometric_quadrature_order(
+            ctx, left_x, right_x, branch_values)
+                 if geometric else quadrature_order)
+        parameters, weights, indefinite = rule(order)
+        left_fibre = continuation.fibres[segment]
+        right_fibre = continuation.fibres[segment + 1]
+        lifted_samples = _plane_curve_segment_samples(
+            ctx, curve, left_x, right_x, left_fibre, right_fibre,
+            parameters, sheet)
+        samples = []
+        for x, y, residual in lifted_samples:
+            max_sheet_residual = max(max_sheet_residual, residual)
+            samples.append(tuple(
+                differential(x, y) for differential in differentials))
+
+        local_primitives = tuple(tuple(
+            delta_x * ctx.fsum(
+                indefinite[node_index][sample_index]
+                * samples[sample_index][form_index]
+                for sample_index in range(order))
+            for form_index in range(count))
+            for node_index in range(order))
+        for outer in range(count):
+            for inner in range(count):
+                iterated[outer][inner] += delta_x * ctx.fsum(
+                    weights[node_index] * samples[node_index][outer]
+                    * (values[inner]
+                       + local_primitives[node_index][inner])
+                    for node_index in range(order))
+        for form_index in range(count):
+            values[form_index] += delta_x * ctx.fsum(
+                weights[node_index] * samples[node_index][form_index]
+                for node_index in range(order))
+
+    return _IteratedPathIntegrals(
+        values=tuple(values),
+        iterated=tuple(tuple(row) for row in iterated),
+        max_sheet_residual=max_sheet_residual,
+        segments=len(continuation.path) - 1,
+    )
+
+
+def _integrate_geometric_loops_iterated(
+        ctx, curve, cover, graph, polygon, loops, differentials):
+    """Compose ordered based loops, integrating each lifted edge only once.
+
+    Connectors must remain in the words: their additive cancellation does
+    not imply cancellation of their contributions to iterated integrals.
+    Edge and quadrature caches are local to this precision and form basis.
+    """
+    differentials = tuple(differentials)
+    edges, rules, results = {}, {}, []
+    for loop in loops:
+        current, integral = polygon.root, None
+        for index, orientation in loop:
+            if orientation not in (-1, 1):
+                raise ValueError("geometric edge orientation must be +1 or -1")
+            edge = graph.edges[index]
+            left, right = ((edge.tail, edge.head) if orientation == 1
+                           else (edge.head, edge.tail))
+            if current != left:
+                raise ValueError("geometric iterated path is discontinuous")
+            current = right
+            if index not in edges:
+                edges[index] = _integrate_plane_curve_path_iterated(
+                    ctx, curve, cover.continuations[edge.base_edge],
+                    differentials, sheet=edge.sheet,
+                    quadrature_order="geometry",
+                    branch_values=cover.geometry.branch_values,
+                    quadrature_cache=rules)
+            piece = edges[index]
+            if orientation == -1:
+                piece = _reverse_iterated_path_integrals(ctx, piece)
+            integral = (piece if integral is None else
+                        _concatenate_iterated_path_integrals(ctx, integral, piece))
+        if current != polygon.root or integral is None:
+            raise ValueError("geometric iterated loop must be nonempty and closed")
+        results.append(integral)
+    return tuple(results)
+
+
+def _concatenate_iterated_path_integrals(ctx, left, right):
+    """Compose level-two path integrals using Chen concatenation.
+
+    See K.-T. Chen, *Iterated path integrals*, Bull. Amer. Math. Soc. 83
+    (1977), 831--879, doi:10.1090/S0002-9904-1977-14320-6.  Our matrix
+    entry ``[outer][inner]`` integrates ``inner`` before ``outer``.
+    """
+    count = len(left.values)
+    if (len(right.values) != count
+            or len(left.iterated) != count
+            or len(right.iterated) != count
+            or any(len(row) != count
+                   for row in left.iterated + right.iterated)):
+        raise ValueError("iterated path integrals have incompatible sizes")
+    values = tuple(
+        left.values[index] + right.values[index]
+        for index in range(count))
+    iterated = tuple(tuple(
+        left.iterated[outer][inner]
+        + right.iterated[outer][inner]
+        + right.values[outer] * left.values[inner]
+        for inner in range(count)) for outer in range(count))
+    return _IteratedPathIntegrals(
+        values=values,
+        iterated=iterated,
+        max_sheet_residual=max(
+            left.max_sheet_residual, right.max_sheet_residual),
+        segments=left.segments + right.segments,
+    )
+
+
+def _reverse_iterated_path_integrals(ctx, integral):
+    """Reverse level-two path integrals by Chen's reversal identity."""
+    count = len(integral.values)
+    if (len(integral.iterated) != count
+            or any(len(row) != count for row in integral.iterated)):
+        raise ValueError("iterated path integral has an incompatible size")
+    return _IteratedPathIntegrals(
+        values=tuple(-value for value in integral.values),
+        iterated=tuple(tuple(
+            integral.iterated[inner][outer]
+            for inner in range(count)) for outer in range(count)),
+        max_sheet_residual=integral.max_sheet_residual,
+        segments=integral.segments,
+    )
+
+
+def _pullback_plane_curve_differentials(differentials, coordinate_map):
+    """Pull coefficients of ``dx`` back through a numerical local chart.
+
+    ``coordinate_map(t, u)`` returns ``(x, y, dx_dt)``.  The resulting
+    callables are coefficients of ``dt`` on the chart curve.
+    """
+    differentials = tuple(differentials)
+    if not differentials or any(not callable(value)
+                                for value in differentials):
+        raise ValueError("differentials must be a sequence of callables")
+    if not callable(coordinate_map):
+        raise ValueError("coordinate_map must be callable")
+
+    def pullback(differential):
+        def pulled_back(t, u):
+            x, y, dx_dt = coordinate_map(t, u)
+            return differential(x, y) * dx_dt
+        return pulled_back
+
+    return tuple(pullback(differential) for differential in differentials)
+
+
+def _integrate_plane_curve_branch(
+        ctx, curve, continuation, differentials, quadrature_order=None,
+        check_convergence=False):
+    """Integrate coefficients of ``dt`` along one continued chart branch.
+
+    Optional bounded order refinement checks each component separately.
+    It does not certify absence of poles or regularize divergent integrals.
+    """
+    try:
+        differentials = tuple(differentials)
+    except TypeError:
+        raise ValueError("differentials must be a sequence of callables")
+    if not differentials or any(not callable(value)
+                                for value in differentials):
+        raise ValueError("differentials must be a sequence of callables")
+    if len(continuation.path) != len(continuation.values):
+        raise ValueError("branch path and values are inconsistent")
+    if quadrature_order is None:
+        quadrature_order = max(16, 2 * ctx.dps)
+    if not isinstance(quadrature_order, int) or quadrature_order < 2:
+        raise ValueError("quadrature_order must be an integer at least 2")
+    if not isinstance(check_convergence, bool):
+        raise ValueError("check_convergence must be boolean")
+    if check_convergence:
+        previous = _integrate_plane_curve_branch(
+            ctx, curve, continuation, differentials, quadrature_order)
+        residual = previous.max_sheet_residual
+        for unused in range(3):
+            quadrature_order += 16
+            current = _integrate_plane_curve_branch(
+                ctx, curve, continuation, differentials, quadrature_order)
+            residual = max(residual, current.max_sheet_residual)
+            if all(ctx.isfinite(a) and ctx.isfinite(b)
+                   and abs(a-b) <= 100*ctx.eps*max(ctx.one, abs(b))
+                   for a, b in zip(previous.values, current.values)):
+                return current._replace(max_sheet_residual=residual)
+            previous = current
+        raise ctx.NoConvergence(
+            "chart quadrature did not converge; the endpoint may be a pole")
+    nodes, weights = ctx.gauss_quadrature(quadrature_order, "legendre01")
+    parameters, weights = tuple(nodes), tuple(weights)
+
+    def polynomial_scale(t, u):
+        return max(ctx.one, ctx.fsum(
+            abs(coefficient * t ** t_power * u ** u_power)
+            for t_power, u_power, coefficient in curve.terms))
+
+    def solve(t, initial):
+        value = initial
+        for unused in range(20):
+            residual = _evaluate_plane_polynomial(ctx, curve, t, value)
+            if abs(residual) <= 100 * ctx.eps * polynomial_scale(t, value):
+                return value, abs(residual)
+            derivative = _evaluate_plane_derivative(
+                ctx, curve, t, value, "y")
+            if not derivative:
+                break
+            value -= residual / derivative
+        raise ctx.NoConvergence(
+            "quadrature node did not resolve the chart branch")
+
+    values = [ctx.zero] * len(differentials)
+    max_sheet_residual = ctx.zero
+    for segment in range(len(continuation.path) - 1):
+        left_t = continuation.path[segment]
+        right_t = continuation.path[segment + 1]
+        delta_t = right_t - left_t
+        if not delta_t:
+            continue
+        left_u = continuation.values[segment]
+        right_u = continuation.values[segment + 1]
+        contributions = [[] for unused in differentials]
+        for parameter, weight in zip(parameters, weights):
+            t = left_t + parameter * delta_t
+            prediction = left_u + parameter * (right_u - left_u)
+            u, residual = solve(t, prediction)
+            max_sheet_residual = max(max_sheet_residual, residual)
+            for index, differential in enumerate(differentials):
+                contributions[index].append(weight * differential(t, u))
+        for index, terms in enumerate(contributions):
+            values[index] += delta_t * ctx.fsum(terms)
+    return _PathIntegrals(
+        values=tuple(values),
+        max_sheet_residual=max_sheet_residual,
+        segments=len(continuation.path) - 1,
+    )

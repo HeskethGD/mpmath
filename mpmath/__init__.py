@@ -47,6 +47,21 @@ g2g3from = mp.g2g3from
 omega1omega2from = mp.omega1omega2from
 ellipfun = mp.ellipfun
 jtheta = mp.jtheta
+rtheta = mp.rtheta
+rtheta_jet = mp.rtheta_jet
+kleinian_sigma = mp.kleinian_sigma
+kleinian_sigma_jet = mp.kleinian_sigma_jet
+kleinian_baker_akhiezer = mp.kleinian_baker_akhiezer
+kleinian_zeta = mp.kleinian_zeta
+kleinian_p = mp.kleinian_p
+algebraic_curve = mp.algebraic_curve
+from .curves import (
+    Curve, CurveFirstKindPeriods, CurveSecondKindAbelMap,
+    CurveSecondKindPeriods,
+    CurveBranchLocus, CurveChart, CurveCheck, CurveGenus, CurveHomology,
+    CurveIntegral, CurveLatticeReduction, CurveMonodromy, CurvePath,
+    CurvePlace, CurveRiemannConstant, CurveValidation,
+)
 kleinj = mp.kleinj
 kleinjinv = mp.kleinjinv
 eta = mp.eta

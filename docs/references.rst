@@ -22,9 +22,65 @@ References not listed here can be found in the source code.
 .. [Bailey] D H Bailey. "Tanh-Sinh High-Precision Quadrature",
             http://crd.lbl.gov/~dhbailey/dhbpapers/dhb-tanh-sinh.pdf
 
+.. [BakerAbel] H. F. Baker. *Abel's Theorem and the Allied Theory,
+               Including the Theory of the Theta Functions*. Cambridge
+               University Press, 1897.
+               https://openlibrary.org/works/OL1244445W/
+
+.. [BakerMultiply] H. F. Baker. *An Introduction to the Theory of Multiply
+                   Periodic Functions*. Cambridge University Press, 1907.
+                   https://name.umdl.umich.edu/ACR0014.0001.001
+
 .. [Bellman] Bellman, R., R.E. Kalaba, J.A. Lockett (1966). *Numerical
              inversion of the Laplace transform: Applications to Biology,
              Economics, Engineering, and Physics*. Elsevier.
+
+.. [BEL1997] V. M. Buchstaber, V. Z. Enolskii & D. V. Leykin.
+             "Hyperelliptic Kleinian Functions and Applications".
+             *American Mathematical Society Translations*, Series 2, 179
+             (1997), 1--33. https://arxiv.org/abs/solv-int/9603005
+
+.. [BEH2005] H. W. Braden, V. Z. Enolskii & A. N. W. Hone.
+             "Bilinear Recurrences and Addition Formulae for Hyperelliptic
+             Sigma Functions". *Journal of Nonlinear Mathematical Physics*
+             12, Supplement 2 (2005), 46--62.
+             https://arxiv.org/abs/math/0501162
+
+.. [CEEK2000] P. L. Christiansen, J. C. Eilbeck, V. Z. Enolskii &
+              N. A. Kostov. "Quasi-periodic and periodic solutions for
+              systems of coupled nonlinear Schrödinger equations".
+              *Proceedings of the Royal Society A* 456 (2000), 2263--2281.
+              https://arxiv.org/abs/solv-int/9904017
+
+.. [Chen1977] K.-T. Chen. "Iterated Path Integrals".
+              *Bulletin of the American Mathematical Society* 83(5)
+              (1977), 831--879.
+              https://doi.org/10.1090/S0002-9904-1977-14320-6
+
+.. [DP2011] B. Deconinck & M. S. Patterson. "Computing with Plane
+            Algebraic Curves and Riemann Surfaces: The Algorithms of the
+            Maple Package Algcurves". In *Computational Approach to
+            Riemann Surfaces*, Lecture Notes in Mathematics 2013 (2011),
+            67--123. https://doi.org/10.1007/978-3-642-17413-1_2
+
+.. [DvH2001] B. Deconinck & M. van Hoeij. "Computing Riemann Matrices of
+             Algebraic Curves". *Physica D* 152--153 (2001), 28--46.
+             https://doi.org/10.1016/S0167-2789(01)00156-7
+
+.. [Eppstein2003] D. Eppstein. "Dynamic Generators of Topologically Embedded
+                   Graphs". *Proceedings of the Fourteenth Annual ACM-SIAM
+                   Symposium on Discrete Algorithms* (2003), 599--608.
+                   https://arxiv.org/abs/cs/0207082
+
+.. [Lazarus2001] F. Lazarus, M. Pocchiola, G. Vegter & A. Verroust.
+                  "Computing a Canonical Polygonal Schema of an Orientable
+                  Triangulated Surface". *Proceedings of the Seventeenth
+                  Annual Symposium on Computational Geometry* (2001),
+                  80--89. https://doi.org/10.1145/378583.378630
+
+.. [Trefethen2008] L. N. Trefethen. "Is Gauss Quadrature Better than
+                   Clenshaw--Curtis?" *SIAM Review* 50(1) (2008), 67--87.
+                   https://doi.org/10.1137/060659831
 
 .. [BenderOrszag] C M Bender & S A Orszag. *Advanced Mathematical Methods for
                   Scientists and Engineers*, Springer 1999
@@ -92,6 +148,21 @@ References not listed here can be found in the source code.
              Software* 19(3):333-359, http://dx.doi.org/10.1145/155743.155788
 
 .. [Duffy98] Duffy, D.G. (1998). Advanced Engineering Mathematics, CRC Press.
+
+.. [EEL2000] J. C. Eilbeck, V. Z. Enolskii & D. V. Leykin. "On the Kleinian
+              Construction of Abelian Functions of Canonical Algebraic
+              Curves". *CRM Proceedings and Lecture Notes* 25 (2000),
+              121--138. https://doi.org/10.1090/crmp/025/12
+
+.. [GMO2012] J. Gibbons, S. Matsutani & Y. Onishi. "Relationship Between the
+             Prime Form and the Sigma Function for Some Cyclic (r,s)
+             Curves". *Journal of Physics A: Mathematical and Theoretical*
+             46 (2013), 175203. https://arxiv.org/abs/1204.3747
+
+.. [Onishi2005] Y. Onishi. "Determinant Expressions for Hyperelliptic
+                 Functions". *Proceedings of the Edinburgh Mathematical
+                 Society* 48(3) (2005), 705--742.
+                 https://arxiv.org/abs/math/0105189
 
 .. [DLMF] NIST Digital Library of Mathematical Functions. http://dlmf.nist.gov/
 

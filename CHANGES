@@ -3,6 +3,8 @@ Released TBD
 
 Features:
 
+* Add numerical algebraic curves with monodromy, homology, periods,
+  Riemann constants and Abel maps (Graham Hesketh)
 * Support special numbers in mpf_frexp() like math.frexp(),
   see #1081 (Sergey B Kirpichev)
 * Add ModAB rootfinding algorithm, see #1093 (Ayush Baranwal)
