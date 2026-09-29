@@ -28,7 +28,12 @@ with a custom context.
 The canonical curve specification is a sparse mapping from :math:`(i,j)`
 power pairs to the coefficients of :math:`x^i y^j`. Ascending coefficient
 sequences defining :math:`y^2=P(x)` and sequences of :math:`(i,j,c)` terms
-remain accepted for compatibility, but new code should use the sparse form.
+are also accepted. The polynomial must depend on :math:`y`::
+
+    >>> algebraic_curve({(2, 0): 1, (0, 0): -1})
+    Traceback (most recent call last):
+      ...
+    ValueError: the plane curve must depend on y
 
 Classification is based on the normalized polynomial rather than its input
 syntax. In particular, a constant-leading quadratic equation
@@ -82,6 +87,18 @@ engine. For an automatically classified hyperelliptic curve this is the
 compact Baker basis used by its periods and Abel maps. For a general curve it
 is the compact geometric-polygon basis. The
 ``engine`` and ``marking`` fields make the distinction explicit.
+Computed results use ``("hyperelliptic", "baker")`` or
+``("general", "geometric-polygon")`` respectively.
+
+Supplying first-kind differentials on a recognized hyperelliptic model selects
+the general engine. Those results use the geometric-polygon marking, while
+``curve.homology`` describes the default Baker marking. Results from different
+markings must be related by an integral symplectic change of cycles before
+their coordinates can be combined. Compare Abel values using a common base
+place and the corresponding period lattice.
+
+``curve.monodromy`` uses radial loops and its own base fibre; it does not
+select the integration marking.
 
 
 Periods and Riemann data
@@ -104,6 +121,52 @@ curve instead requires an explicit
 ``second_differentials`` basis. The arbitrary-genus algebraic second-kind
 basis and half-period conventions are equation (1.3) and Lemma 1.1 of
 [BEL1997]_.
+
+The full first-kind period matrices are ``2*omega`` and ``2*omega_prime``,
+with ``tau = omega**-1 * omega_prime`` before numerical symmetrization.
+Second-kind half-periods use the sign convention
+``2*eta = -integral_a(dr)`` and ``2*eta_prime = -integral_b(dr)``.
+The returned ``kappa`` is the symmetric part of ``eta * omega**-1``.
+
+Riemann constants use the additive convention
+:math:`\theta(A(D)+K,\tau)=0`, where :math:`A(D)` is the normalized Abel
+map of an effective divisor of degree :math:`g-1`. The record's ``value`` is
+:math:`K`; its ``characteristic`` gives literal coordinates :math:`(a,b)`
+such that :math:`K=\tau a+b` modulo the normalized period lattice.
+
+.. list-table:: Numerical results and coordinate conventions
+   :header-rows: 1
+   :widths: 24 34 42
+
+   * - Method
+     - Return value
+     - Coordinates
+   * - ``first_kind_periods``
+     - ``CurveFirstKindPeriods``: ``omega``, ``omega_prime``, ``tau``
+     - Half-periods in the selected differential basis; normalized ``tau``
+   * - ``second_kind_periods``
+     - ``CurveSecondKindPeriods``: ``eta``, ``eta_prime``, ``kappa``
+     - Second-kind half-periods in the compatible cycle marking
+   * - ``riemann_matrix``
+     - Matrix
+     - Normalized period matrix ``tau``
+   * - ``riemann_constant``
+     - ``CurveRiemannConstant``
+     - Normalized Jacobian coordinates, lattice ``[I, tau]``
+   * - ``abel_map``
+     - Column matrix
+     - Integrals in the selected first-kind basis, lattice
+       ``[2*omega, 2*omega_prime]``
+   * - ``second_kind_abel_map``
+     - ``CurveSecondKindAbelMap``
+     - Integrals in the selected second-kind basis, with the shared
+       first-kind reduction shift when requested
+   * - ``integral`` / ``chart_integral``
+     - ``CurveIntegral``
+     - A scalar for one supplied form, or a tuple for a sequence of forms
+   * - ``lattice_reduce``
+     - ``CurveLatticeReduction``: ``value``, ``shift``
+     - Original basis for a period record; normalized basis for ``tau``
 
 Automatic differential evaluation
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -210,9 +273,9 @@ The record classes ``CurveBranchLocus``, ``CurveMonodromy``, ``CurveGenus``,
 ``CurveRiemannConstant``, ``CurveSecondKindAbelMap``, ``CurveChart``,
 ``CurvePlace``, ``CurvePath``, ``CurveIntegral``,
 ``CurveLatticeReduction``, ``CurveCheck`` and ``CurveValidation`` are
-importable from the top-level
-``mpmath`` namespace. They are immutable results rather than additional
-stateful objects.
+importable from the top-level ``mpmath`` namespace. Record fields cannot be
+reassigned, but contained matrices are mutable. Returned matrices are
+independent of the private cached values.
 
 The curve class is the common interface to the hyperelliptic period and
 Kleinian-function machinery described in :doc:`abelian` and to the general
@@ -220,22 +283,3 @@ plane-curve pipeline. Internally the hyperelliptic engine supplies automatic
 differential bases and specialized integration, while the general engine
 supports smooth plane projections with automatic Baker differentials or a
 caller-supplied basis.
-
-General-curve marking transition
-................................
-
-General integration now uses only the geometric polygon. Both constructors
-select it automatically; the experimental ``_general_backend`` keyword has
-been removed. Explicit supplied first-kind forms on recognized hyperelliptic
-models also use this pipeline. Automatic hyperelliptic operations retain the
-specialized Baker marking and fast path.
-
-The general period basis and computational Abel base may differ from the old
-radial implementation. Compare periods using an integral symplectic change of
-cycles, and Abel values with a common explicit base modulo the corresponding
-period lattice. Do not mix period or Riemann-constant records from different
-markings. ``curve.homology`` describes the automatic marking; supplied-form
-results expose their own marking on their result records.
-
-``curve.monodromy`` remains a radial-loop diagnostic with its own base fibre;
-it does not select the integration marking.

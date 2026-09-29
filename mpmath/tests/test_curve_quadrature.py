@@ -4,7 +4,9 @@ from mpmath import mp
 from mpmath.curves.continuation import _continue_plane_curve_sheets_adaptive
 from mpmath.curves.integration import _integrate_plane_curve_path
 from mpmath.curves.polynomial import _prepare_plane_curve
-from mpmath.curves.quadrature import _geometric_quadrature_order
+from mpmath.curves.quadrature import (
+    _geometric_edge_panels, _geometric_quadrature_order, _legendre_edge_rule,
+)
 
 
 @pytest.mark.parametrize("dps", (20, 30, 40))
@@ -64,3 +66,50 @@ def test_edge_panel_work_and_representability_limits(monkeypatch):
             quadrature._geometric_edge_panels(mp, mp.one, mp.one+mp.eps, (1j,))
         with pytest.raises(ValueError, match='positive integer'):
             quadrature._geometric_edge_panels(mp, 0, 1, (1j,), max_panels=0)
+
+
+@pytest.mark.parametrize("dps", (15, 40))
+@pytest.mark.parametrize("order", (3, 8, 24))
+def test_edge_rule_matches_builtin_gaussian_quadrature(dps, order):
+    ctx = mp.clone()
+    ctx.dps = dps
+    # The independent tridiagonal eigensolver supplies a reference for
+    # both odd and even orders, including geometry-policy order 8.
+    nodes, weights = ctx.gauss_quadrature(order, "legendre01")
+    actual = _legendre_edge_rule(ctx, order)
+    assert len(actual) == order
+    for (node, weight), expected_node, expected_weight in zip(actual, nodes, weights):
+        assert abs(node - expected_node) < 100*ctx.eps
+        assert abs(weight - expected_weight) < 100*ctx.eps
+
+
+@pytest.mark.parametrize("left,right,singularities,message", [
+    (0, 0, (1j,), "distinct endpoints"),
+    (0, 1, (), "known singularity"),
+    (0, 1, (mp.mpf('.5'),), "meets a known singularity"),
+])
+def test_geometric_order_rejects_invalid_segments(left, right, singularities, message):
+    with pytest.raises(ValueError, match=message):
+        _geometric_quadrature_order(mp, left, right, singularities)
+
+
+def test_geometric_panels_reject_degenerate_intervals_and_invalid_budget():
+    with pytest.raises(ValueError, match="at least eight"):
+        _geometric_edge_panels(mp, 0, 1, (1j,), max_order=4)
+    with pytest.raises(mp.NoConvergence, match="endpoints are unresolved"):
+        _geometric_edge_panels(mp, mp.one, mp.one, (1j,))
+    with pytest.raises(ValueError, match="positive integer"):
+        _geometric_edge_panels(mp, 0, 1, (1j,), max_panels=mp.mpf('1.5'))
+
+
+@pytest.mark.parametrize("order", (0, 1, mp.mpf('2.5')))
+def test_edge_rule_rejects_invalid_order(order):
+    with pytest.raises(ValueError, match="integer at least two"):
+        _legendre_edge_rule(mp, order)
+
+
+def test_edge_rule_bounds_newton_work_after_a_bad_initial_estimate(monkeypatch):
+    ctx = mp.clone()
+    monkeypatch.setattr(ctx, "cos", lambda value: ctx.mpf("1e100"))
+    with pytest.raises(ctx.NoConvergence, match="Legendre node did not converge"):
+        _legendre_edge_rule(ctx, 8)

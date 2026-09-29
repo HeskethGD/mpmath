@@ -3,7 +3,7 @@
 from ._context import _curve_cache_state
 from ._hyperelliptic import _hyperelliptic_abel_map
 from ._hyperelliptic.jacobian import _hyperelliptic_characteristic
-from ._hyperelliptic.model import _normalise_abel_targets
+from ._hyperelliptic.model import _normalize_abel_targets
 from ._records import (
     CurveBranchLocus,
     CurveCheck,
@@ -48,8 +48,8 @@ from .integration import (
 from .jacobian import (
     _guarded_open_path,
     _jacobian_characteristic,
-    _normalise_algebraic_curve_input,
-    _normalise_curve_endpoint,
+    _normalize_algebraic_curve_input,
+    _normalize_curve_endpoint,
     _period_matrix_from_columns,
     _to_hyperelliptic_points,
 )
@@ -103,66 +103,16 @@ def _geometric_first_kind_periods(ctx, prepared, forms=None):
 
 
 def branch_locus(ctx, curve):
-    r"""Return the finite branch locus of a plane algebraic curve.
-
-    The canonical ``curve`` input is a sparse mapping from
-    ``(x_power, y_power)`` pairs to coefficients.  Ascending coefficient
-    sequences defining ``y**2 = P(x)`` and sequences of
-    ``(x_power, y_power, coefficient)`` terms remain compatibility forms.
-
-    The returned ``CurveBranchLocus`` record contains the degree of the
-    ``x`` projection, the distinct finite branch values above which the
-    projection ramifies, and the ascending coefficients of the
-    y-derivative resultant whose roots they are.  Ramification above
-    infinity is reported by :attr:`AlgebraicCurve.monodromy` instead,
-    because it requires monodromy rather than the resultant alone.
-
-    The lemniscatic curve :math:`y^2 = x^3 - x` has a two-sheeted
-    projection with three finite branch values::
-
-        >>> from mpmath import algebraic_curve
-        >>> locus = algebraic_curve((0, -1, 0, 1)).branch_locus
-        >>> locus.degree
-        2
-        >>> locus.branch_values
-        (mpf('-1.0'), mpf('0.0'), mpf('1.0'))
-    """
-    prepared, _unused_hyperelliptic = _normalise_algebraic_curve_input(
+    """Implement :meth:`AlgebraicCurve.branch_locus`."""
+    prepared, _unused_hyperelliptic = _normalize_algebraic_curve_input(
         ctx, curve)
     branch_values, resultant = _stage_branch_locus(ctx, prepared)
     return CurveBranchLocus(prepared.y_degree, branch_values, resultant)
 
 
 def monodromy(ctx, curve):
-    r"""Return the monodromy of a plane algebraic curve over the x-line.
-
-    The curve is continued numerically along guarded radial loops around
-    the finite branch values, from an exterior base point chosen
-    automatically.  A large outer loop supplies the monodromy at infinity
-    geometrically.  The returned ``CurveMonodromy`` record contains the
-    computational base point, its ordered fibre, the branch values, the
-    counter-clockwise product-ordered local permutations, the permutation
-    at infinity, the total ramification, the genus from
-    Riemann--Hurwitz, the transitivity and product identities of the
-    permutation system, and the minimum geometric clearance of the
-    continuation paths.
-
-    The sheet labels refer to the internally selected base fibre.  The
-    routing continuations used to compute them are private.
-
-    Each finite branch value of the lemniscatic curve
-    :math:`y^2 = x^3 - x` exchanges its two sheets, as does infinity::
-
-        >>> from mpmath import algebraic_curve
-        >>> monodromy = algebraic_curve((0, -1, 0, 1)).monodromy
-        >>> monodromy.genus
-        1
-        >>> monodromy.permutations
-        ((1, 0), (1, 0), (1, 0))
-        >>> monodromy.infinity_permutation
-        (1, 0)
-    """
-    prepared, _unused_hyperelliptic = _normalise_algebraic_curve_input(
+    """Implement :meth:`AlgebraicCurve.monodromy`."""
+    prepared, _unused_hyperelliptic = _normalize_algebraic_curve_input(
         ctx, curve)
     monodromy = _stage_monodromy(ctx, prepared)
     degree = prepared.y_degree
@@ -189,22 +139,8 @@ def monodromy(ctx, curve):
 
 
 def genus_data(ctx, curve):
-    r"""Return the genus of a plane algebraic curve.
-
-    The genus is obtained from the Riemann--Hurwitz formula applied to
-    the monodromy of the ``x`` projection, including the permutation at
-    infinity.  The returned ``CurveGenus`` record also records the
-    projection degree and the total ramification, so the Riemann--Hurwitz
-    balance :math:`2g-2 = -2d+r` can be checked directly::
-
-        >>> from mpmath import algebraic_curve
-        >>> algebraic_curve((0, -1, 0, 1)).genus_data
-        CurveGenus(genus=1, degree=2, ramification=4)
-
-    General curves obtain genus from the compact
-    covering graph's Euler characteristic and infers total ramification.
-    """
-    prepared, unused_hyperelliptic = _normalise_algebraic_curve_input(
+    """Implement :meth:`AlgebraicCurve.genus_data`."""
+    prepared, unused_hyperelliptic = _normalize_algebraic_curve_input(
         ctx, curve)
     if unused_hyperelliptic is None:
         with ctx.extraprec(_GEOMETRIC_GUARD_BITS):
@@ -217,27 +153,8 @@ def genus_data(ctx, curve):
 
 
 def homology(ctx, curve):
-    r"""Return the homology marking used by the curve's default engine.
-
-    A recognized hyperelliptic curve returns the compact Baker-marked basis
-    used by its automatic periods and Abel maps.  This basis has ``2*genus``
-    cycles, the standard symplectic intersection form, and no auxiliary
-    boundary or radical cycles.  Its transformation is therefore the
-    identity.
-
-    General curves use a compact geometric polygon with a canonical
-    symplectic basis, no auxiliary boundary cycles and identity transformation.
-
-    The lemniscatic curve :math:`y^2 = x^3 - x` uses its Baker marking::
-
-        >>> from mpmath import algebraic_curve
-        >>> homology = algebraic_curve((0, -1, 0, 1)).homology
-        >>> homology.genus, homology.marking
-        (1, 'baker')
-        >>> homology.intersection_form
-        ((0, 1), (-1, 0))
-    """
-    prepared, hyperelliptic_model = _normalise_algebraic_curve_input(
+    """Implement :meth:`AlgebraicCurve.homology`."""
+    prepared, hyperelliptic_model = _normalize_algebraic_curve_input(
         ctx, curve)
     if hyperelliptic_model is not None:
         genus = _stage_hyperelliptic_homology(
@@ -278,54 +195,8 @@ def homology(ctx, curve):
 
 def periods(ctx, curve, differentials=None, *, second_kind=False,
             second_differentials=None, _return_first=False):
-    r"""Return the period matrices of a plane algebraic curve.
-
-    ``curve`` uses the input forms accepted by
-    :attr:`AlgebraicCurve.branch_locus`.  A structurally hyperelliptic
-    equation without supplied differentials is dispatched to the specialized
-    engine, independently of whether it was entered as a sparse polynomial
-    or a compatibility coefficient sequence.  A linear term in ``y`` is
-    removed by completing the square when the coefficient of ``y**2`` is a
-    nonzero constant.
-
-    :meth:`AlgebraicCurve.second_kind_periods` also computes the canonical
-    BEL second-kind periods for the automatic hyperelliptic basis. The
-    :meth:`AlgebraicCurve.first_kind_periods` method computes only first-kind
-    data. A general plane curve uses Baker's Newton-polygon first-kind basis
-    when its applicability checks pass. Otherwise supply ``differentials``,
-    a sequence of one holomorphic differential callable ``f(x, y)`` per
-    genus, returning the coefficient of ``dx``. Optional
-    ``second_differentials`` supply the same number of second-kind forms;
-    they are integrated on the same cycles, with the classical convention
-    ``2*eta = -integral_a(dr)``.
-
-    ``first_kind_periods`` returns a ``CurveFirstKindPeriods`` record with
-    ``omega``, ``omega_prime`` and ``tau``. ``second_kind_periods`` returns a
-    separate ``CurveSecondKindPeriods`` record with ``eta``, ``eta_prime``
-    and ``kappa``. Their ``engine`` and ``marking`` fields distinguish
-    the specialized Baker homology marking from the general geometric-polygon
-    marking. A
-    non-positive-definite normalized period matrix raises ``ValueError``,
-    because it always indicates an invalid differential count or basis.
-
-    The normalized Riemann matrix of the lemniscatic curve
-    :math:`y^2 = x^3 - x` is :math:`i`::
-
-        >>> from mpmath import algebraic_curve, mp
-        >>> mp.dps = 15
-        >>> curve = algebraic_curve((0, -1, 0, 1))
-        >>> data = curve.first_kind_periods()
-        >>> mp.re(data.tau[0, 0]), mp.im(data.tau[0, 0])
-        (mpf('0.0'), mpf('1.0'))
-
-    A supplied basis overrides automatic selection::
-
-        >>> curve = algebraic_curve({(0, 2): 1, (1, 0): 1, (3, 0): -1})
-        >>> data = curve.first_kind_periods((lambda x, y: 1 / y,))
-        >>> curve.validate(data).passed
-        True
-    """
-    prepared, hyperelliptic_model = _normalise_algebraic_curve_input(
+    """Dispatch first- or second-kind periods and assemble their result records."""
+    prepared, hyperelliptic_model = _normalize_algebraic_curve_input(
         ctx, curve)
     if hyperelliptic_model is not None and differentials is None:
         if second_differentials is not None:
@@ -370,59 +241,14 @@ def periods(ctx, curve, differentials=None, *, second_kind=False,
 
 
 def riemann_matrix(ctx, curve, differentials=None):
-    r"""Return the normalized Riemann matrix of a plane algebraic curve.
-
-    This is a convenience wrapper returning
-    ``curve.first_kind_periods(differentials).tau``; see
-    :meth:`AlgebraicCurve.first_kind_periods` for the input conventions.
-
-        >>> from mpmath import algebraic_curve, mp
-        >>> mp.dps = 15
-        >>> tau = algebraic_curve((0, -1, 0, 1)).riemann_matrix()
-        >>> mp.im(tau[0, 0])
-        mpf('1.0')
-    """
+    """Implement :meth:`AlgebraicCurve.riemann_matrix`."""
     return periods(ctx, curve, differentials).tau
 
 
 def riemann_constant(ctx, curve, differentials=None, *,
                            base_place=None):
-    r"""Return the vector of Riemann constants for a plane curve.
-
-    The returned ``CurveRiemannConstant`` contains a direct representative of
-    the normalized Jacobian vector ``value`` in mpmath's additive convention
-    ``theta(A(D) + value, tau) = 0``, its literal ``(a, b)`` coordinates
-    ``value = tau*a + b`` modulo the period lattice, the requested
-    ``base_place`` (``None`` denotes the engine's natural base), and the
-    maximum sheet residual of the direct contour integrations.
-
-    For a general plane curve, ``differentials`` may supply one holomorphic
-    differential per genus, in exactly the basis accepted by
-    :meth:`AlgebraicCurve.first_kind_periods`. The value is computed directly from the
-    certified canonical polygon and level-two contour integrals; theta
-    functions and characteristic searches are not used.  ``base_place`` may
-    be a regular finite place or a chart-backed place.  Changing the base
-    uses ``K_Q = K_P + (g-1) A_P(Q)`` in normalized coordinates.
-
-    Structurally hyperelliptic input without supplied differentials dispatches
-    to the Baker-marked specialized periods and characteristic convention.
-
-    In genus one the answer is the odd half-period ``(1+tau)/2``::
-
-        >>> from mpmath import algebraic_curve, mp
-        >>> mp.dps = 15
-        >>> curve = algebraic_curve({(0, 2): 1, (1, 0): 1, (3, 0): -1})
-        >>> forms = (lambda x, y: 1 / y,)
-        >>> constant = curve.riemann_constant(forms)
-        >>> periods = curve.first_kind_periods(forms)
-        >>> mp.almosteq(constant.value[0], (1 + periods.tau[0, 0]) / 2)
-        True
-
-    The direct level-two integrations are substantially more expensive than
-    ordinary periods, although their cost does not include an exponential
-    characteristic enumeration.
-    """
-    prepared, hyperelliptic_model = _normalise_algebraic_curve_input(
+    """Implement :meth:`AlgebraicCurve.riemann_constant`."""
+    prepared, hyperelliptic_model = _normalize_algebraic_curve_input(
         ctx, curve)
     if hyperelliptic_model is not None and differentials is None:
         cached = _stage_hyperelliptic_periods(
@@ -462,26 +288,7 @@ def riemann_constant(ctx, curve, differentials=None, *,
 
 
 def validate(ctx, result):
-    r"""Validate a result record returned by the curve functions.
-
-    ``result`` is one of ``CurveBranchLocus``, ``CurveMonodromy``,
-    ``CurveGenus``, ``CurveHomology``, ``CurveFirstKindPeriods``,
-    ``CurveSecondKindPeriods`` or
-    ``CurveRiemannConstant``.  The returned
-    ``CurveValidation`` record contains one named ``CurveCheck`` per
-    invariant, the largest
-    numerical residual among them, and whether every check passed.  The
-    checks are recomputed from the record itself; the underlying curve
-    data is not recomputed.
-
-        >>> from mpmath import algebraic_curve
-        >>> curve = algebraic_curve((0, -1, 0, 1))
-        >>> report = curve.validate(curve.first_kind_periods())
-        >>> report.passed
-        True
-        >>> report.checks[0]
-        CurveCheck(name='tau_symmetry_residual', value=mpf('0.0'), passed=True)
-    """
+    """Implement :meth:`AlgebraicCurve.validate`."""
     checks = []
     residuals = []
     if isinstance(result, CurveBranchLocus):
@@ -618,23 +425,8 @@ def validate(ctx, result):
 
 
 def fibre(ctx, curve, x):
-    r"""Return the labelled fibre of a plane algebraic curve over x.
-
-    ``curve`` uses the input forms accepted by
-    :attr:`AlgebraicCurve.branch_locus`, and ``x`` must be a finite regular
-    value of the ``x`` projection: not a branch value, and one over which
-    the projection does not drop degree.  The returned tuple contains one
-    ``CurvePlace`` record per sheet, ordered deterministically by the real
-    and imaginary parts of ``y``.  The labelling agrees with the base fibre
-    used by :attr:`AlgebraicCurve.monodromy`.
-
-    >>> from mpmath import algebraic_curve, mp
-    >>> mp.dps = 15
-    >>> curve = algebraic_curve((0, -1, 0, 1))
-    >>> [mp.nstr(place.y, 6) for place in curve.fibre(2)]
-    ['-2.44949', '2.44949']
-    """
-    prepared, _unused_hyperelliptic = _normalise_algebraic_curve_input(
+    """Implement :meth:`AlgebraicCurve.fibre`."""
+    prepared, _unused_hyperelliptic = _normalize_algebraic_curve_input(
         ctx, curve)
     x = ctx.convert(x)
     if not ctx.isfinite(x):
@@ -652,35 +444,12 @@ def fibre(ctx, curve, x):
 
 
 def path(ctx, curve, start, end):
-    r"""Return a lifted path between two regular finite places.
-
-    ``start`` and ``end`` are regular finite places, each given as a
-    ``(x, y)`` pair, a ``CurvePlace`` from :meth:`AlgebraicCurve.fibre`, or
-    a chart-backed place from :meth:`AlgebraicCurve.chart_place`.  A guarded
-    polyline in the x-plane avoids the branch values and is lifted by
-    numerical continuation between the places' affine junction points;
-    chart tails are joined at those junctions.  The returned ``CurvePath``
-    record contains an opaque curve and numerical-context identity, the
-    endpoint places, the sheet index reached, the continuation record
-    carrying the numerical routing data used by
-    :meth:`AlgebraicCurve.integral`, and any joined chart tails.
-
-    Both junction points must have distinct ``x`` values, and ``end`` must
-    lie on the sheet reached by continuation; otherwise ``ValueError`` is
-    raised.
-
-    >>> from mpmath import algebraic_curve, mp
-    >>> mp.dps = 15
-    >>> curve = algebraic_curve({(0, 2): 1, (1, 0): -1})
-    >>> path = curve.path((1, 1), (4, 2))
-    >>> mp.nstr(path.start.y, 6), mp.nstr(path.end.y, 6)
-    ('1.0', '2.0')
-    """
-    prepared, _unused_hyperelliptic = _normalise_algebraic_curve_input(
+    """Implement :meth:`AlgebraicCurve.path`."""
+    prepared, _unused_hyperelliptic = _normalize_algebraic_curve_input(
         ctx, curve)
-    start_junction, start_tail, start_place = _normalise_curve_endpoint(
+    start_junction, start_tail, start_place = _normalize_curve_endpoint(
         ctx, prepared, start, "start")
-    end_junction, end_tail, end_place = _normalise_curve_endpoint(
+    end_junction, end_tail, end_place = _normalize_curve_endpoint(
         ctx, prepared, end, "end")
     if start_junction.x == end_junction.x:
         raise ValueError(
@@ -707,28 +476,8 @@ def path(ctx, curve, start, end):
 
 
 def integral(ctx, curve, differentials, path):
-    r"""Integrate one differential or a differential basis along a path.
-
-    ``differentials`` is either a single callable ``f(x, y)`` returning the
-    coefficient of ``dx``, or a sequence of such callables; ``path`` is a
-    ``CurvePath`` from :meth:`AlgebraicCurve.path`.  A single differential
-    gives a scalar ``values`` entry, a sequence gives one entry per form.
-    Chart tails joined to the path are integrated through their coordinate
-    maps with the same differentials.  The returned ``CurveIntegral`` record
-    also carries the maximum curve-equation residual encountered on the
-    integration nodes and the number of path segments.  A path is bound to
-    the curve and working precision at which it was constructed and cannot
-    be reused with a different curve or precision.
-
-    >>> from mpmath import algebraic_curve, mp
-    >>> mp.dps = 15
-    >>> curve = algebraic_curve({(0, 2): 1, (1, 0): -1})
-    >>> path = curve.path((1, 1), (4, 2))
-    >>> integral = curve.integral(lambda x, y: 1 / y, path)
-    >>> mp.nstr(integral.values, 12)
-    '2.0'
-    """
-    prepared, _unused_hyperelliptic = _normalise_algebraic_curve_input(
+    """Implement :meth:`AlgebraicCurve.integral`."""
+    prepared, _unused_hyperelliptic = _normalize_algebraic_curve_input(
         ctx, curve)
     if callable(differentials):
         single = True
@@ -762,7 +511,7 @@ def integral(ctx, curve, differentials, path):
     return CurveIntegral(values, max_residual, segments)
 
 
-def _normalise_curve_places(ctx, curve, target):
+def _normalize_curve_places(ctx, curve, target):
     """Return ``(junction, tail, place)`` triples from a place or divisor."""
     if isinstance(target, CurvePlace):
         candidates = [target]
@@ -780,7 +529,7 @@ def _normalise_curve_places(ctx, curve, target):
         else:
             candidates = list(target)
     return tuple(
-        _normalise_curve_endpoint(ctx, curve, place, "target")
+        _normalize_curve_endpoint(ctx, curve, place, "target")
         for place in candidates)
 
 
@@ -809,40 +558,8 @@ def _reduce_second_kind_abel(
 
 def abel_map(ctx, curve, target, differentials=None, *, second_kind=False,
              second_differentials=None, base_place=None, reduce=False):
-    r"""Evaluate the Abel map of a place or divisor on a plane curve.
-
-    ``target`` is one regular finite place, given as a ``(x, y)`` pair or
-    ``CurvePlace``, a chart-backed place from
-    :meth:`AlgebraicCurve.chart_place`, or a sequence of places representing
-    an effective divisor; an empty sequence returns the zero vector.  A
-    structurally hyperelliptic equation without supplied differentials is
-    dispatched to the specialized Abel-map engine, including the ordinate
-    change required after completing the square.  A general plane curve
-    selects a first-kind basis automatically when Baker's construction
-    applies, or accepts one callable per genus, and returns the
-    unnormalized Abelian coordinates they integrate to.
-    Chart-backed places require the general pipeline.
-    :meth:`AlgebraicCurve.second_kind_abel_map` returns the second-kind value
-    in a ``CurveSecondKindAbelMap`` record. The general engine requires an
-    explicit ``second_differentials`` basis for the same result.
-
-    ``base_place`` selects a regular finite base place; the default is
-    sheet zero over the internally selected computational base point.
-    With ``reduce=True`` the unnormalized result is reduced modulo the full
-    period lattice ``[2*omega, 2*omega_prime]`` of the supplied basis,
-    equivalent to applying
-    :meth:`AlgebraicCurve.lattice_reduce`.
-
-    >>> from mpmath import algebraic_curve, mp
-    >>> mp.dps = 15
-    >>> curve = algebraic_curve({(0, 2): 1, (1, 0): 1, (3, 0): -1})
-    >>> point = (mp.mpf(2), mp.sqrt(6))
-    >>> forms = (lambda x, y: 1 / y,)
-    >>> value = curve.abel_map(point, forms, base_place=point)
-    >>> mp.nstr(mp.norm(value), 3)
-    '0.0'
-    """
-    prepared, hyperelliptic_model = _normalise_algebraic_curve_input(
+    """Implement :meth:`AlgebraicCurve.abel_map`."""
+    prepared, hyperelliptic_model = _normalize_algebraic_curve_input(
         ctx, curve)
     if hyperelliptic_model is not None and differentials is None:
         if second_differentials is not None:
@@ -854,7 +571,7 @@ def abel_map(ctx, curve, target, differentials=None, *, second_kind=False,
             raise ValueError(
                 "chart-backed places require the general pipeline with "
                 "supplied differentials")
-        targets = _normalise_abel_targets(ctx, target)
+        targets = _normalize_abel_targets(ctx, target)
         transformed_targets = _to_hyperelliptic_points(
             ctx, hyperelliptic_model, targets)
         if base_place is None:
@@ -871,7 +588,7 @@ def abel_map(ctx, curve, target, differentials=None, *, second_kind=False,
                 return CurveSecondKindAbelMap(
                     second, shift, "hyperelliptic", "baker")
             return result
-        base_points = _normalise_abel_targets(ctx, base_place)
+        base_points = _normalize_abel_targets(ctx, base_place)
         if len(base_points) != 1:
             raise ValueError("base_place must be one affine point (x, y)")
         transformed_base = _to_hyperelliptic_points(
@@ -904,7 +621,7 @@ def abel_map(ctx, curve, target, differentials=None, *, second_kind=False,
     second_forms = _geometric_second_forms(second_kind, second_differentials)
     forms = (None if differentials is None else
              _curve_differential_sequence(differentials, "differentials"))
-    places = _normalise_curve_places(ctx, prepared, target)
+    places = _normalize_curve_places(ctx, prepared, target)
     result = ctx.matrix(_geometric_abel_divisor(
         ctx, prepared, tuple(place for junction, tail, place in places),
         base_place=base_place, forms=forms, second_forms=second_forms))
@@ -925,26 +642,7 @@ def abel_map(ctx, curve, target, differentials=None, *, second_kind=False,
 
 
 def lattice_reduce(ctx, value, periods):
-    r"""Reduce a Jacobian vector modulo the period lattice.
-
-    ``value`` is a genus-length column vector of Abelian coordinates. If
-    ``periods`` is a ``CurveFirstKindPeriods`` record, ``value`` is in the
-    original differential basis and is reduced by the full lattice
-    ``[2*omega, 2*omega_prime]``.  If ``periods`` is a normalized Riemann
-    matrix ``tau``, ``value`` is in normalized coordinates and is reduced
-    by ``[I, tau]``.  The returned ``CurveLatticeReduction`` record contains
-    the equivalent vector and the integer lattice shift ``(m, n)``.
-
-    >>> from mpmath import algebraic_curve, mp
-    >>> mp.dps = 15
-    >>> curve = algebraic_curve((0, -1, 0, 1))
-    >>> tau = curve.riemann_matrix()
-    >>> reduced = curve.lattice_reduce(mp.matrix([2 + 1j]), tau)
-    >>> reduced.shift
-    (2, 1)
-    >>> mp.nstr(reduced.value[0, 0], 3)
-    '0.0'
-    """
+    """Implement :meth:`AlgebraicCurve.lattice_reduce`."""
     if isinstance(periods, CurveFirstKindPeriods):
         genus = periods.genus
         period_matrix = ctx.matrix(genus, 2 * genus)

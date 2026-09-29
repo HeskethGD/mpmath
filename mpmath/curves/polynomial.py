@@ -160,8 +160,8 @@ def _prepare_plane_curve(ctx, coefficients):
     """Return a validated sparse bivariate polynomial.
 
     ``coefficients`` maps ``(x_power, y_power)`` pairs to numeric
-    coefficients.  The representation is deliberately private while the
-    numerical algorithms establish which public input forms would be useful.
+    coefficients. The prepared representation is private; the public
+    constructor accepts sparse mappings and coefficient sequences.
     """
     try:
         items = coefficients.items()

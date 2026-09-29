@@ -24,7 +24,7 @@ def test_period_validation_without_theta_dependency(monkeypatch):
     def theta_forbidden(*args, **kwargs):
         raise AssertionError("period computation must not prepare theta data")
 
-    monkeypatch.setattr(ctx, '_rtheta_tau_data', theta_forbidden)
+    monkeypatch.setattr(ctx, '_rtheta_tau_data', theta_forbidden, raising=False)
     curve = ctx.algebraic_curve((0, -1, 0, 1))
     data = curve.first_kind_periods()
     assert ctx.almosteq(data.tau[0, 0], ctx.j)
@@ -117,6 +117,23 @@ def test_repeated_hyperelliptic_root_is_rejected_after_solver_failure():
         coefficients = (-96, 224, -190, 75, -14, 1)
         with pytest.raises(ValueError, match="distinct roots"):
             hyperelliptic_model._hyperelliptic_roots(mp, coefficients)
+
+
+def test_hyperelliptic_root_retries_are_bounded_and_restore_precision(monkeypatch):
+    ctx = mp.clone()
+    ctx.dps = 25
+    guards = []
+
+    def unresolved(*args, **kwargs):
+        guards.append(kwargs.get('extraprec'))
+        raise ctx.NoConvergence("root solver exhausted its iterations")
+
+    monkeypatch.setattr(ctx, 'polyroots', unresolved)
+    with pytest.raises(ValueError, match="failed to resolve hyperelliptic roots"):
+        ctx.algebraic_curve((0, -1, 0, 1)).first_kind_periods()
+    assert guards == [None, 50, 100]
+    assert ctx.dps == 25
+
 
 def test_hyperelliptic_second_kind_genus_one():
     # BEL (1997), equation (1.3), gives dr = x dx/(4y) for this odd cubic.

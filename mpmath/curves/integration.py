@@ -242,10 +242,8 @@ def _integrate_plane_curve_path(
 
     def rule(order):
         if order not in rules:
-            nodes, weights = ctx.gauss_quadrature(order, "legendre")
-            rules[order] = (
-                tuple((nodes[index] + 1) / 2 for index in range(order)),
-                tuple(weights[index] / 2 for index in range(order)))
+            nodes, weights = ctx.gauss_quadrature(order, "legendre01")
+            rules[order] = tuple(nodes), tuple(weights)
         return rules[order]
 
     def integrate_segment(
@@ -388,15 +386,12 @@ def _integrate_plane_curve_path_iterated(
 
     def rule(order):
         if order not in rules:
-            nodes, weights = ctx.gauss_quadrature(order, "legendre")
-            parameters = tuple((nodes[index] + 1) / 2
-                               for index in range(order))
+            nodes, weights = ctx.gauss_quadrature(order, "legendre01")
+            parameters, weights = tuple(nodes), tuple(weights)
             rules[order] = (
                 parameters,
-                tuple(weights[index] / 2 for index in range(order)),
-                _gauss_indefinite_matrix(
-                    ctx, parameters,
-                    tuple(weights[index] / 2 for index in range(order))),
+                weights,
+                _gauss_indefinite_matrix(ctx, parameters, weights),
             )
         return rules[order]
 
@@ -600,11 +595,8 @@ def _integrate_plane_curve_branch(
             previous = current
         raise ctx.NoConvergence(
             "chart quadrature did not converge; the endpoint may be a pole")
-    nodes, weights = ctx.gauss_quadrature(quadrature_order, "legendre")
-    parameters = tuple((nodes[index] + 1) / 2
-                       for index in range(quadrature_order))
-    weights = tuple(weights[index] / 2
-                    for index in range(quadrature_order))
+    nodes, weights = ctx.gauss_quadrature(quadrature_order, "legendre01")
+    parameters, weights = tuple(nodes), tuple(weights)
 
     def polynomial_scale(t, u):
         return max(ctx.one, ctx.fsum(

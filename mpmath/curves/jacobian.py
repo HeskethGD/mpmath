@@ -68,7 +68,7 @@ def _classify_hyperelliptic_model(ctx, curve):
     return _HyperellipticModel(polynomial, shift)
 
 
-def _normalise_algebraic_curve_input(ctx, curve):
+def _normalize_algebraic_curve_input(ctx, curve):
     """Return a prepared curve and its optional specialized model."""
     if isinstance(curve, _ClassifiedCurve):
         return curve.curve, curve.hyperelliptic
@@ -125,7 +125,7 @@ def _period_matrix_from_columns(ctx, columns, start, count, genus):
     ])
 
 
-def _normalised_differentials(ctx, differentials, a_periods):
+def _normalized_differentials(ctx, differentials, a_periods):
     inverse = a_periods ** -1
     result = []
     for row in range(len(differentials)):
@@ -187,7 +187,7 @@ def _jacobian_characteristic(ctx, value, tau):
     return a, b
 
 
-def _normalise_curve_place(ctx, curve, place, name="place"):
+def _normalize_curve_place(ctx, curve, place, name="place"):
     """Return a validated regular finite place on a prepared curve."""
     if isinstance(place, CurvePlace):
         place = (place.x, place.y)
@@ -211,7 +211,7 @@ def _normalise_curve_place(ctx, curve, place, name="place"):
     return _PlaneCurvePlace(x, y)
 
 
-def _normalise_curve_endpoint(ctx, curve, place, name):
+def _normalize_curve_endpoint(ctx, curve, place, name):
     """Return ``(junction, tail, public_place)`` for any place input.
 
     A chart-backed place is checked for curve and numerical-context
@@ -225,10 +225,10 @@ def _normalise_curve_endpoint(ctx, curve, place, name):
         if tail.chart.curve_key != (curve, _curve_cache_state(ctx)):
             raise ValueError(
                 name + " was constructed for a different curve or precision")
-        junction = _normalise_curve_place(
+        junction = _normalize_curve_place(
             ctx, curve, (place.x, place.y), name)
         return junction, tail, CurvePlace(junction.x, junction.y, tail)
-    junction = _normalise_curve_place(ctx, curve, place, name)
+    junction = _normalize_curve_place(ctx, curve, place, name)
     return junction, None, CurvePlace(junction.x, junction.y)
 
 

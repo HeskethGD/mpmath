@@ -106,7 +106,7 @@ def _infinity_direction(ctx, roots):
     raise ValueError("failed to choose a root-free path from infinity")
 
 
-def _normalise_abel_targets(ctx, target):
+def _normalize_abel_targets(ctx, target):
     """Normalize one affine point or a sequence of affine points."""
     try:
         items = tuple(target)

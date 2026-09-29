@@ -14,7 +14,7 @@ from .integration import (
     _integrate_plane_curve_branch,
     _pullback_plane_curve_differentials,
 )
-from .jacobian import _normalise_algebraic_curve_input
+from .jacobian import _normalize_algebraic_curve_input
 from .polynomial import (
     _evaluate_plane_polynomial,
     _finite_plane_curve_sheets,
@@ -60,7 +60,7 @@ def _curve_chart_source(ctx, source):
     """Return the chart of a raw curve input or an existing chart."""
     if isinstance(source, CurveChart):
         return _validate_chart(ctx, source)
-    prepared, unused_hyperelliptic = _normalise_algebraic_curve_input(
+    prepared, unused_hyperelliptic = _normalize_algebraic_curve_input(
         ctx, source)
     return CurveChart(
         (prepared, _curve_cache_state(ctx)), prepared,
@@ -117,18 +117,8 @@ def _validated_chart_coordinate_map(ctx, chart):
 
 
 def chart(ctx, curve, chart_curve, coordinate_map):
-    r"""Return a user-supplied local chart of a plane algebraic curve.
-
-    ``curve`` is the ambient curve specification. ``chart_curve`` gives the local
-    curve as a sparse mapping from
-    ``(t_power, w_power)`` pairs to coefficients, or a sequence of
-    ``(t_power, w_power, coefficient)`` terms.  ``coordinate_map(t, w)``
-    must return the ambient triple ``(x, y, dx/dt)``, where ``x`` depends
-    on ``t`` alone.  The returned ``CurveChart`` is bound to the ambient
-    curve and working precision, and is accepted by the other chart
-    methods and by :meth:`AlgebraicCurve.chart_place`.
-    """
-    ambient, unused_hyperelliptic = _normalise_algebraic_curve_input(
+    """Implement :meth:`AlgebraicCurve.chart`."""
+    ambient, unused_hyperelliptic = _normalize_algebraic_curve_input(
         ctx, curve)
     prepared = _prepare_chart_curve(ctx, chart_curve)
     if not callable(coordinate_map):
@@ -138,13 +128,7 @@ def chart(ctx, curve, chart_curve, coordinate_map):
 
 
 def monomial_chart(ctx, source, x_power, y_power):
-    r"""Return the monomial chart ``x = t**x_power, y = t**y_power*w``.
-
-    ``source`` is the curve itself, or another ``CurveChart`` to compose
-    with.  Negative powers describe places above infinity.  Repeated
-    factors are cleared so the chart curve is a polynomial in ``t`` and
-    ``w``; the chart does not claim to normalize a singular chart.
-    """
+    """Implement :meth:`AlgebraicCurve.monomial_chart`."""
     base = _curve_chart_source(ctx, source)
     curve = _monomial_plane_curve_chart(
         ctx, base.curve, x_power, y_power)
@@ -159,13 +143,7 @@ def monomial_chart(ctx, source, x_power, y_power):
 
 
 def chart_fibre(ctx, chart, t):
-    r"""Return the ordered fibre of chart ``w`` values over ``t``.
-
-    The values are ordered by real and imaginary part, like
-    :meth:`AlgebraicCurve.fibre`.  A fibre whose values do not separate
-    indicates that the chart does not resolve the requested place and is
-    rejected.
-    """
+    """Implement :meth:`AlgebraicCurve.chart_fibre`."""
     chart = _validate_chart(ctx, chart)
     t = ctx.convert(t)
     if not ctx.isfinite(t):
@@ -187,27 +165,8 @@ def chart_fibre(ctx, chart, t):
 
 
 def chart_place(ctx, curve, chart, seed, cutoff):
-    r"""Return the chart-backed place reached by a local branch.
-
-    ``seed`` is the branch value of ``w`` at ``t = 0``, for example from
-    :meth:`AlgebraicCurve.chart_fibre`; the branch is continued along the
-    straight chart path from ``t = 0`` to ``t = cutoff``.  The returned
-    place is represented by its finite affine cutoff point together with a
-    chart tail describing the local branch, and is bound to ``curve`` and
-    the working precision.  The chart must parametrize ``curve``: the
-    cutoff point is checked to lie on the curve.
-
-    >>> from mpmath import algebraic_curve, mp
-    >>> mp.dps = 15
-    >>> curve = algebraic_curve({(0, 2): 1, (1, 0): 1, (3, 0): -1})
-    >>> chart = curve.monomial_chart(-2, -3)
-    >>> [mp.nstr(value, 3) for value in curve.chart_fibre(chart, 0)]
-    ['(-1.0 + 0.0j)', '(1.0 + 0.0j)']
-    >>> place = curve.chart_place(chart, 1, mp.mpf("0.05"))
-    >>> mp.nstr(place.x, 6)
-    '400.0'
-    """
-    prepared, unused_hyperelliptic = _normalise_algebraic_curve_input(
+    """Implement :meth:`AlgebraicCurve.chart_place`."""
+    prepared, unused_hyperelliptic = _normalize_algebraic_curve_input(
         ctx, curve)
     chart = _validate_chart(ctx, chart, prepared)
     cutoff = ctx.convert(cutoff)
@@ -225,16 +184,7 @@ def chart_place(ctx, curve, chart, seed, cutoff):
 
 
 def chart_integral(ctx, chart, differentials, t_path, seed):
-    r"""Integrate ambient differentials along a local chart branch.
-
-    ``differentials`` are ambient ``f(x, y)`` callables returning the
-    coefficient of ``dx``; they are pulled back through the chart's
-    coordinate map, so a single callable gives a scalar and a sequence
-    gives one entry per form.  ``t_path`` is a sequence of finite ``t``
-    values along which the branch is continued from ``seed`` at
-    ``t_path[0]``.  Closed chart loops therefore compute residues of
-    pulled-back forms at the place.
-    """
+    """Implement :meth:`AlgebraicCurve.chart_integral`."""
     chart = _validate_chart(ctx, chart)
     if callable(differentials):
         single = True

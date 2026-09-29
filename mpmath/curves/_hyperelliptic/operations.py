@@ -17,7 +17,7 @@ from .jacobian import (
 from .model import (
     _admissible_branch_vertex,
     _evaluate_polynomial,
-    _normalise_abel_targets,
+    _normalize_abel_targets,
     _prepare_hyperelliptic_curve,
     _target_branch_index,
 )
@@ -65,7 +65,7 @@ def _hyperelliptic_abel_map(
     quadrature_guard = 20
     cancellation_guard = 40 if second_kind else 0
     with ctx.extraprec(quadrature_guard + cancellation_guard):
-        targets = _normalise_abel_targets(ctx, target)
+        targets = _normalize_abel_targets(ctx, target)
         curve_data = _prepare_hyperelliptic_curve(
             ctx, coefficients, method)
         (coefficients, roots, _unused_root_tolerance, use_real_method,

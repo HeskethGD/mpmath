@@ -545,7 +545,10 @@ class _LiftedEdgeSampler:
             if converged and abs(candidate - predictions[sheet]) < separation / 4:
                 return x, candidate, abs(residual)
             midpoint = (a + b) / 2
-            if midpoint == a or midpoint == b:
+            midpoint_x = self.left + midpoint * self.delta
+            if (midpoint == a or midpoint == b
+                    or midpoint_x == self.left + a * self.delta
+                    or midpoint_x == self.left + b * self.delta):
                 break
             lift = _continue_plane_curve_sheets_adaptive(
                 ctx, self.curve,

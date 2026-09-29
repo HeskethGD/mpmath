@@ -160,7 +160,7 @@ def test_geometric_chart_endpoints_cutoffs_and_theta():
     assert ctx.dps == 18
 
 
-def test_geometric_supplied_basis_is_coherent_and_uncached_if_unhashable(monkeypatch):
+def test_geometric_supplied_basis_is_coherent_across_operations(monkeypatch):
     from mpmath.curves import _stages
     ctx = mp.clone()
     ctx.dps = 18
@@ -175,8 +175,6 @@ def test_geometric_supplied_basis_is_coherent_and_uncached_if_unhashable(monkeyp
     change = ctx.matrix([[2, 1, 0], [0, 1, 1], [1, 0, 1]])
 
     class Form:
-        __hash__ = None
-
         def __init__(self, row):
             self.row = row
 
@@ -209,6 +207,24 @@ def test_geometric_supplied_basis_is_coherent_and_uncached_if_unhashable(monkeyp
     assert ctx.norm(shifted.value-expected) < ctx.mpf('1e-14')
     reduced = curve.abel_map(point, forms, reduce=True)
     assert ctx.norm(reduced-curve.lattice_reduce(value, supplied).value) < ctx.mpf('1e-14')
+
+
+def test_geometric_supplied_basis_accepts_unhashable_forms():
+    ctx = mp.clone()
+    ctx.dps = 18
+    curve = ctx.algebraic_curve({(0, 2): 1, (3, 0): -1, (1, 0): 1})
+
+    class Form:
+        __hash__ = None
+
+        def __call__(self, x, y):
+            return 1/y
+
+    form = Form()
+    periods = curve.first_kind_periods((form,))
+    assert periods.differentials == (form,)
+    assert periods.marking == 'geometric-polygon'
+    assert curve.validate(periods).passed
 
 
 @pytest.mark.parametrize('linear_y', [False, True])

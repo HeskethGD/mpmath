@@ -221,8 +221,7 @@ def _ribbon_tree_cotree_cut_system(
         if left == right:
             raise ValueError("tree edges do not form a spanning tree")
         tree_parent[left] = right
-    if len({tree_find(vertex) for vertex in graph.vertices}) != 1:
-        raise ValueError("tree edges do not form a spanning tree")
+    # An acyclic set of |V|-1 edges is already a spanning tree.
 
     tree_set = set(tree_edges)
     faces = _ribbon_boundary_orbits(edges, graph.rotation)
@@ -292,9 +291,10 @@ def _ribbon_tree_cotree_cut_system(
         edge = edges[edge_index]
         adjacency[edge.tail].append((edge.head, edge_index, 1))
         adjacency[edge.head].append((edge.tail, edge_index, -1))
+    default_root = min(graph.vertices)
     if root is None:
-        root = min(graph.vertices)
-    elif root not in set(graph.vertices) or root[0] != "base":
+        root = default_root
+    elif root not in set(graph.vertices) or root[0] != default_root[0]:
         raise ValueError("cut-system root must be a base-sheet vertex")
     loops = []
     cycles = []
@@ -371,10 +371,9 @@ def _brahana_canonical_words(boundary_word):
     while remaining:
         a = remaining[0]
         a_inverse = (a[0], -a[1])
-        try:
-            a_inverse_index = remaining.index(a_inverse, 1)
-        except ValueError:
-            raise ValueError("polygon side has no inverse partner")
+        # Opposite signed occurrences were checked before reduction, and
+        # cancellation removes both occurrences together.
+        a_inverse_index = remaining.index(a_inverse, 1)
 
         crossing = None
         for b_index in range(1, a_inverse_index):

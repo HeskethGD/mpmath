@@ -2,7 +2,7 @@ import pytest
 
 from mpmath import mp
 from mpmath.curves.differentials import (
-    _baker_basis, _baker_callable, _evaluate_baker_basis,
+    _baker_basis, _baker_callable, _evaluate_baker_basis, _newton_polygon,
 )
 from mpmath.curves.polynomial import _prepare_plane_curve
 
@@ -29,3 +29,19 @@ def test_baker_basis_order_evaluation_and_applicability_checks():
         })
         with pytest.raises(ValueError, match="degenerate edge"):
             _baker_basis(mp, kovalevskaya, 3)
+
+
+def test_newton_polygon_rejects_one_dimensional_support():
+    two_points = _prepare_plane_curve(mp, {(0, 1): 1, (1, 0): 1})
+    collinear = _prepare_plane_curve(mp, {
+        (0, 1): 1, (1, 1): 1, (2, 1): 1,
+    })
+    for curve in (two_points, collinear):
+        with pytest.raises(ValueError, match="two-dimensional interior"):
+            _newton_polygon(curve)
+
+
+def test_genus_zero_has_no_first_kind_basis():
+    curve = _prepare_plane_curve(mp, {(0, 2): 1, (1, 0): -1})
+    with pytest.raises(ValueError, match="genus-zero"):
+        _baker_basis(mp, curve, 0)

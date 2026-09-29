@@ -24,8 +24,8 @@ from .integration import (
 )
 from .jacobian import (
     _finite_geometric_abel_value,
-    _normalise_curve_endpoint,
-    _normalised_differentials,
+    _normalize_curve_endpoint,
+    _normalized_differentials,
     _riemann_constant_from_iterated_cycles,
 )
 from .homology import (
@@ -190,11 +190,11 @@ def _geometric_riemann_constant(ctx, curve, forms=None):
         tau = (raw_tau + raw_tau.T) / 2
         if forms is None:
             forms = tuple(_baker_callable(ctx, data.basis, i) for i in range(genus))
-        normalised = _normalised_differentials(ctx, forms, a_periods)
+        normalized = _normalized_differentials(ctx, forms, a_periods)
         polygon = data.polygon.polygon
         cycles = _integrate_geometric_loops_iterated(
             ctx, curve, data.cover, data.graph, polygon,
-            polygon.a_loops, normalised)
+            polygon.a_loops, normalized)
         value = _riemann_constant_from_iterated_cycles(ctx, tau, cycles)
     return tuple(+entry for entry in value), cycles
 
@@ -211,7 +211,7 @@ def _geometric_abel_divisor(ctx, curve, places, base_place=None, forms=None,
     from .charts import _validated_chart_coordinate_map
 
     def endpoint(place, name):
-        junction, tail, unused_place = _normalise_curve_endpoint(
+        junction, tail, unused_place = _normalize_curve_endpoint(
             ctx, curve, place, name)
         coordinate_map = (None if tail is None else
                           _validated_chart_coordinate_map(ctx, tail.chart))

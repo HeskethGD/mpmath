@@ -82,8 +82,11 @@ def _legendre_edge_rule(ctx, order):
     """Compute a Gauss rule on [0, 1] by symmetric Legendre root iteration.
 
     Callers cache rules within their numerical stage, never across precision
-    contexts. The recurrence avoids the dense eigenproblem of the generic
-    Gaussian quadrature constructor for these small reusable orders.
+    contexts. Unlike ``GaussLegendre.calc_nodes``, this accepts the arbitrary
+    orders chosen by the geometry policy, without rounding up the node count.
+    ``ctx.gauss_quadrature`` supports those orders via a tridiagonal
+    eigensolver; this recurrence retains the direct root iteration used for
+    the automatic-basis path.
     """
     if not isinstance(order, int) or order < 2:
         raise ValueError("Gauss order must be an integer at least two")
