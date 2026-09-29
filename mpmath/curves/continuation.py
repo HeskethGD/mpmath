@@ -130,7 +130,12 @@ def _radial_branch_loop_path(
 # ------------------
 
 def _predict_plane_curve_sheets(ctx, curve, x, next_x, sheets):
-    """Predict sheets at ``next_x`` by implicit differentiation."""
+    """Predict sheets at ``next_x`` using ``dy/dx = -F_x/F_y``.
+
+    Near a critical point ``F_y`` is small, so retain the current ordinate
+    rather than take an unstable implicit-derivative step; the corrector and
+    segment refinement then decide whether the path is numerically safe.
+    """
     step = next_x - x
     predictions = []
     threshold = ctx.sqrt(ctx.eps)
@@ -165,6 +170,12 @@ def _continue_plane_curve_sheets_adaptive(
     minimum sheet separation.  Geometry remains the caller's responsibility:
     subdivision improves resolution but cannot repair a path through a
     critical value.
+
+    This is a predictor--corrector lift of the plane-curve projection, the
+    numerical continuation used to obtain monodromy in the approach of
+    Deconinck--van Hoeij, *Computing Riemann matrices of algebraic curves*
+    (2001). The specific separation fractions and bisection policy are
+    empirical safeguards here, not bounds supplied by that reference.
     """
     path = tuple(ctx.convert(point) for point in path)
     if not path:
@@ -213,6 +224,9 @@ def _continue_plane_curve_sheets_adaptive(
             candidates = None
 
         if candidates is not None:
+            # Label the corrected fibre by proximity to the predictions;
+            # compare with the closest sheet gap so a large but converged
+            # Newton step cannot silently exchange two sheets.
             assignment = _minimum_cost_assignment(
                 ctx, predictions, candidates)
             next_sheets = tuple(candidates[index] for index in assignment)

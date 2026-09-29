@@ -57,6 +57,36 @@ References not listed here can be found in the source code.
               *Proceedings of the Royal Society A* 456 (2000), 2263--2281.
               https://arxiv.org/abs/solv-int/9904017
 
+.. [Chen1977] K.-T. Chen. "Iterated Path Integrals".
+              *Bulletin of the American Mathematical Society* 83(5)
+              (1977), 831--879.
+              https://doi.org/10.1090/S0002-9904-1977-14320-6
+
+.. [DP2011] B. Deconinck & M. S. Patterson. "Computing with Plane
+            Algebraic Curves and Riemann Surfaces: The Algorithms of the
+            Maple Package Algcurves". In *Computational Approach to
+            Riemann Surfaces*, Lecture Notes in Mathematics 2013 (2011),
+            67--123. https://doi.org/10.1007/978-3-642-17413-1_2
+
+.. [DvH2001] B. Deconinck & M. van Hoeij. "Computing Riemann Matrices of
+             Algebraic Curves". *Physica D* 152--153 (2001), 28--46.
+             https://doi.org/10.1016/S0167-2789(01)00156-7
+
+.. [Eppstein2003] D. Eppstein. "Dynamic Generators of Topologically Embedded
+                   Graphs". *Proceedings of the Fourteenth Annual ACM-SIAM
+                   Symposium on Discrete Algorithms* (2003), 599--608.
+                   https://arxiv.org/abs/cs/0207082
+
+.. [Lazarus2001] F. Lazarus, M. Pocchiola, G. Vegter & A. Verroust.
+                  "Computing a Canonical Polygonal Schema of an Orientable
+                  Triangulated Surface". *Proceedings of the Seventeenth
+                  Annual Symposium on Computational Geometry* (2001),
+                  80--89. https://doi.org/10.1145/378583.378630
+
+.. [Trefethen2008] L. N. Trefethen. "Is Gauss Quadrature Better than
+                   Clenshaw--Curtis?" *SIAM Review* 50(1) (2008), 67--87.
+                   https://doi.org/10.1137/060659831
+
 .. [BenderOrszag] C M Bender & S A Orszag. *Advanced Mathematical Methods for
                   Scientists and Engineers*, Springer 1999
 

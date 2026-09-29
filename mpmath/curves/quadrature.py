@@ -16,7 +16,10 @@ def _geometric_quadrature_order(ctx, left, right, singularities):
     Each singularity is mapped to the standard interval ``[-1, 1]``.  The
     Bernstein ellipse through the nearest mapped point supplies the expected
     ``rho**(-2*n)`` convergence factor.  This is an order-selection heuristic,
-    not a rigorous error bound.
+    not a rigorous error bound; see Trefethen, *Is Gauss Quadrature Better than
+    Clenshaw--Curtis?*, SIAM Review 50 (2008), for the analytic-integrand
+    convergence principle. Known branch values need not describe singularities
+    of a caller-supplied differential.
     """
     singularities = tuple(singularities)
     if left == right:

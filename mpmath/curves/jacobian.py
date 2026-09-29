@@ -143,7 +143,15 @@ def _normalized_differentials(ctx, differentials, a_periods):
 
 
 def _riemann_constant_from_iterated_cycles(ctx, tau, cycle_integrals):
-    """Apply the canonical-polygon formula to normalized based a-loops."""
+    """Apply the canonical-polygon formula to normalized based a-loops.
+
+    The diagonal half-period and cross-loop iterated terms are the
+    canonical-dissection formula (Deconinck--Patterson, *Computing with Plane
+    Algebraic Curves and Riemann Surfaces*, 2011, equation (81)), expressed
+    in our additive theta-shift and oriented-loop conventions. Keeping the
+    actual based loops is essential: homology vectors alone lose the
+    conjugating paths in these level-two integrals.
+    """
     genus = tau.rows
     if tau.cols != genus or len(cycle_integrals) != genus:
         raise ValueError("canonical cycles and period matrix disagree")

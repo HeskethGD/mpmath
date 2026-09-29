@@ -75,6 +75,8 @@ def _voronoi_plane_graph(ctx, branch_values):
     vertex identification use normalized coordinates at the working precision;
     configurations too close to distinguish raise rather than guess topology.
     This is numerical geometry, not an interval-certified construction.
+    Each cell is the intersection of pairwise nearest-site half-planes; no
+    sweep-line Voronoi algorithm or external geometry package is used.
     """
     points = tuple(ctx.convert(z) for z in branch_values)
     if not points or any(not ctx.isfinite(z) for z in points):
@@ -87,6 +89,9 @@ def _voronoi_plane_graph(ctx, branch_values):
     if any(abs(a - b) <= 100 * tolerance
            for i, a in enumerate(branches) for b in branches[i + 1:]):
         raise ctx.NoConvergence("branch values are too close for Voronoi geometry")
+    # Artificial exterior sites bound every branch cell. Their Voronoi
+    # boundaries give a finite disk whose Euler count can be checked before
+    # lifting the graph to the curve.
     sites = branches + tuple(
         ctx.mpf(3) / 2 * ctx.exp(2 * ctx.j * ctx.pi * k / 6)
         for k in range(6))
@@ -101,6 +106,9 @@ def _voronoi_plane_graph(ctx, branch_values):
                 ctx, polygon, site, other, tolerance)
         cell = []
         for z in polygon:
+            # A vertex is identified by all sites at the same nearest
+            # distance, rather than by rounded complex coordinates. Cells
+            # sharing that support must agree on its numerical position.
             distances = [abs(z - s)**2 for s in sites]
             nearest = min(distances)
             support = tuple(k for k, d in enumerate(distances)

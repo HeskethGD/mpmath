@@ -14,7 +14,13 @@ from .continuation import _lifted_path_chain_boundary, _prepare_lifted_path_chai
 
 
 def _geometric_ribbon_graph(ctx, cover):
-    """Build the covering graph with the geometric local rotations."""
+    """Build the covering graph with the geometric local rotations.
+
+    A base-plane vertex is copied once per sheet; lifting each directed edge
+    by its continuation permutation glues those copies into the covering
+    graph. The clockwise order of outgoing base edges supplies the ribbon
+    rotation, which determines faces without embedding the surface in 3-D.
+    """
     geometry = cover.geometry
     degree = len(cover.fibres[0])
     rotation = {(v, s): [] for v in range(len(geometry.vertices))
@@ -144,7 +150,12 @@ def _tree_path(adjacency, start, end):
 
 
 def _ribbon_boundary_orbits(edges, rotation, included_edges=None):
-    """Return oriented boundary orbits of a thickened ribbon subgraph."""
+    """Return oriented boundary orbits of a thickened ribbon subgraph.
+
+    A boundary walk crosses an edge to its opposite end, then takes the next
+    incident half-edge in the local rotation. Orbits of this permutation are
+    the faces used by the Euler and tree--cotree checks.
+    """
     if included_edges is None:
         included_edges = set(range(len(edges)))
     else:
@@ -225,6 +236,9 @@ def _ribbon_tree_cotree_cut_system(
 
     tree_set = set(tree_edges)
     faces = _ribbon_boundary_orbits(edges, graph.rotation)
+    # Every oriented half-edge belongs to one face of the thickened graph.
+    # A primal edge joins the two face labels of its opposite half-edges in
+    # the dual graph; adding such edges without dual cycles builds a cotree.
     half_edge_face = {
         half_edge: face_index
         for face_index, face in enumerate(faces)
@@ -262,6 +276,10 @@ def _ribbon_tree_cotree_cut_system(
         raise ValueError("dual complement of ribbon tree is disconnected")
 
     cotree_set = set(cotree_edges)
+    # The edges left by the primal tree and dual cotree represent the 2g
+    # handles. Keeping their rooted edge words, rather than only their
+    # integer homology vectors, preserves the paths needed for iterated
+    # integrals and the Riemann-constant formula.
     generator_edges = tuple(
         edge_index for edge_index in range(len(edges))
         if edge_index not in tree_set and edge_index not in cotree_set)

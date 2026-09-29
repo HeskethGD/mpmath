@@ -113,7 +113,13 @@ def _abel_lattice_shift(ctx, value, omega, omega_prime, target_eps):
 
 def _second_kind_periods(ctx, coefficients, intervals, genus, even_degree,
                          b_sign):
-    """Construct canonical second-kind half-period matrices."""
+    """Construct BEL second-kind half-periods in the Baker marking.
+
+    Each interval contributes to a complete a or b cycle twice; the minus
+    sign gives ``2*eta = -integral_a(dr)`` and its b-cycle counterpart.
+    ``cycle_offset`` accounts for the different branch-point origin in even
+    and odd degree, while ``b_sign`` tracks the chosen sheet orientation.
+    """
     cycle_offset = 1 if even_degree else 0
     eta = ctx.matrix(genus)
     eta_prime = ctx.matrix(genus)
@@ -148,7 +154,13 @@ def _symmetrize_period_matrix(ctx, matrix, target_eps, description):
 
 def _validate_legendre_relation(ctx, omega, omega_prime, eta, eta_prime,
                                 target_eps):
-    """Check the generalized Legendre relation for half-period matrices."""
+    """Check the generalized Legendre relation for half-period matrices.
+
+    The right-hand side is ``-pi*i*J/2`` for the block order
+    ``[omega, omega_prime; eta, eta_prime]`` and our a/b intersection sign.
+    This tests compatibility of first- and second-kind bases, beyond the
+    separate symmetry checks; see Buchstaber--Enolskii--Leykin (1997).
+    """
     genus = omega.rows
     periods = ctx.matrix(2 * genus)
     periods[:genus, :genus] = omega
@@ -167,7 +179,11 @@ def _validate_legendre_relation(ctx, omega, omega_prime, eta, eta_prime,
 
 
 def _hyperelliptic_characteristic(ctx, genus):
-    """Return the Riemann characteristic for the selected canonical basis."""
+    """Return the Riemann characteristic for the selected Baker marking.
+
+    These half-integer coordinates depend on the branch-point order and
+    canonical cycles; they are not a characteristic for arbitrary markings.
+    """
     half = ctx.convert(0.5)
     a = (half,) * genus
     b = tuple(half if (genus - index) & 1 else ctx.zero

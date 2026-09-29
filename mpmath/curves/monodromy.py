@@ -71,6 +71,12 @@ def _radial_plane_curve_monodromy(
     point.  Their counter-clockwise product order and clockwise outward
     ribbon order are retained separately.  A clockwise outer circle supplies
     the positive generator at infinity geometrically.
+
+    Numerical lifting of loops around critical values is the standard
+    monodromy route to a surface's homology (Deconinck--van Hoeij,
+    *Computing Riemann matrices of algebraic curves*, 2001). The guarded
+    radial paths and the explicit tangent-based ribbon order below are this
+    implementation's choices, not prescriptions from that paper.
     """
     points = tuple(ctx.convert(point) for point in branch_points)
     base_point, center, radii, minimum_clearance = (

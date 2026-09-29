@@ -100,6 +100,15 @@ place and the corresponding period lattice.
 ``curve.monodromy`` uses radial loops and its own base fibre; it does not
 select the integration marking.
 
+The computational route from sheet continuation and monodromy to a homology
+basis and periods follows the general approach of [DvH2001]_ and [DP2011]_.
+The geometric engine constructs a lifted ribbon graph and uses a primal
+spanning tree and dual cotree to leave :math:`2g` generators [Eppstein2003]_.
+It then rewrites the one-face polygon word as canonical commutators
+[Lazarus2001]_. These references explain the topology; the particular
+Voronoi graph, numerical guards and deterministic choices here are
+implementation decisions, not algorithms copied from those sources.
+
 
 Periods and Riemann data
 ........................
@@ -127,12 +136,20 @@ with ``tau = omega**-1 * omega_prime`` before numerical symmetrization.
 Second-kind half-periods use the sign convention
 ``2*eta = -integral_a(dr)`` and ``2*eta_prime = -integral_b(dr)``.
 The returned ``kappa`` is the symmetric part of ``eta * omega**-1``.
+The generalized Legendre relation checks compatibility of these half-period
+blocks in the chosen symplectic marking [BEL1997]_.
 
 Riemann constants use the additive convention
 :math:`\theta(A(D)+K,\tau)=0`, where :math:`A(D)` is the normalized Abel
 map of an effective divisor of degree :math:`g-1`. The record's ``value`` is
 :math:`K`; its ``characteristic`` gives literal coordinates :math:`(a,b)`
 such that :math:`K=\tau a+b` modulo the normalized period lattice.
+The canonical-dissection formula and the change-of-base-place law are
+discussed in [DP2011]_. Our additive sign and cycle orientations are specified
+above rather than inferred from another author's convention. The level-two
+integrals used by the geometric calculation retain their based paths;
+concatenation and reversal follow Chen's iterated-integral identities
+[Chen1977]_.
 
 .. list-table:: Numerical results and coordinate conventions
    :header-rows: 1
@@ -192,6 +209,10 @@ quadrature error bound. Poles of supplied meromorphic differentials are not
 part of that estimate. Iterated integrals used for Riemann constants use the
 same per-segment geometry policy with a stable Legendre-basis integration
 matrix.
+The order estimate uses the geometric convergence associated with an analytic
+integrand's nearest Bernstein ellipse [Trefethen2008]_. It assumes that the
+known branch values describe the limiting singularities; it does not certify
+an arbitrary supplied differential.
 
 Automatic hyperelliptic calculations use the deterministic Baker cycle
 marking. Supplying a callable first-kind basis is an explicit request for the
@@ -243,6 +264,63 @@ Explicit local charts
 Explicit charts extend paths and integrals to ramification points and places
 over infinity. Charts are bound to their ambient curve and working precision;
 automatic chart discovery is outside the present numerical API.
+
+A chart replaces a difficult affine endpoint by a local parameter :math:`t`
+and a branch coordinate :math:`w`. Its equation must have a simple root in
+:math:`w` at :math:`t=0`; that root is the ``seed`` selecting a place. The
+``cutoff`` is a nonzero :math:`t` value where the local branch meets an
+ordinary finite path. A ``CurvePlace`` returned by ``chart_place`` remembers
+the chart tail from :math:`t=0` to that junction. Passing only its affine
+``(x, y)`` coordinates would instead select the cutoff point, losing the
+intended place at infinity or ramification.
+
+For example, take :math:`y^2=x^3-x`. Its point at infinity can be reached
+with :math:`x=t^{-2}`, :math:`y=t^{-3}w`, giving the regular local equation
+:math:`w^2=1-t^4`. The two roots at :math:`t=0` choose local branches of
+this parameterization (both approach the unique infinity place of this
+elliptic curve); here we select :math:`w=1`::
+
+    >>> from mpmath import algebraic_curve, mp
+    >>> mp.dps = 15
+    >>> curve = algebraic_curve({(0, 2): 1, (3, 0): -1, (1, 0): 1})
+    >>> infinity_chart = curve.monomial_chart(-2, -3)
+    >>> [mp.nstr(w, 3) for w in curve.chart_fibre(infinity_chart, 0)]
+    ['(-1.0 + 0.0j)', '(1.0 + 0.0j)']
+    >>> infinity = curve.chart_place(infinity_chart, 1, mp.mpf('0.1'))
+    >>> mp.nstr(infinity.x, 6), mp.nstr(infinity.y, 6)
+    ('100.0', '999.95')
+    >>> form = (lambda x, y: 1/y,)
+    >>> value = curve.abel_map((2, mp.sqrt(6)), form, base_place=infinity)
+    >>> mp.nstr(mp.re(value[0]), 8)
+    '-1.4538919'
+
+The large ``x`` and ``y`` are only the affine junction; ``infinity`` denotes
+the place at :math:`t=0`. This is the same pattern used when a marked point
+over infinity is the base of an Abel map on a more complicated curve, such as
+the Kovalevskaya genus-three curve. There, one also needs a custom chart for
+two places over :math:`x=0`: its coordinates are
+:math:`x=t^2`, :math:`y=1/[t(1+tw)]`. ``curve.chart(local_equation,
+coordinate_map)`` accepts the transformed polynomial in :math:`(t,w)` and a
+map returning :math:`(x,y,dx/dt)`; a monomial chart alone does not describe
+this second coordinate map. The caller supplies that transformed equation and
+checks that its :math:`t=0` fibre separates the desired places.
+
+``chart_integral`` is useful when the path itself is local, for example a
+small contour used to obtain a residue. It starts at the first value in
+``t_path``, so its ``seed`` is a :math:`w` value there, unlike the seed at
+:math:`t=0` passed to ``chart_place``. The same elliptic chart can be supplied
+explicitly; integrating :math:`dx/x=-2\,dt/t` from :math:`t=0.1` to
+:math:`t=0.2` gives :math:`-2\log 2`::
+
+    >>> local = curve.chart(
+    ...     {(0, 2): 1, (0, 0): -1, (4, 0): 1},
+    ...     lambda t, w: (t**-2, t**-3*w, -2*t**-3))
+    >>> start = mp.mpf('0.1')
+    >>> seed = mp.sqrt(1 - start**4)
+    >>> result = curve.chart_integral(
+    ...     local, lambda x, y: 1/x, (start, mp.mpf('0.2')), seed)
+    >>> mp.nstr(result.values, 8)
+    '-1.3862944'
 
 
 Abel map and lattice reduction

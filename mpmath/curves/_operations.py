@@ -76,6 +76,10 @@ def _geometric_second_kind_periods(ctx, prepared, first, forms):
         raise ValueError("second_differentials must contain one form per genus")
     data = _stage_geometric_custom_periods(ctx, (prepared, forms))
     full = _period_matrix_from_columns(ctx, data.columns, 0, first.genus, first.genus)
+    # The supplied forms are dr, while the public half-period convention is
+    # 2*eta = -integral_a(dr), 2*eta_prime = -integral_b(dr). Retain the
+    # unsymmetrized eta*omega**-1 residual before averaging roundoff-level
+    # asymmetry in kappa.
     eta, eta_prime = -full[:, :first.genus]/2, -full[:, first.genus:]/2
     raw_kappa = eta * first.omega**-1
     return CurveSecondKindPeriods(
@@ -262,6 +266,9 @@ def riemann_constant(ctx, curve, differentials=None, *,
                      for column in range(genus)) + b[row]
             for row in range(genus)])
         if base_place is not None:
+            # In our additive convention, A_P(D) = A_Q(D) - (g-1) A_Q(P).
+            # Thus theta(A_P(D) + K_P) keeps the same argument when
+            # K_P = K_Q + (g-1) A_Q(P). The Abel map below supplies A_Q(P).
             displacement = abel_map(
                 ctx, curve, base_place, differentials=None)
             value += (genus - 1) * ((2 * omega) ** -1 * displacement)
@@ -279,6 +286,8 @@ def riemann_constant(ctx, curve, differentials=None, *,
                       _stage_geometric_custom_riemann_constant(ctx, (prepared, forms)))
     value = ctx.matrix(entries)
     if base_place is not None:
+        # A_P(D) = A_Q(D) - (g-1) A_Q(P); our additive theta shift gains
+        # the same (g-1) A_Q(P) so its vanishing divisor is unchanged.
         displacement = abel_map(ctx, curve, base_place, forms)
         value += (data.genus - 1) * ((2 * data.omega) ** -1 * displacement)
     return CurveRiemannConstant(
