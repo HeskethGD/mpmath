@@ -35,11 +35,6 @@ References not listed here can be found in the source code.
              inversion of the Laplace transform: Applications to Biology,
              Economics, Engineering, and Physics*. Elsevier.
 
-.. [Bernatska2026] J. Bernatska. "Computation of P-Functions on Plane
-                    Algebraic Curves". *Journal of Experimental Mathematics*
-                    2(1) (2026), 114--154.
-                    https://doi.org/10.56994/JXM.002.001.005
-
 .. [BEL1997] V. M. Buchstaber, V. Z. Enolskii & D. V. Leykin.
              "Hyperelliptic Kleinian Functions and Applications".
              *American Mathematical Society Translations*, Series 2, 179

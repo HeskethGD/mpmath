@@ -8,26 +8,26 @@ from . import _operations, _records, charts
 class AlgebraicCurve:
     """A plane algebraic curve bound to an mpmath numerical context.
 
-    Construct curves normally with ``mp.algebraic_curve(specification)``.
-    The explicit form ``AlgebraicCurve(ctx, specification)`` is useful for
-    custom contexts. Expensive stages are lazy and are cached by the core
-    engine using the current precision and numerical context state.
+    Construct curves with ``mp.algebraic_curve(specification)`` or the
+    explicit form ``AlgebraicCurve(ctx, specification)`` for custom contexts.
 
     The canonical ``specification`` is a sparse ``(x_power, y_power)``
-    coefficient mapping.  Sequences of ``(x_power, y_power, coefficient)``
+    coefficient mapping. Sequences of ``(x_power, y_power, coefficient)``
     terms and ascending coefficient sequences for ``y**2 = P(x)`` are also
-    accepted. Structurally hyperelliptic equations are
-    recognized after normalization, independently of their input syntax.
+    accepted.
 
-    General curves use a common geometric polygon. Recognized hyperelliptic
-    models use their specialized Baker marking, unless supplied forms
-    explicitly select the general geometric integration pipeline.
-    Automatic or supplied holomorphic bases and chart-backed Abel endpoints
-    are supported. Supplied callables must be holomorphic on the curve;
-    numerical checks cannot certify that they have no poles. Supplied
-    second-kind forms must have zero residues and no poles on integration
-    paths. Chart endpoints use ordinary convergent integrals; pole values
-    are not regularized.
+    The module automatically selects a computational engine: hyperelliptic
+    curves use specialized Baker marking with efficient branch-based integration;
+    other smooth plane curves use geometric polygon marking with automatic or
+    user-supplied differential bases. See the documentation for details on
+    computational engines and mathematical conventions.
+
+    Supplied first-kind differential callables must be holomorphic on the
+    curve; numerical checks cannot certify absence of poles. Supplied
+    second-kind forms may have poles but must have zero residues and be
+    regular along integration paths. Chart-backed endpoints extend integration
+    to ramification points and places at infinity when the integrals converge;
+    pole regularization is not provided.
     """
 
     def __init__(self, ctx, specification):
@@ -125,8 +125,6 @@ class AlgebraicCurve:
             2
             >>> locus.branch_values
             (mpf('-1.0'), mpf('0.0'), mpf('1.0'))
-
-        This property can be expensive; numerical stages are cached per context state.
         """
         return self._call(_operations.branch_locus)
 
@@ -159,8 +157,6 @@ class AlgebraicCurve:
             ((1, 0), (1, 0), (1, 0))
             >>> monodromy.infinity_permutation
             (1, 0)
-
-        This property can be expensive; numerical stages are cached per context state.
         """
         return self._call(_operations.monodromy)
 
@@ -168,8 +164,7 @@ class AlgebraicCurve:
     def genus(self):
         r"""Genus of the compact curve.
 
-        This property can be expensive; numerical stages are cached per context
-        state. See :attr:`genus_data` for projection degree and ramification.
+        See :attr:`genus_data` for projection degree and ramification.
         """
         return self._call(_operations.genus_data).genus
 
@@ -177,18 +172,13 @@ class AlgebraicCurve:
     def genus_data(self):
         r"""Return the genus of a plane algebraic curve.
 
-        General curves obtain genus from the compact covering graph.
-        Recognized hyperelliptic models use the Riemann--Hurwitz formula
-        applied to monodromy, including ramification at infinity.
-        The returned ``CurveGenus`` record also records the
-        projection degree and the total ramification, so the Riemann--Hurwitz
-        balance :math:`2g-2 = -2d+r` can be checked directly::
+        Returns a ``CurveGenus`` record with the genus, projection degree, and
+        total ramification. The Riemann-Hurwitz balance :math:`2g-2 = -2d+r`
+        can be verified directly::
 
             >>> from mpmath import algebraic_curve
             >>> algebraic_curve((0, -1, 0, 1)).genus_data
             CurveGenus(genus=1, degree=2, ramification=4)
-
-        This property can be expensive; numerical stages are cached per context state.
         """
         return self._call(_operations.genus_data)
 
@@ -196,16 +186,12 @@ class AlgebraicCurve:
     def homology(self):
         r"""Return the homology marking used by the curve's default engine.
 
-        A recognized hyperelliptic curve returns the compact Baker-marked basis
-        used by its automatic periods and Abel maps.  This basis has ``2*genus``
-        cycles, the standard symplectic intersection form, and no auxiliary
-        boundary or radical cycles.  Its transformation is therefore the
-        identity.
+        Returns a ``CurveHomology`` record containing ``2*genus`` cycles in a
+        canonical symplectic basis with the standard intersection form. The
+        ``marking`` field identifies the computational engine: ``'baker'`` for
+        hyperelliptic curves, ``'geometric-polygon'`` for others.
 
-        General curves use a compact geometric polygon with a canonical
-        symplectic basis, no auxiliary boundary cycles and identity transformation.
-
-        The lemniscatic curve :math:`y^2 = x^3 - x` uses its Baker marking::
+        The lemniscatic curve :math:`y^2 = x^3 - x` uses Baker marking::
 
             >>> from mpmath import algebraic_curve
             >>> homology = algebraic_curve((0, -1, 0, 1)).homology
@@ -213,33 +199,27 @@ class AlgebraicCurve:
             (1, 'baker')
             >>> homology.intersection_form
             ((0, 1), (-1, 0))
-
-        This property can be expensive; numerical stages are cached per context state.
         """
         return self._call(_operations.homology)
 
     def first_kind_periods(self, differentials=None):
         r"""Return first-kind half-periods and the normalized Riemann matrix.
 
-        The ``CurveFirstKindPeriods`` record contains ``omega``, ``omega_prime``
-        and ``tau``. Full periods are ``2*omega`` and ``2*omega_prime``; ``tau``
-        is the symmetric part of ``omega**-1 * omega_prime``. The ``engine`` and
-        ``marking`` fields identify the cycle convention.
+        Generalizes elliptic period computation to genus :math:`g`. Returns a
+        ``CurveFirstKindPeriods`` record with half-period matrices ``omega``,
+        ``omega_prime``, and the normalized Riemann matrix ``tau`` (the symmetric
+        part of ``omega**-1 * omega_prime``). Full periods are ``2*omega`` and
+        ``2*omega_prime``.
 
-        Recognized hyperelliptic models use the automatic basis ``x**k dx/z``
-        in the Baker marking, where ``z = y + B(x)/(2*A)`` after completing the
-        square in ``A*y**2 + B(x)*y + C(x) = 0``. Their ``differentials`` field
-        is ``None``. Other Newton-nondegenerate plane curves use a Baker basis
-        indexed by interior lattice points of the Newton polygon.
+        With no arguments, uses the automatic differential basis: hyperelliptic
+        curves get ``x**k dx/z`` in Baker marking; other curves get a basis from
+        Newton polygon interior points when the edge and genus checks pass.
+        Otherwise, supply ``differentials``: one holomorphic callable
+        ``f(x, y)`` per genus, giving the coefficient of ``dx``. A supplied
+        basis selects the geometric-polygon engine, including for a recognized
+        hyperelliptic curve.
 
-        Supplying ``differentials`` selects the general geometric-polygon
-        engine and overrides either automatic basis. Supply one holomorphic
-        callable ``f(x, y)`` per genus, giving the coefficient of ``dx``.
-        Numerical checks do not certify that supplied forms have no poles.
-        A non-positive-definite normalized period matrix raises ``ValueError``.
-
-        Instance caching reuses assembled results in addition to cached numerical
-        stages. Returned matrices are independent copies of the cached data.
+        A non-positive-definite period matrix raises ``ValueError``.
 
         The lemniscatic curve has normalized period matrix ``tau = i``::
 
@@ -250,7 +230,7 @@ class AlgebraicCurve:
             >>> mp.re(data.tau[0, 0]), mp.im(data.tau[0, 0])
             (mpf('0.0'), mpf('1.0'))
 
-        A supplied basis uses the general marking::
+        A supplied basis uses geometric-polygon marking::
 
             >>> data = curve.first_kind_periods((lambda x, y: 1 / y,))
             >>> data.marking
@@ -463,25 +443,25 @@ class AlgebraicCurve:
                  reduce=False):
         r"""Evaluate the Abel map of a place or divisor on a plane curve.
 
-        ``target`` is one regular finite place, given as a ``(x, y)`` pair or
-        ``CurvePlace``, a chart-backed place from
-        :meth:`AlgebraicCurve.chart_place`, or a sequence of places representing
-        an effective divisor; an empty sequence returns the zero vector.  A
-        structurally hyperelliptic equation without supplied differentials is
-        dispatched to the specialized Abel-map engine, including the ordinate
-        change required after completing the square.  A general plane curve
-        selects a first-kind basis automatically when Baker's construction
-        applies, or accepts one callable per genus, and returns the
-        unnormalized Abelian coordinates they integrate to.
-        Chart-backed places require the general pipeline.
+        Generalizes elliptic integrals to genus :math:`g`, integrating :math:`g`
+        differentials simultaneously from a base place to a target. Returns an
+        unnormalized vector in :math:`\mathbb{C}^g`, defined modulo its period
+        lattice.
 
-        ``base_place`` selects a finite or chart-backed base place. The
-        default is the selected engine's natural base; for the general
-        engine this is sheet zero over its computational base point.
-        With ``reduce=True`` the unnormalized result is reduced modulo the full
-        period lattice ``[2*omega, 2*omega_prime]`` of the supplied basis,
-        equivalent to applying
-        :meth:`AlgebraicCurve.lattice_reduce`.
+        ``target`` is a single place (as ``(x, y)`` pair or ``CurvePlace``),
+        a chart-backed place, or a sequence of places (effective divisor). An
+        empty sequence returns the zero vector. Use ``differentials`` to override
+        the automatic basis. For a chart-backed endpoint on a recognized
+        hyperelliptic curve, supply first-kind ``differentials`` to select the
+        geometric-polygon engine.
+
+        ``base_place`` defaults to the selected engine's natural base: the
+        point at infinity for odd-degree hyperelliptic models, the first
+        ordered finite branch point for even-degree hyperelliptic models, or
+        sheet zero over the computational base point for the geometric-polygon
+        engine.
+        With ``reduce=True``, the result is reduced modulo the period lattice
+        ``[2*omega, 2*omega_prime]`` of the selected first-kind basis.
 
         >>> from mpmath import algebraic_curve, mp
         >>> mp.dps = 15
@@ -505,23 +485,20 @@ class AlgebraicCurve:
             base_place=None, reduce=False):
         r"""Evaluate second-kind Abelian integrals of a place or divisor.
 
-        ``target`` and ``base_place`` have the same meanings as in
-        :meth:`abel_map`. The ``CurveSecondKindAbelMap`` result contains the
-        unnormalized second-kind ``value`` and its ``engine`` and ``marking``.
+        ``target`` and ``base_place`` have the same meanings as in :meth:`abel_map`.
+        Returns a ``CurveSecondKindAbelMap`` record with the second-kind ``value``.
 
-        Recognized hyperelliptic models use their automatic BEL basis. The
-        general engine requires one callable per genus in ``second_differentials``;
-        its first-kind forms may be supplied or selected automatically. To use
-        supplied second-kind forms on a hyperelliptic model, supply the
-        first-kind ``differentials`` as well.
+        Hyperelliptic curves use automatic BEL basis construction. The geometric
+        polygon engine requires explicit ``second_differentials``; to override
+        the second-kind basis on a recognized hyperelliptic curve, also supply
+        first-kind ``differentials`` to select that engine. Supplied second-kind
+        forms must have zero residues and be regular along the integration
+        paths. With ``reduce=True``, the compatible first-kind Abel map
+        determines a cycle shift applied to both first- and second-kind values,
+        recorded as ``reduction_shift``.
 
-        With ``reduce=True``, reduction of the compatible first-kind Abel map
-        determines the common integer cycle shift. The second-kind value is
-        adjusted by the same shift, reported as ``reduction_shift``. Without
-        reduction that field is ``None``.
-
-        Chart-backed endpoints require the general engine. Chart tails must
-        converge; divergent endpoint values are not regularized.
+        Chart-backed endpoints use the geometric polygon engine. Chart integration
+        paths must converge; pole regularization is not performed.
         """
         return self._call(
             _operations.abel_map,

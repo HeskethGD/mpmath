@@ -1,155 +1,59 @@
 Algebraic curves
 ----------------
 
-The ``AlgebraicCurve`` class represents a smooth plane algebraic curve and
-provides a lazy numerical pipeline for its topology, periods and Jacobian
-data. Arbitrary-precision continuation of the sheets supplies monodromy, a
-lifted ribbon graph supplies homology, and precision-aware quadrature supplies
-the periods.
+The algebraic curve module extends mpmath's genus-1 elliptic function
+capabilities to supported smooth plane curves of higher genus. The normalized
+period lattice of an elliptic curve is described by one complex ratio
+:math:`\tau`; in genus :math:`g` it is described by a :math:`g \times g`
+Riemann matrix. This module computes periods, Riemann constants, and Abel maps
+used with higher-genus theta and Kleinian functions.
 
-Create a curve with the active mpmath context::
+Historically, Riemann showed that an algebraic curve of genus :math:`g` has
+:math:`g` linearly independent holomorphic differentials whose period matrix
+determines a :math:`g`-dimensional complex torus called the Jacobian. Abel's
+theorem states that integrals of these differentials provide coordinates on
+the Jacobian. Numerical period and Abel map computations are used in
+integrable systems and explicit algebraic geometry.
 
-    >>> from mpmath import algebraic_curve, mp
-    >>> mp.dps = 30
-    >>> curve = algebraic_curve({
-    ...     (0, 2): 1,
-    ...     (1, 0): 1,
-    ...     (3, 0): -1,
-    ... })
-    >>> curve.genus
-    1
-    >>> curve.branch_locus.degree
-    2
+For a genus-1 model :math:`y^2=P(x)`, an Abel map integrates a differential
+such as :math:`dx/y` to give a complex number modulo its periods. In genus
+:math:`g`, it integrates :math:`g` differentials to give a vector in
+:math:`\mathbb{C}^g` modulo a period lattice. The matrix :math:`\tau`
+generalizes the elliptic period ratio; unnormalized periods also depend on
+the chosen differential basis.
 
-``mp.algebraic_curve(specification)`` is equivalent. The explicit
-``AlgebraicCurve(ctx, specification)`` constructor is available when working
-with a custom context.
+The following conventions apply throughout this module.
 
-The canonical curve specification is a sparse mapping from :math:`(i,j)`
-power pairs to the coefficients of :math:`x^i y^j`. Ascending coefficient
-sequences defining :math:`y^2=P(x)` and sequences of :math:`(i,j,c)` terms
-are also accepted. The polynomial must depend on :math:`y`::
+**Baker basis.** For supported hyperelliptic curves, the automatic first-kind
+basis consists of monomials :math:`x^k dx/z`. For a general curve, the module
+uses interior lattice points of its Newton polygon when its edge and genus
+checks pass, following Baker's construction [BakerAbel]_. Otherwise the caller
+must supply a holomorphic basis.
 
-    >>> algebraic_curve({(2, 0): 1, (0, 0): -1})
-    Traceback (most recent call last):
-      ...
-    ValueError: the plane curve must depend on y
+**BEL conventions.** The automatic hyperelliptic second-kind basis and
+half-period sign conventions follow [BEL1997]_ equation (1.3) and Lemma 1.1.
+That arbitrary-genus algebraic basis is constructed compatibly with the
+first-kind marking. For the geometric polygon engine, callers supply
+``second_differentials``.
 
-Classification is based on the normalized polynomial rather than its input
-syntax. In particular, a constant-leading quadratic equation
+**Period matrices.** Full first-kind period matrices are :math:`2\omega` and
+:math:`2\omega'`, where :math:`\omega` and :math:`\omega'` are half-period
+matrices integrated over :math:`a`- and :math:`b`-cycles respectively. The
+normalized Riemann matrix is :math:`\tau=\omega^{-1}\omega'`; the computed
+matrix is symmetrized to remove numerical asymmetry.
 
-.. math::
+**Second-kind half-periods.** The sign convention is
+:math:`2\eta = -\int_a dr` and :math:`2\eta' = -\int_b dr` for a second-kind
+differential :math:`dr`. The returned :math:`\kappa` is the symmetric part of
+:math:`\eta \omega^{-1}`. The generalized Legendre relation [BEL1997]_ validates
+compatibility of these blocks.
 
-    A y^2+B(x)y+C(x)=0
-
-is sent to the specialized hyperelliptic engine, when no differential basis
-is supplied, after the change of coordinate
-:math:`z=y+B(x)/(2A)`. The resulting model is
-:math:`z^2=B(x)^2/(4A^2)-C(x)/A`. Its automatic first-kind basis is
-:math:`x^k dx/z`, expressed in the original coordinate as
-:math:`x^k dx/(y+B(x)/(2A))`. Root separation and smoothness are checked
-lazily when the specialized computation is requested.
-The transformed polynomial must currently have distinct roots. A repeated
-root describes a singular plane model; periods of its normalization and
-generalized-Jacobian data are not yet part of this dispatch.
-
-For a general plane curve, the engine selects Baker first-kind differentials
-from the interior lattice points of its Newton polygon when the edge and
-genus checks pass. The basis consists of
-:math:`x^{a-1}y^{b-1}dx/F_y` for interior points :math:`(a,b)`, ordered by
-increasing :math:`b` and then :math:`a`. If those checks fail, supply one
-holomorphic differential callable per genus. The general engine uses
-projection onto the ``x`` coordinate.
-
-Expensive stages are computed lazily and cached using the numerical context,
-including its precision. If the context changes after construction, the curve
-warns once and recomputes numerical stages for the new state. Inexact input
-coefficients retain the precision at which they were constructed.
-
-.. autoclass:: mpmath.AlgebraicCurve
-
-
-Topology
-........
-
-.. autoattribute:: mpmath.AlgebraicCurve.branch_locus
-
-.. autoattribute:: mpmath.AlgebraicCurve.monodromy
-
-.. autoattribute:: mpmath.AlgebraicCurve.genus
-
-.. autoattribute:: mpmath.AlgebraicCurve.genus_data
-
-.. autoattribute:: mpmath.AlgebraicCurve.homology
-
-``homology`` describes the marking used by the curve's default computational
-engine. For an automatically classified hyperelliptic curve this is the
-compact Baker basis used by its periods and Abel maps. For a general curve it
-is the compact geometric-polygon basis. The
-``engine`` and ``marking`` fields make the distinction explicit.
-Computed results use ``("hyperelliptic", "baker")`` or
-``("general", "geometric-polygon")`` respectively.
-
-Supplying first-kind differentials on a recognized hyperelliptic model selects
-the general engine. Those results use the geometric-polygon marking, while
-``curve.homology`` describes the default Baker marking. Results from different
-markings must be related by an integral symplectic change of cycles before
-their coordinates can be combined. Compare Abel values using a common base
-place and the corresponding period lattice.
-
-``curve.monodromy`` uses radial loops and its own base fibre; it does not
-select the integration marking.
-
-The computational route from sheet continuation and monodromy to a homology
-basis and periods follows the general approach of [DvH2001]_ and [DP2011]_.
-The geometric engine constructs a lifted ribbon graph and uses a primal
-spanning tree and dual cotree to leave :math:`2g` generators [Eppstein2003]_.
-It then rewrites the one-face polygon word as canonical commutators
-[Lazarus2001]_. These references explain the topology; the particular
-Voronoi graph, numerical guards and deterministic choices here are
-implementation decisions, not algorithms copied from those sources.
-
-
-Periods and Riemann data
-........................
-
-.. automethod:: mpmath.AlgebraicCurve.first_kind_periods
-
-.. automethod:: mpmath.AlgebraicCurve.second_kind_periods
-
-.. automethod:: mpmath.AlgebraicCurve.riemann_matrix
-
-.. automethod:: mpmath.AlgebraicCurve.riemann_constant
-
-``first_kind_periods()`` computes first-kind data only.
-``second_kind_periods()`` returns only the second-kind data ``eta``,
-``eta_prime`` and ``kappa``. Any compatible first-kind work needed to form
-``kappa`` is used internally rather than duplicated in the result.
-Automatically classified hyperelliptic curves use the BEL basis; a general
-curve instead requires an explicit
-``second_differentials`` basis. The arbitrary-genus algebraic second-kind
-basis and half-period conventions are equation (1.3) and Lemma 1.1 of
-[BEL1997]_.
-
-The full first-kind period matrices are ``2*omega`` and ``2*omega_prime``,
-with ``tau = omega**-1 * omega_prime`` before numerical symmetrization.
-Second-kind half-periods use the sign convention
-``2*eta = -integral_a(dr)`` and ``2*eta_prime = -integral_b(dr)``.
-The returned ``kappa`` is the symmetric part of ``eta * omega**-1``.
-The generalized Legendre relation checks compatibility of these half-period
-blocks in the chosen symplectic marking [BEL1997]_.
-
-Riemann constants use the additive convention
-:math:`\theta(A(D)+K,\tau)=0`, where :math:`A(D)` is the normalized Abel
-map of an effective divisor of degree :math:`g-1`. The record's ``value`` is
-:math:`K`; its ``characteristic`` gives literal coordinates :math:`(a,b)`
-such that :math:`K=\tau a+b` modulo the normalized period lattice.
-The canonical-dissection formula and the change-of-base-place law are
-discussed in [DP2011]_. Our additive sign and cycle orientations are specified
-above rather than inferred from another author's convention. The level-two
-integrals used by the geometric calculation retain their based paths;
-concatenation and reversal follow Chen's iterated-integral identities
-[Chen1977]_.
+**Riemann constants.** The module uses the additive convention
+:math:`\theta(A(D) + K, \tau) = 0`, where :math:`A(D)` is the normalized Abel map
+of an effective divisor of degree :math:`g-1`. The characteristic representation
+is :math:`K = \tau a + b` modulo the normalized period lattice :math:`[I, \tau]`.
+The canonical-dissection formula and change-of-base-place law are discussed
+in [DP2011]_; the sign here specifies this module's additive convention.
 
 .. list-table:: Numerical results and coordinate conventions
    :header-rows: 1
@@ -185,51 +89,154 @@ concatenation and reversal follow Chen's iterated-integral identities
      - ``CurveLatticeReduction``: ``value``, ``shift``
      - Original basis for a period record; normalized basis for ``tau``
 
-Automatic differential evaluation
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+The AlgebraicCurve class
+.........................
 
-The general Baker basis is retained internally as numerator monomials over
-one common :math:`F_y` denominator. All automatic forms are evaluated
-together at each lifted quadrature node, sharing that denominator. Supplied
-callables retain the fully general one-callable-per-form path.
+The ``AlgebraicCurve`` class is the unifying object for all curve computations.
+It is bound to an mpmath numerical context and provides properties and methods
+for topology, homology, periods, and integration. Construct curves with
+``mp.algebraic_curve(specification)`` or the explicit
+``AlgebraicCurve(ctx, specification)`` for custom contexts.
 
-The corresponding records are ``CurveFirstKindPeriods`` and
-``CurveSecondKindPeriods``. Their ``differentials`` field is ``None`` for an
-automatic hyperelliptic basis. For the general engine it contains either the
-supplied callables or callable adapters for the selected Baker forms. An
-automatic adapter exposes its ``numerator`` powers for inspection.
+.. autoclass:: mpmath.AlgebraicCurve
 
-Period quadrature policy
-~~~~~~~~~~~~~~~~~~~~~~~~
+**Input specification.** The canonical curve specification is a sparse mapping
+from :math:`(i,j)` power pairs to the coefficients of :math:`x^i y^j`. Ascending
+coefficient sequences defining :math:`y^2=P(x)` and sequences of :math:`(i,j,c)`
+terms are also accepted. The polynomial must depend on :math:`y`::
 
-For general curves, period integration chooses a Gauss--Legendre order for
-each continued path segment from its distance to the finite branch values.
-This is an accuracy estimate for holomorphic differentials, not a rigorous
-quadrature error bound. Poles of supplied meromorphic differentials are not
-part of that estimate. Iterated integrals used for Riemann constants use the
-same per-segment geometry policy with a stable Legendre-basis integration
-matrix.
-The order estimate uses the geometric convergence associated with an analytic
-integrand's nearest Bernstein ellipse [Trefethen2008]_. It assumes that the
-known branch values describe the limiting singularities; it does not certify
-an arbitrary supplied differential.
+    >>> from mpmath import algebraic_curve, mp
+    >>> mp.dps = 30
+    >>> curve = algebraic_curve({
+    ...     (0, 2): 1,
+    ...     (1, 0): 1,
+    ...     (3, 0): -1,
+    ... })
+    >>> curve.genus
+    1
+    >>> curve.branch_locus.degree
+    2
 
-Automatic hyperelliptic calculations use the deterministic Baker cycle
-marking. Supplying a callable first-kind basis is an explicit request for the
-general geometric-polygon engine. The returned ``engine`` and ``marking``
-fields identify that choice; results carrying different markings must not be
-combined without a symplectic basis conversion.
+The following error occurs when the polynomial is independent of :math:`y`::
 
-The Baker marking orders branch points lexicographically. In a parameterized
-family, roots can exchange this order without colliding, causing the returned
-matrices and characteristic to change by a symplectic basis transformation
-rather than vary continuously. For real ordered roots, the square-root sheet
-is continued from the interval to the right of every branch point. Moving
-left across a root multiplies it by :math:`i`; it is therefore incorrect to
-choose the positive principal square root independently on every real oval.
+    >>> algebraic_curve({(2, 0): 1, (0, 0): -1})
+    Traceback (most recent call last):
+      ...
+    ValueError: the plane curve must depend on y
+
+**Computational engines.** The module has two engines, selected by curve
+structure and whether the caller supplies differentials.
+Expensive numerical stages are computed lazily and cached by precision. If the
+context changes after construction, the curve warns once and recomputes stages
+for the new state. Inexact coefficients retain the precision at which they
+were constructed; increasing the context precision cannot recover digits
+already lost from those inputs.
+
+*Hyperelliptic engine:* Curves of the form :math:`A y^2 + B(x) y + C(x) = 0`
+with constant nonzero :math:`A` can use the specialized engine when the
+transformed polynomial has distinct roots. The
+change of coordinate :math:`z = y + B(x)/(2A)` yields
+:math:`z^2 = B(x)^2/(4A^2) - C(x)/A`. The automatic first-kind basis is
+:math:`x^k dx/z` for :math:`k = 0, \ldots, g-1`. This engine uses the Baker
+marking with deterministic paths between branch values. Root separation is
+checked when a specialized computation is requested.
+
+*Geometric polygon engine:* For non-hyperelliptic curves or when custom
+differentials are supplied, the module uses ribbon graph lifting and canonical
+polygon construction. When no differentials are supplied, it selects a Baker
+basis from interior lattice points of the Newton polygon if the edge and genus
+checks pass. The basis is :math:`x^{a-1} y^{b-1} dx / F_y`, ordered by
+increasing :math:`b` and then :math:`a` for interior points :math:`(a,b)`.
+
+To override either automatic first-kind basis, supply one holomorphic
+differential callable :math:`f(x,y)` per genus, giving the coefficient of
+:math:`dx`. This selects the geometric polygon engine, even for a recognized
+hyperelliptic model. Numerical validation cannot certify that supplied forms
+are holomorphic; the caller must check their behaviour on the curve.
+
+**Numerical implementation.** The Baker basis is retained internally as numerator
+monomials over a common :math:`F_y` denominator. The geometric polygon engine
+chooses Gauss-Legendre quadrature order based on distance to branch values,
+following Bernstein ellipse convergence estimates [Trefethen2008]_. This is an
+accuracy heuristic, not a rigorous error bound. The Baker marking orders branch
+points lexicographically; in parameterized families, root crossings cause period
+matrix jumps by symplectic transformations rather than continuous variation.
+
+Topology
+........
+
+Topological properties describe the branch locus, monodromy, genus, and homology
+of the curve. Homology determines the canonical cycle basis used by period and
+Abel map computations.
+
+.. autoattribute:: mpmath.AlgebraicCurve.branch_locus
+
+.. autoattribute:: mpmath.AlgebraicCurve.monodromy
+
+.. autoattribute:: mpmath.AlgebraicCurve.genus
+
+.. autoattribute:: mpmath.AlgebraicCurve.genus_data
+
+.. autoattribute:: mpmath.AlgebraicCurve.homology
+
+The ``homology`` property describes the curve's **default** marking. Its
+``engine`` and ``marking`` fields identify either
+``("hyperelliptic", "baker")`` or ``("general", "geometric-polygon")``.
+Supplying custom differentials selects the geometric polygon marking for that
+calculation, even on a curve whose ``homology`` property reports Baker marking.
+Check the ``engine`` and ``marking`` fields of the result before combining
+coordinates: different markings require an integral symplectic change of
+cycles. Abel values must also use a common base place and compatible periods.
+
+The monodromy computation uses radial loops from an automatically selected base
+fibre and does not depend on the choice of integration marking. The topological
+construction follows [DvH2001]_, [DP2011]_, [Eppstein2003]_, and [Lazarus2001]_;
+implementation details such as Voronoi graph construction and numerical guards
+are specific to this module.
+
+Periods and Riemann data
+.........................
+
+These methods generalize elliptic period computation. A normalized genus-1
+lattice has one period ratio :math:`\tau`; in genus :math:`g`, the normalized
+matrix :math:`\tau` is :math:`g \times g`, symmetric, and has positive-definite
+imaginary part.
+
+First-kind periods arise from integrating holomorphic differentials around the
+:math:`2g` homology cycles. These integrals determine the period lattice of the
+Jacobian and supply the matrix used by theta functions. Second-kind periods
+play a role like the quasi-periods of the genus-1 Weierstrass zeta function.
+In genus 1, the Riemann constant is the odd half-period
+:math:`(1+\tau)/2`, locating a theta zero. In higher genus, it shifts the
+theta-zero set to the Abel images of effective divisors of degree :math:`g-1`.
+
+.. automethod:: mpmath.AlgebraicCurve.first_kind_periods
+
+.. automethod:: mpmath.AlgebraicCurve.second_kind_periods
+
+.. automethod:: mpmath.AlgebraicCurve.riemann_matrix
+
+.. automethod:: mpmath.AlgebraicCurve.riemann_constant
+
+The ``first_kind_periods()`` method computes first-kind data only.
+``second_kind_periods()`` returns the second-kind half-periods ``eta``,
+``eta_prime``, and ``kappa``. Any first-kind work needed to form ``kappa`` is
+computed internally. Hyperelliptic curves use automatic BEL basis construction;
+the geometric polygon engine requires an explicit ``second_differentials``
+argument.
+
+The canonical-dissection formula and change-of-base-place law are discussed in
+[DP2011]_. Level-two iterated integrals used in the geometric calculation follow
+Chen's identities [Chen1977]_.
 
 Places, paths and integration
-.............................
+..............................
+
+These methods generalize elliptic integration. In genus 1, a path from one
+point to another determines an elliptic integral value. In higher genus,
+``integral`` can integrate a supplied sequence of differentials along one
+lifted path. It returns a scalar for a single callable, or one value per form
+for a sequence; the latter need not contain exactly :math:`g` forms.
 
 .. automethod:: mpmath.AlgebraicCurve.fibre
 
@@ -239,17 +246,16 @@ Places, paths and integration
 
 Places over a finite regular value are labelled by ``fibre``. A ``CurvePath``
 is bound to its curve and numerical context, and can be passed to ``integral``
-with either one differential or a sequence of differentials.
-
-General first-kind Abel maps use the same branch-geometry quadrature policy
-as first-kind periods. Supplied second-kind differentials may introduce poles
-that are not visible in the curve's branch locus, so their open integrals also
-compare successive quadrature orders and fail if working-precision agreement
-is not reached.
-
+with one differential or a sequence of differentials.
 
 Explicit local charts
-.....................
+......................
+
+Local charts extend integration to marked places that a regular affine fibre
+cannot identify. A ramification point may have finite :math:`(x,y)`
+coordinates, but the projection does not separate its local branches there;
+places over infinity may not have finite affine coordinates at all. A chart
+supplies a local parameter and branch choice for approaching such a place.
 
 .. automethod:: mpmath.AlgebraicCurve.chart
 
@@ -261,24 +267,18 @@ Explicit local charts
 
 .. automethod:: mpmath.AlgebraicCurve.chart_integral
 
-Explicit charts extend paths and integrals to ramification points and places
-over infinity. Charts are bound to their ambient curve and working precision;
-automatic chart discovery is outside the present numerical API.
-
 A chart replaces a difficult affine endpoint by a local parameter :math:`t`
 and a branch coordinate :math:`w`. Its equation must have a simple root in
 :math:`w` at :math:`t=0`; that root is the ``seed`` selecting a place. The
 ``cutoff`` is a nonzero :math:`t` value where the local branch meets an
 ordinary finite path. A ``CurvePlace`` returned by ``chart_place`` remembers
-the chart tail from :math:`t=0` to that junction. Passing only its affine
-``(x, y)`` coordinates would instead select the cutoff point, losing the
-intended place at infinity or ramification.
+the chart tail from :math:`t=0` to that junction.
 
 For example, take :math:`y^2=x^3-x`. Its point at infinity can be reached
 with :math:`x=t^{-2}`, :math:`y=t^{-3}w`, giving the regular local equation
-:math:`w^2=1-t^4`. The two roots at :math:`t=0` choose local branches of
-this parameterization (both approach the unique infinity place of this
-elliptic curve); here we select :math:`w=1`::
+:math:`w^2=1-t^4`. The two roots at :math:`t=0` choose branches of this
+parameterization; both approach the unique infinity place of this elliptic
+curve. Here we select :math:`w=1`::
 
     >>> from mpmath import algebraic_curve, mp
     >>> mp.dps = 15
@@ -295,22 +295,25 @@ elliptic curve); here we select :math:`w=1`::
     '-1.4538919'
 
 The large ``x`` and ``y`` are only the affine junction; ``infinity`` denotes
-the place at :math:`t=0`. This is the same pattern used when a marked point
-over infinity is the base of an Abel map on a more complicated curve, such as
-the Kovalevskaya genus-three curve. There, one also needs a custom chart for
-two places over :math:`x=0`: its coordinates are
-:math:`x=t^2`, :math:`y=1/[t(1+tw)]`. ``curve.chart(local_equation,
-coordinate_map)`` accepts the transformed polynomial in :math:`(t,w)` and a
-map returning :math:`(x,y,dx/dt)`; a monomial chart alone does not describe
-this second coordinate map. The caller supplies that transformed equation and
-checks that its :math:`t=0` fibre separates the desired places.
+the place at :math:`t=0`. Passing only ``(infinity.x, infinity.y)`` to another
+method would select the junction instead, losing the chart tail. The supplied
+``form`` also selects the geometric engine: an automatic hyperelliptic Abel
+map does not accept chart-backed endpoints.
 
-``chart_integral`` is useful when the path itself is local, for example a
-small contour used to obtain a residue. It starts at the first value in
-``t_path``, so its ``seed`` is a :math:`w` value there, unlike the seed at
-:math:`t=0` passed to ``chart_place``. The same elliptic chart can be supplied
-explicitly; integrating :math:`dx/x=-2\,dt/t` from :math:`t=0.1` to
-:math:`t=0.2` gives :math:`-2\log 2`::
+For a curve needing a more general change of coordinates, ``chart`` accepts a
+sparse local equation in :math:`(t,w)` and a map returning
+:math:`(x,y,dx/dt)`. For example, a resolved chart used at two places over
+:math:`x=0` on the Kovalevskaya genus-three curve has
+:math:`x=t^2` and :math:`y=1/[t(1+tw)]`. The local equation must separate
+the desired :math:`w` values at :math:`t=0`; the caller supplies that equation
+and coordinate map.
+
+``chart_integral`` is for a path within a chart, such as a small contour used
+to obtain a residue. Its ``seed`` is the value of :math:`w` at the *first*
+entry of ``t_path``, whereas ``chart_place`` takes a seed at :math:`t=0`.
+The elliptic chart above can also be supplied explicitly. Since
+:math:`dx/x=-2\,dt/t`, its integral from :math:`t=0.1` to :math:`t=0.2`
+is :math:`-2\log 2`::
 
     >>> local = curve.chart(
     ...     {(0, 2): 1, (0, 0): -1, (4, 0): 1},
@@ -322,9 +325,18 @@ explicitly; integrating :math:`dx/x=-2\,dt/t` from :math:`t=0.1` to
     >>> mp.nstr(result.values, 8)
     '-1.3862944'
 
-
 Abel map and lattice reduction
-..............................
+...............................
+
+The Abel map generalizes the elliptic integral to a multidimensional map from
+divisors to the Jacobian. For genus :math:`g`, it produces a vector in
+:math:`\mathbb{C}^g` that reduces modulo the period lattice. The
+``lattice_reduce`` method performs this reduction, analogous to reducing an
+elliptic integral modulo its periods. By default, the Abel map starts at
+infinity for odd-degree hyperelliptic models, the first ordered finite branch
+point for even-degree hyperelliptic models, or sheet zero over the computational
+base point for the geometric polygon engine. Set ``base_place`` to choose a
+different starting place.
 
 .. automethod:: mpmath.AlgebraicCurve.abel_map
 
@@ -332,19 +344,17 @@ Abel map and lattice reduction
 
 .. automethod:: mpmath.AlgebraicCurve.lattice_reduce
 
-For an automatically classified hyperelliptic curve,
-``second_kind_abel_map(target)`` returns a ``CurveSecondKindAbelMap`` record
-with the second-kind ``value``. The general engine provides the same record
-with either automatic or supplied first-kind forms when an explicit
-``second_differentials`` basis is supplied. Lattice reduction uses the
-compatible first-kind Abel map internally and records the shared cycle shift
-as ``reduction_shift``.
+Second-kind Abel maps use compatible differential bases determined by the
+computational engine. Lattice reduction uses the first-kind Abel map internally
+and records the shared cycle shift.
 
-
-Validation and result records
-.............................
+Validation
+..........
 
 .. automethod:: mpmath.AlgebraicCurve.validate
+
+Result records
+..............
 
 The record classes ``CurveBranchLocus``, ``CurveMonodromy``, ``CurveGenus``,
 ``CurveHomology``, ``CurveFirstKindPeriods``, ``CurveSecondKindPeriods``,
@@ -355,9 +365,7 @@ importable from the top-level ``mpmath`` namespace. Record fields cannot be
 reassigned, but contained matrices are mutable. Returned matrices are
 independent of the private cached values.
 
-The curve class is the common interface to the hyperelliptic period and
-Kleinian-function machinery described in :doc:`abelian` and to the general
-plane-curve pipeline. Internally the hyperelliptic engine supplies automatic
-differential bases and specialized integration, while the general engine
-supports smooth plane projections with automatic Baker differentials or a
-caller-supplied basis.
+The ``AlgebraicCurve`` class provides the common interface to higher genus
+computations. It serves as the foundation for Riemann theta functions and
+Kleinian functions described in :doc:`abelian`, analogous to how elliptic
+integrals underlie Jacobi elliptic functions in genus 1.

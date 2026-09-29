@@ -119,6 +119,27 @@ def test_repeated_hyperelliptic_root_is_rejected_after_solver_failure():
             hyperelliptic_model._hyperelliptic_roots(mp, coefficients)
 
 
+def test_hyperelliptic_root_retry_succeeds_after_initial_solver_failure(monkeypatch):
+    ctx = mp.clone()
+    ctx.dps = 25
+    original_polyroots = ctx.polyroots
+    guards = []
+
+    def fail_once(coefficients, **kwargs):
+        guards.append(kwargs.get('extraprec'))
+        if len(guards) == 1:
+            raise ctx.NoConvergence("initial root solve failed")
+        return original_polyroots(coefficients, **kwargs)
+
+    monkeypatch.setattr(ctx, 'polyroots', fail_once)
+    roots, tolerance = hyperelliptic_model._hyperelliptic_roots(
+        ctx, (0, -1, 0, 1))
+    assert roots == tuple(map(ctx.mpf, (-1, 0, 1)))
+    assert tolerance > 0
+    assert guards == [None, 50]
+    assert ctx.dps == 25
+
+
 def test_hyperelliptic_root_retries_are_bounded_and_restore_precision(monkeypatch):
     ctx = mp.clone()
     ctx.dps = 25
